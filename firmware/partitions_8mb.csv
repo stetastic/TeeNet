@@ -1,0 +1,9 @@
+# Partition Table for 8MB Flash (AtomS3 Lite)
+# Name, Type, SubType, Offset, Size
+nvs,data,nvs,0x9000,0x6000
+phy_init,data,phy,0xf000,0x1000
+factory,app,factory,0x10000,2M
+stats,data,nvs,0x210000,64K
+otadata,data,ota,0x220000,8K
+ota_0,app,ota_0,0x230000,2M
+ota_1,app,ota_1,0x430000,2M
