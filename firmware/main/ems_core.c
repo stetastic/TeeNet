@@ -1,3 +1,4 @@
+#include "sdkconfig.h"
 #include "ems_core.h"
 #include <math.h>
 #include <string.h>
@@ -30,8 +31,16 @@ void settings_defaults(settings_t *s) {
     s->battery_cloud_limit_w=4000; s->battery_assist_limit_w=4000;
     s->pv_house_priority_w=4000; s->pv_car_priority_w=6000;
     strcpy(s->opendtu_prefix,"opendtu");
-
-    s->external_mode_input_pin=6; s->evu_input_pin=7; s->evu_limit_a=0;
+    #if defined(CONFIG_TEE_DISABLE_BETRIEBSARTKONTAKT)
+        // AtomS3 Lite Anpassung:
+        s->external_mode_input_pin = -1; // Deaktiviert (kein Konflikt auf GPIO 6)
+        s->external_mode_input_enabled = false; 
+    #else
+        // Standard 16MB Version:
+        s->external_mode_input_pin = 6; 
+    #endif
+    
+    s->evu_input_pin=7; s->evu_limit_a=0;
     s->house_tx_pin=43; s->house_rx_pin=44; s->house_rts_pin=-1;
     s->house_address=1; s->house_meter_baud=9600; s->house_meter_format=0; s->house_xemex_coils=3;
     s->ads_sda_pin=8; s->ads_scl_pin=9; s->ads_wallbox_address=0x48; s->ads_house_address=0x49;
@@ -53,13 +62,31 @@ void settings_basic_mode(settings_t *s) {
     if(s->mode!=MODE_OFF && s->mode!=MODE_MANUAL){s->mode=MODE_OFF;s->enabled=false;}
 }
 void settings_fixed_pins(settings_t *s) {
-    if(s->xemex_tx_pin!=4 || s->xemex_rx_pin!=5 ||
-       s->house_tx_pin!=43 || s->house_rx_pin!=44 || s->external_mode_input_pin!=6 ||
-       s->evu_input_pin!=7 || s->relay1_pin!=12 || s->relay2_pin!=14) s->control_verified=false;
-    s->xemex_tx_pin=4;s->xemex_rx_pin=5;
-    s->house_tx_pin=43;s->house_rx_pin=44;s->external_mode_input_pin=6;s->evu_input_pin=7;
-    s->relay1_pin=12;s->relay2_pin=14;
-    s->wallbox_rts_pin=s->xemex_rts_pin=s->house_rts_pin=-1;
+    #if defined(CONFIG_TEE_DISABLE_BETRIEBSARTKONTAKT)
+        // --- 8MB ATOMS3 LITE LOGIK ---
+        if(s->xemex_tx_pin != 4 || s->xemex_rx_pin != 5 ||
+           s->house_tx_pin != 43 || s->house_rx_pin != 44 || 
+           s->evu_input_pin != 7 || s->relay1_pin != 12 || s->relay2_pin != 14) {
+            s->control_verified = false;
+        }
+        s->external_mode_input_pin = -1; // Dauerhaft deaktiviert für AtomS3
+        s->external_mode_input_enabled = false;
+    #else
+        // --- STANDARD 16MB LOGIK ---
+        if(s->xemex_tx_pin != 4 || s->xemex_rx_pin != 5 ||
+           s->house_tx_pin != 43 || s->house_rx_pin != 44 || s->external_mode_input_pin != 6 ||
+           s->evu_input_pin != 7 || s->relay1_pin != 12 || s->relay2_pin != 14) {
+            s->control_verified = false;
+        }
+        s->external_mode_input_pin = 6;
+    #endif
+
+    // Gemeinsame Pins zurückschreiben
+    s->xemex_tx_pin = 4; s->xemex_rx_pin = 5;
+    s->house_tx_pin = 43; s->house_rx_pin = 44;
+    s->evu_input_pin = 7;
+    s->relay1_pin = 12; s->relay2_pin = 14;
+    s->wallbox_rts_pin = s->xemex_rts_pin = s->house_rts_pin = -1;
 }
 static bool pin_valid(int pin) { return pin==1 || pin==2 || (pin>=4 && pin<=18) || pin==21 || (pin>=38 && pin<=44) || pin==47; }
 bool settings_shell_pin_available(const settings_t *s,int pin,bool tx) {
