@@ -20,14 +20,15 @@ jobs:
         with:
           submodules: 'recursive'
 
-      # Offizielle Espressif-Action mit dem korrekten Repository-Namen
+      # Offizielle Espressif-Action mit korrigiertem Build-Befehl
       - name: ESP-IDF Build ausführen
         uses: espressif/esp-idf-ci-action@v1
         with:
           esp_idf_version: 'v5.3' # Nutze deine exakte Version (z.B. v5.1, v5.3)
           target: 'esp32s3'
           path: 'firmware'
-          cmake_args: '-DBUILD_TARGET=${{ matrix.target_env }}'
+          # Übergabe der CMake-Argumente direkt über den idf.py Build-Befehl
+          command: 'idf.py -DBUILD_TARGET=${{ matrix.target_env }} build'
 
       - name: Firmware-Dateien umbenennen und sammeln
         run: |
