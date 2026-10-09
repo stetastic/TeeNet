@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
-# 1. Dynamische Versionsauslesung (beibehalten)
-file(READ "${CMAKE_CURRENT_LIST_DIR}/main/version.json" ems_release_json)
+# 1. Liest die release.json aus dem Hauptordner (eine Ebene über dem firmware-Ordner) aus
+file(READ "${CMAKE_CURRENT_LIST_DIR}/../release.json" ems_release_json)
 string(JSON ems_version GET "${ems_release_json}" version)
 set(PROJECT_VER "${ems_version}")
 
