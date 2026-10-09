@@ -1,0 +1,44 @@
+name: Wallbox-EMS Automated Builds
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # Deine beiden Build-Targets aus der CMakeLists.txt
+        target_env: [esp32_16mb, atoms3_lite_8mb]
+    
+    steps:
+      - name: Code auschecken
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+
+      - name: ESP-IDF Build ausführen
+        uses: espressif/idf-build-action@v1.5
+        with:
+          esp_idf_version: 'v5.3' # Nutze deine exakte ESP-IDF-Version
+          target: 'esp32s3'
+          path: 'firmware'        # Weist GitHub an, in deinen firmware-Ordner zu wechseln
+          cmake_args: '-DBUILD_TARGET=${{ matrix.target_env }}'
+
+      - name: Firmware-Dateien umbenennen und sammeln
+        run: |
+          mkdir -p output
+          if [ "${{ matrix.target_env }}" = "atoms3_lite_8mb" ]; then
+            cp firmware/build/wallbox_ems.bin output/wallbox_ems_8MB_AtomS3.bin
+          else
+            cp firmware/build/wallbox_ems.bin output/wallbox_ems_16MB.bin
+          fi
+
+      - name: Firmware als GitHub-Artefakt speichern
+        uses: actions/upload-artifact@v4
+        with:
+          name: wallbox-ems-${{ matrix.target_env }}
+          path: output/*.bin
