@@ -20,12 +20,13 @@ jobs:
         with:
           submodules: 'recursive'
 
+      # Offizielle Espressif-Action mit dem korrekten Repository-Namen
       - name: ESP-IDF Build ausführen
-        uses: espressif/idf-build-action@v1.5
+        uses: espressif/esp-idf-ci-action@v1
         with:
-          esp_idf_version: 'v5.3' # Nutze deine exakte ESP-IDF-Version
+          esp_idf_version: 'v5.3' # Nutze deine exakte Version (z.B. v5.1, v5.3)
           target: 'esp32s3'
-          path: 'firmware'        # Weist GitHub an, in deinen firmware-Ordner zu wechseln
+          path: 'firmware'
           cmake_args: '-DBUILD_TARGET=${{ matrix.target_env }}'
 
       - name: Firmware-Dateien umbenennen und sammeln
