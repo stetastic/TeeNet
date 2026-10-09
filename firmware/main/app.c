@@ -23,3 +23,21 @@
 #include "esp_sntp.h"
 
 #include "esp_random.h"
+
+#include "esp_system.h"
+
+#include "esp_timer.h"
+
+#include "esp_wifi.h"
+
+#include "freertos/FreeRTOS.h"
+
+#include "freertos/semphr.h"
+
+#include "freertos/task.h"
+
+#include "mqtt_client.h"
+
+#include "nvs.h"
+
+#include "nvs_flash.h"
