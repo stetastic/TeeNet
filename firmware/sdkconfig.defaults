@@ -1,0 +1,11 @@
+# Keep native USB Serial/JTAG independent from the two RS485 UARTs.
+# This leaves both RS485 UARTs independent from the development connection.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# HTTP internal sockets + browser clients + MQTT + house-meter HTTP/DNS.
+CONFIG_LWIP_MAX_SOCKETS=16
+
+# Modern browsers commonly send more than 512 bytes of request headers
+# (Accept*, Sec-CH-UA, language and cache validators).  The ESP-IDF default
+# used by the original build rejected those requests with HTTP 431.
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=2048
