@@ -1,4 +1,4 @@
-# TeeNet 1.20 · Prüfung
+# TeeNet 1.19 · Prüfung
 
 Geprüfter Stand vom 11. Oktober 2026.
 
@@ -16,12 +16,12 @@ Alle C- und JavaScript-Testreihen bestanden. Zusätzlich: 31 geschlossene Energi
 
 | Profil | Build | Firmwaregröße |
 | --- | --- | ---: |
-| ESP32-S3 N16R8 | `114a8b075452` | 1.985.552 Bytes |
-| Andreas Testboard | `9fb71432fe63` | 1.985.584 Bytes |
+| ESP32-S3 N16R8 | `277d15efb407` | 1.985.552 Bytes |
+| Andreas Testboard | `32b4defcc1fe` | 1.985.584 Bytes |
 
 Beide Builds ohne Compilerwarnungen oder -fehler. Die Downloadpakete enthalten den zugehörigen Quellcode und die Prüfsummen.
 
-Am N16R8 wurden OTA, einphasiger Ladestart und anschließender Neustart auf dem funktionsgleichen Vorabstand 1.19 praktisch geprüft. Vor dem Rückschalten wurden 9,86 Sekunden durchgehender Stromstillstand beobachtet; eingestellt waren mindestens acht Sekunden. Nach 22,08 Sekunden war der ESP wieder mit aktuellen Messwerten bereit. Einstellungen, Ladesitzungen und historische Kosten blieben erhalten. Version 1.20 unterscheidet sich durch die Versionsnummer und den Versionshinweis in der Anleitung; die Regelung ist unverändert.
+Am N16R8 wurden OTA, einphasiger Ladestart und anschließender Neustart praktisch geprüft. Vor dem Rückschalten wurden 9,86 Sekunden durchgehender Stromstillstand beobachtet; eingestellt waren mindestens acht Sekunden. Nach 22,08 Sekunden war der ESP wieder mit aktuellen Messwerten bereit. Einstellungen, Ladesitzungen und historische Kosten blieben erhalten.
 
 ## Grenzen
 
