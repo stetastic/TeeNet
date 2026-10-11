@@ -52,11 +52,13 @@ function displayedChargeMode(s){
 }
 
 reasons.charge_ended='Mehrere Ladeabbrüche in kurzer Zeit. Bitte Ursache prüfen und erneut starten.';
-reasons.charge_retry='Ladeabbruch · neuer Versuch nach 30 Sekunden.';
+reasons.charge_retry='Ladeabbruch · warte auf neuen Startversuch.';
 
-reasons.battery_stale='Akkudaten fehlen oder sind veraltet · Überschussladung pausiert.';
+reasons.battery_stale='Akku-Ladestand fehlt · Akkuhilfe pausiert.';
 
 reasons.battery_reserve='Entladegrenze erreicht · warte auf PV-Überschuss.';
+reasons.battery_power_stale='Akku-Leistung fehlt · Akkuhilfe pausiert.';
+reasons.battery_no_response='Hausakku liefert nicht genug Leistung · warte auf PV-Überschuss.';
 
 let configBaseline={};
 let meterScanning=false,meterResults=[];
@@ -98,7 +100,7 @@ function controlStatus(s,valid=true){
     if(!s.evcc_status_known)return result('evcc · Fahrzeugstatus unbekannt; Ladung pausiert','waiting');
   }
   if(s.phase_state==='fehler')return result('Phasenumschaltung gestört · Ladung gesperrt','fault');
-  const phaseWait={current_zero:'Phasenwechsel · warte auf Strom unter 1 A',zero_hold:'Phasenwechsel · stromlose Wartezeit',contact:'Phasenwechsel · warte auf Schütz-Rückmeldung',motion:'Phasenwechsel · Schütz schaltet',settle:'Phasenwechsel · Stabilisierung',fresh_data:'Phasenwechsel · warte auf frische Messwerte'};
+  const phaseWait={current_zero:'Phasenwechsel · warte auf Ladestillstand',zero_hold:'Phasenwechsel · stromlose Wartezeit',contact:'Phasenwechsel · warte auf Schütz-Rückmeldung',motion:'Phasenwechsel · Schütz schaltet',settle:'Phasenwechsel · Stabilisierung',fresh_data:'Phasenwechsel · warte auf frische Messwerte'};
   if(s.phase_switch_enabled&&s.phase_state!=='bereit')return result(wait(phaseWait[s.phase_wait_kind]||'Phasenwechsel läuft',s.phase_wait_s,['current_zero','contact','fresh_data'].includes(s.phase_wait_kind)),'waiting');
   if(s.charge_stop_latched)return result('Mehrere Ladeabbrüche · Start gesperrt','fault');
   if(s.charge_retry_s>0)return result(wait('Automatischer Wiederanlauf',s.charge_retry_s),'waiting');
@@ -112,6 +114,7 @@ function controlStatus(s,valid=true){
   let text=charging?`Lädt · ${phases}`:`Start angefordert · ${phases} · warte auf Fahrzeug`;
   if(charging&&s.mode==='manual'&&Number.isFinite(s.estimate_w)&&Number.isFinite(s.target_current_a)&&Math.abs(s.estimate_w/1000-s.target_current_a*powerFactor(s.charge_phases))>.3)text=`Ladeleistung wird angepasst · ${phases}`;
   if(s.battery_buffer_active)text+=` · Wolkenpuffer ${Math.ceil(s.battery_buffer_remaining_s/60)} min`;
+  else if(s.battery_assist_active)text+=' · Hausakku unterstützt';
   if(s.phase_wait_kind==='hold')text+=` · Phasenwechsel frühestens in ${s.phase_wait_s} s`;
   if(s.phase_wait_kind==='candidate')text+=' · '+wait('Phasenwechsel wird vorbereitet',s.phase_wait_s);
   if(s.block_reason==='grid_fallback')text+=' · Haus-Phasenwerte fehlen, maximal 8 kW';
@@ -211,7 +214,8 @@ function render(){if(!state)return;const s=state,valid=online;
   $('battery-fill').style.width=`${soc??0}%`;
   $('battery-toggle').textContent=!s.battery_protect?'Einrichtung nötig':s.battery_use?'Wolkenpuffer an':'Wolkenpuffer aus';
   $('battery-toggle').setAttribute('aria-pressed',String(!!s.battery_use));
-  $('battery-buffer-note').textContent=s.battery_start_use?'Akku-Laden hat Vorrang':s.battery_buffer_active?`Aktiv · noch ${Math.floor(s.battery_buffer_remaining_s/60)}:${String(s.battery_buffer_remaining_s%60).padStart(2,'0')} min`:`Bis ${format(s.battery_cloud_limit_w/1000,1)} kW · maximal 15 Minuten`;
+  const bufferTime=`${Math.floor(s.battery_buffer_remaining_s/60)}:${String(s.battery_buffer_remaining_s%60).padStart(2,'0')} min`;
+  $('battery-buffer-note').textContent=s.battery_buffer_active?`Aktiv · noch ${bufferTime}`:s.battery_use&&s.battery_buffer_expired?'Pufferzeit abgelaufen · warte auf stabilen Solarstrom':s.battery_use&&s.battery_buffer_remaining_s>0?`Verbleibend ${bufferTime}`:`Bis ${format(s.battery_cloud_limit_w/1000,1)} kW · maximal ${Math.ceil((s.battery_buffer_duration_s||900)/60)} Minuten`;
   $('battery-start-toggle').textContent=!s.battery_protect?'Einrichtung nötig':s.battery_start_use?'Akku-Laden an':'Akku-Laden aus';
   $('battery-start-toggle').setAttribute('aria-pressed',String(!!s.battery_start_use));
   $('battery-start-note').textContent=`Bis ${format(s.battery_discharge_limit_w/1000,1)} kW · Hausakku bis ${format(s.battery_reserve_soc,0)} % nutzen`;

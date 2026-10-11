@@ -123,16 +123,16 @@ int main(void) {
     s.battery_protect=true; s.zero_feed_enabled=true; s.battery_reserve_soc=50;
     near(battery_solar_current(&s,actual,0,80,true,2000,true),8-2000.0f/690);
     near(battery_solar_current(&s,actual,0,80,true,0,false),8-4000.0f/690);
-    near(battery_solar_current(&s,actual,-1380,49,true,0,true),0);
-    near(battery_solar_current(&s,actual,-1380,50,true,0,true),0);
-    near(battery_solar_current(&s,actual,-1380,80,false,0,true),0);
+    near(battery_solar_current(&s,actual,-1380,49,true,0,true),10);
+    near(battery_solar_current(&s,actual,-1380,50,true,0,true),10);
+    near(battery_solar_current(&s,actual,-1380,80,false,0,true),10);
     near(battery_solar_current(&s,actual,NAN,80,true,0,true),0);
     assert(settings_valid(&s)); s.zero_reserve_w=100; assert(!settings_valid(&s));
     s.zero_reserve_w=0;
     near(battery_assisted_current(&s,actual,0,80,true,2000,true,true,true),8);
-    near(battery_assisted_current(&s,actual,0,50,true,2000,true,true,true),0);
-    near(battery_assisted_current(&s,actual,-1380,49,true,2000,true,true,false),0);
-    near(battery_assisted_current(&s,actual,0,80,false,2000,true,true,false),0);
+    near(battery_assisted_current(&s,actual,0,50,true,2000,true,true,true),8-2000.0f/690);
+    near(battery_assisted_current(&s,actual,-1380,49,true,2000,true,true,false),10-2000.0f/690);
+    near(battery_assisted_current(&s,actual,0,80,false,2000,true,true,false),8-2000.0f/690);
     near(battery_assisted_current(&s,actual,1380,80,true,2000,false,true,true),battery_solar_current(&s,actual,1380,80,true,2000,false));
     /* Before charge start, only unused capacity up to 4 kW is added. During
        charging, measured discharge above 4 kW is removed from availability. */
@@ -154,7 +154,8 @@ int main(void) {
     near(battery_cloud_current(&buffer,&s,actual,0,80,true,2000,true,true,true,8,902000),8-2000.0f/690);
     assert(!buffer.active);
     near(battery_cloud_current(&buffer,&s,actual,-1380,80,true,0,true,true,true,8,910000),10);
-    near(battery_cloud_current(&buffer,&s,actual,-1380,80,true,0,true,true,true,8,970000),10);
+    for(int64_t t=911000;t<=970000;t+=1000)
+        near(battery_cloud_current(&buffer,&s,actual,-1380,80,true,0,true,true,true,8,t),10);
     assert(buffer.started_at==0);
     near(battery_cloud_current(&buffer,&s,actual,0,80,true,5000,true,true,true,8,971000),8-1000.0f/690);
     battery_buffer_t limited={0};s.battery_cloud_limit_w=2500;

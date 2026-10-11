@@ -65,8 +65,7 @@ int main(void) {
     s.min_charge_a=8; assert(settings_valid(&s));
     control_report(&s,charging,7,0,false,out); near(out[0],49);
     control_report(&s,charging,0,0,false,out); near(out[0],49);
-    /* A confirmed one-phase position counts L1 once and compensates the
-       measured offset while retaining the 8 A measured-current floor. */
+    /* A confirmed one-phase position counts L1 once. */
     s.phase_switch_enabled=true; s.relay_board_enabled=true; s.relay1_mode=3; s.charge_phases=1; s.manual_phases=1;
     s.manual_current_a=6; s.current_offset_a=.8f;
     assert(settings_valid(&s));
@@ -74,7 +73,7 @@ int main(void) {
     near(control_target(&s,true,true,true),8);
     float single[]={8.5f,8.5f,8.5f};
     near(estimated_charge_power(&s,single),8.5f*230);
-    control_report(&s,single,8,0,false,out);
+    s.mode=MODE_PV;control_report(&s,single,8,0,false,out);
     near(out[0],33.3); near(out[1],0); near(out[2],0);
     assert(settings_decode(&s,sizeof(s),&migrated));
     assert(migrated.phase_switch_enabled && migrated.charge_phases==3 && migrated.manual_phases==3 && !migrated.enabled);

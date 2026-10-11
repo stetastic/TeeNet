@@ -10,7 +10,7 @@ static esp_err_t system_backup_handler(httpd_req_t *req){
     bool locked=xSemaphoreTake(maintenance_flash_lock,ticks(2000))==pdTRUE;
     if(!locked)goto done;
     reset_sequence_clear();
-    if(!save_energy()||!save_plan())goto done;
+    if(!save_energy()||!save_plan()||!save_control_memory(true))goto done;
     save_diagnostics(true);
     if(esp_flash_get_size(NULL,&size)!=ESP_OK||size>32*1024*1024||size<4*1024*1024)goto done;
     buffer=malloc(4096);if(!buffer)goto done;

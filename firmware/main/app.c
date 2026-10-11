@@ -174,13 +174,16 @@ static bool restart_pending(void){return reboot_required||expert_reboot_pending;
 static float meter_a[3],actual_a[3],xemex_a[3],wallbox_w,house_power_w,house_a[3];
 static int64_t house_current_at;
 
-static bool battery_use; /* enables the bounded PV cloud buffer; boot defaults to storage protection */
+static bool battery_use; /* preferences are persisted separately from charging commands */
 static bool battery_start_use; /* allows configured battery support from PV start down to the SOC reserve */
+static control_memory_t stored_control_memory;
+static bool control_memory_pending,control_storage_ok=true;
 static battery_buffer_t battery_buffer;
 typedef enum { PHASE_READY, PHASE_STOPPING, PHASE_MOVING, PHASE_SETTLING, PHASE_FAULT } phase_state_t;
 static phase_state_t phase_state=PHASE_READY;
 static uint8_t phase_goal=3, phase_candidate=3;
 static int64_t phase_candidate_at,phase_stop_at,phase_zero_at,phase_move_at,phase_hold_until;
+static bool phase_startup=true;
 static int64_t phase_attempt_at,phase_no_load_since;
 static bool phase_idle_inhibit;
 static bool phase_gpio_ready;
@@ -338,6 +341,8 @@ static void load_settings(void) {
     saved_settings=settings;
 
 }
+
+#include "control_storage.inc"
 
 /* EN/RST also resets RTC data on this board. Persist only a tiny boot counter.
 
@@ -595,112 +600,31 @@ static void contacts_step_locked(int64_t now) {
     else evu_contact.stable=false;
 }
 
+static battery_power_t battery_power_locked(int64_t now) {
+    return battery_power_normalize(battery_charge_w,battery_discharge_w,battery_charge_at,battery_discharge_at,now,EMS_INPUT_TTL);
+}
 static float allocation_grid_locked(int64_t now,float grid_w) {
-    return pv_allocation_grid(&settings,actual_a,grid_w,battery_charge_w,battery_discharge_w,battery_soc,
-        fresh(now,battery_charge_at,EMS_INPUT_TTL) && fresh(now,battery_discharge_at,EMS_INPUT_TTL) &&
-        fresh(now,battery_soc_at,EMS_INPUT_TTL));
+    battery_power_t power=battery_power_locked(now);
+    return pv_allocation_grid(&settings,actual_a,grid_w,power.charge_w,power.discharge_w,battery_soc,
+        power.fresh && fresh(now,battery_soc_at,EMS_INPUT_TTL));
 }
 
 static float phase_surplus_w_locked(int64_t now) {
     if(!fresh(now,house_power_at,house_meter_ttl()) || !fresh(now,actual_at,wallbox_meter_ttl())) return NAN;
     float measured=estimated_charge_power(&settings,actual_a);
     if(!isfinite(measured)) return NAN;
-    float reserve=0;
-    if(settings.battery_protect && !battery_buffer.active)
-        reserve=fresh(now,battery_discharge_at,EMS_INPUT_TTL)?battery_discharge_w:EMS_BATTERY_DISCHARGE_MAX_W;
-    return measured-allocation_grid_locked(now,house_power_w)+settings.zero_reserve_w-reserve;
+    battery_power_t power=battery_power_locked(now);
+    float reserve=settings.battery_protect?(power.fresh?power.discharge_w:EMS_BATTERY_DISCHARGE_MAX_W):0;
+    float allowance=0;
+    if(settings.battery_protect && power.fresh && fresh(now,battery_soc_at,EMS_INPUT_TTL) && battery_soc>settings.battery_reserve_soc) {
+        if(battery_start_use)allowance=settings.battery_assist_limit_w;
+        else if(battery_buffer.active)allowance=fminf(power.discharge_w,settings.battery_cloud_limit_w);
+    }
+    return measured-allocation_grid_locked(now,house_power_w)+settings.zero_reserve_w-reserve+allowance;
 }
 
-static void phase_step_locked(int64_t now) {
-    if(!settings.phase_switch_enabled) return;
-    if(!phase_gpio_ready) { phase_state=PHASE_FAULT; return; }
-    uint8_t observed=phase_observed();
-    if(phase_state==PHASE_FAULT) return;
-    if(phase_state==PHASE_READY && !phase_feedback_matches(settings.phase_feedback_enabled,observed,settings.charge_phases)) { phase_state=PHASE_FAULT; return; }
-    if(phase_state==PHASE_READY && settings.charge_phases==1 &&
-       fresh(now,actual_at,wallbox_meter_ttl())) {
-        float peak=fmaxf(actual_a[0],fmaxf(actual_a[1],actual_a[2]));
-        if(peak>=1) {
-            phase_no_load_since=0;
-        } else {
-            if(phase_attempt_at>0) {
-                if(!phase_no_load_since) phase_no_load_since=now;
-                if(now-phase_no_load_since>=ems_param_ms(EP_PHASE_IDLE)) {
-                    /* Without a vehicle-presence signal, stop retrying after
-                       one bounded attempt. Keep the coil off until a new
-                       explicit Start or a changed command arrives. */
-                    phase_idle_inhibit=true; phase_goal=3;
-                    if(evcc_control.configured){evcc_control.enabled=false;evcc_control.preparing=false;settings.enabled=false;settings.mode=MODE_OFF;}
-                    phase_state=PHASE_STOPPING; phase_stop_at=now; phase_zero_at=0;
-                    return;
-                }
-            }
-        }
-    } else if(phase_state==PHASE_READY) {
-        phase_no_load_since=0;
-    }
-    if(phase_state==PHASE_STOPPING) {
-        if(evcc_control.configured && evcc_desired_phases(&evcc_control,settings.charge_phases)==3 && phase_goal==1)phase_goal=3;
-        bool fresh_meter=fresh(now,actual_at,wallbox_meter_ttl());
-        float peak=fmaxf(actual_a[0],fmaxf(actual_a[1],actual_a[2]));
-        bool zero=fresh_meter && peak<ems_param(EP_PHASE_ZERO_A) && last_sent_current_at>phase_stop_at && fresh(now,wallbox_at,ems_param_ms(EP_SHELL_TTL));
-        if(!zero) phase_zero_at=0;
-        else if(!phase_zero_at) phase_zero_at=now;
-        if(phase_zero_at && now-phase_zero_at>=ems_param_ms(EP_PHASE_ZERO)) {
-            relay_set(0,phase_goal==1);
-            phase_move_at=now; phase_state=PHASE_MOVING;
-        } else if(now-phase_stop_at>ems_param_ms(EP_PHASE_STOP_MAX)) phase_state=PHASE_FAULT;
-        return;
-    }
-    if(phase_state==PHASE_MOVING) {
-        if(phase_motion_complete(settings.phase_feedback_enabled,observed,phase_goal,now-phase_move_at)) {
-            settings.charge_phases=phase_goal;
-            phase_move_at=now; phase_state=PHASE_SETTLING;
-            phase_attempt_at=phase_no_load_since=0;
-            memset(&pv_control,0,sizeof(pv_control));
-            memset(&manual_filter,0,sizeof(manual_filter));
-        } else if(now-phase_move_at>ems_param_ms(EP_PHASE_FEEDBACK)) phase_state=PHASE_FAULT;
-        return;
-    }
-    if(phase_state==PHASE_SETTLING) {
-        if(!phase_feedback_matches(settings.phase_feedback_enabled,observed,phase_goal)) { phase_state=PHASE_FAULT; return; }
-        if(now-phase_move_at>=ems_param_ms(EP_PHASE_SETTLE) && meter_at>phase_move_at && wallbox_at>phase_move_at) {
-            phase_state=PHASE_READY; phase_hold_until=now+ems_param_ms(EP_PHASE_HOLD);
-            if(evcc_control.configured && phase_goal==1 && evcc_control.preparing)phase_attempt_at=now;
-            phase_candidate_at=0; phase_candidate=phase_goal;
-        } else if(now-phase_move_at>ems_param_ms(EP_PHASE_DATA_MAX)) phase_state=PHASE_FAULT;
-        return;
-    }
-    uint8_t desired=3;
-    if(evcc_control.configured)desired=(uint8_t)evcc_desired_phases(&evcc_control,settings.charge_phases);
-    else if(settings.enabled && settings.mode==MODE_MANUAL) desired=settings.manual_phases;
-    else if(settings.enabled && settings.mode==MODE_PV && settings.zero_feed_enabled) {
-        float surplus=phase_surplus_w_locked(now);
-        float down=settings.min_charge_a*3*settings.nominal_v*settings.power_factor-300;
-        float up=fmaxf(6300,down+800);
-        /* A 6 kW vehicle-priority ceiling must not prevent return to the
-           tested 6 kW three-phase range after the two-minute dwell. */
-        float three_phase_min=settings.min_charge_a*3*settings.nominal_v;
-        if(settings.pv_allocation_enabled && settings.pv_priority==1 &&
-           settings.pv_car_priority_w>=three_phase_min-5)
-            up=fminf(up,fmaxf(three_phase_min,settings.pv_car_priority_w));
-        if(isfinite(surplus)) {
-            if(settings.charge_phases==3 && surplus<down && surplus>=settings.min_charge_a*settings.nominal_v) desired=1;
-            else if(settings.charge_phases==1 && surplus+5>=up) desired=3;
-            else desired=settings.charge_phases;
-        } else desired=settings.charge_phases;
-    }
-    if(phase_idle_inhibit && desired==1) desired=3;
-    /* Anti-cycling waits apply to active PV operation. Explicit Stop must
-       return to the deenergized contactor after the current-zero interlock. */
-    bool automatic_change=settings.enabled && settings.mode==MODE_PV;
-    if(desired==settings.charge_phases ||
-       (automatic_change && now<phase_hold_until)) { phase_candidate_at=0; phase_candidate=desired; return; }
-    if(phase_candidate!=desired || !phase_candidate_at) { phase_candidate=desired; phase_candidate_at=now; return; }
-    int64_t dwell=automatic_change?ems_param_ms(desired==1?EP_PHASE_DOWN:EP_PHASE_UP):0;
-    if(now-phase_candidate_at<dwell) return;
-    phase_goal=desired; phase_state=PHASE_STOPPING; phase_stop_at=now; phase_zero_at=0;
-}
+#include "phase_status.inc"
+#include "phase_controller.inc"
 
 static bool pv_fresh_locked(int64_t now) {
 
@@ -710,34 +634,23 @@ static bool pv_fresh_locked(int64_t now) {
 
 static bool battery_ready_locked(int64_t now) {
 
-    return fresh(now,battery_soc_at,EMS_INPUT_TTL);
+    return fresh(now,battery_soc_at,EMS_INPUT_TTL) && battery_power_locked(now).fresh;
 
 }
 
 static float pv_available_current_locked(int64_t now,float grid_w) {
     grid_w=allocation_grid_locked(now,grid_w);
-    /* Do not add a discharge allowance while deliberately moving PV charging
-       power from the house battery to the car. That would double-count it. */
-    bool allocating_charge=settings.pv_allocation_enabled && fresh(now,battery_charge_at,EMS_INPUT_TTL) && battery_charge_w>=100;
-    if(battery_start_use && !allocating_charge) {
-        battery_buffer.active=false; battery_buffer.remaining_ms=0;
-        return battery_assisted_current(&settings,actual_a,grid_w,battery_soc,
-            battery_ready_locked(now),battery_discharge_w,
-            fresh(now,battery_discharge_at,EMS_INPUT_TTL),true,
-            pv_control.target_a>0);
-    }
-    return battery_cloud_current(&battery_buffer,&settings,actual_a,grid_w,battery_soc,
-        battery_ready_locked(now),battery_discharge_w,
-        fresh(now,battery_discharge_at,EMS_INPUT_TTL),battery_use && !allocating_charge,
-        pv_control.target_a>0,active_min_a(),now);
+    battery_power_t power=battery_power_locked(now);
+    bool charging=pv_control.target_a>0 && fmaxf(actual_a[0],fmaxf(actual_a[1],actual_a[2]))>=1;
+    return battery_support_current(&battery_buffer,&settings,actual_a,grid_w,battery_soc,
+        fresh(now,battery_soc_at,EMS_INPUT_TTL),power.discharge_w,power.fresh,
+        battery_use,battery_start_use,charging,active_min_a(),now);
 }
 
 static bool pv_permitted_locked(int64_t now) {
 
     return settings.mode==MODE_PV && settings.enabled && !charge_guard.latched &&
         (!settings.phase_switch_enabled || phase_state==PHASE_READY) &&
-
-        (!settings.battery_protect || (battery_ready_locked(now) && battery_soc>settings.battery_reserve_soc)) &&
 
         !restart_pending() && !restarting && !ota_in_progress && !unsupported_meter() &&
 
@@ -767,7 +680,7 @@ static float unlatched_target_locked(int64_t now) {
 
         if(!pv_permitted_locked(now) || !fresh(now,pv_control.last_at,5000)) {
 
-            pv_control_step(&pv_control,false,0,active_min_a(),settings.max_charge_a,now); return 0;
+            return 0; /* Only status_task advances the controller state. */
 
         }
 
@@ -836,8 +749,11 @@ static const char *block_reason_locked(int64_t now) {
 
     if(settings.mode==MODE_MANUAL && settings.manual_current_a<active_min_a()) return "manual_stop";
 
-    if(settings.mode==MODE_PV && settings.battery_protect && !battery_ready_locked(now)) return "battery_stale";
-    if(settings.mode==MODE_PV && settings.battery_protect && battery_soc<=settings.battery_reserve_soc) return "battery_reserve";
+    if(settings.mode==MODE_PV && settings.battery_protect && pv_control.target_a<=0 && settings.pv_surplus_a<active_min_a()) {
+        if(!fresh(now,battery_soc_at,EMS_INPUT_TTL))return "battery_stale";
+        if(!battery_power_locked(now).fresh)return "battery_power_stale";
+        if(battery_soc<=settings.battery_reserve_soc)return "battery_reserve";
+    }
 
     if(!wallbox_ready) return "uart";
 
@@ -846,6 +762,10 @@ static const char *block_reason_locked(int64_t now) {
     if(!fresh(now,actual_at,wallbox_meter_ttl())) return "feedback";
 
     if(settings.mode==MODE_PV && !pv_fresh_locked(now)) return settings.zero_feed_enabled?"house_meter":"pv_stale";
+
+    if(settings.mode==MODE_PV && battery_start_use && pv_control.target_a<=0 && settings.pv_surplus_a<active_min_a() &&
+       battery_buffer.assist_response_at>0 && now-battery_buffer.assist_response_at>=EMS_BATTERY_RESPONSE_MS)
+        return "battery_no_response";
 
     if(settings.mode==MODE_PV) {
 
@@ -1016,9 +936,8 @@ static void meter_task(void *arg) {
         LOCK();
         if(network && revision!=wallbox_meter_revision){UNLOCK();continue;}
         if(ok) {
-            if(settings.phase_switch_enabled && settings.charge_phases==1 &&
-               phase_state==PHASE_READY && sdm_profile(settings.wallbox_meter_type) && sdm_profile(settings.wallbox_meter_type)->phases==3 &&
-               (values[1]>=1 || values[2]>=1)) phase_state=PHASE_FAULT;
+            if(settings.phase_switch_enabled && phase_state==PHASE_READY &&
+               wallbox_inactive_phase_current(&settings,values)) phase_state=PHASE_FAULT;
             if(sdm && settings.charge_phases==1 && sdm_profile(settings.wallbox_meter_type) && sdm_profile(settings.wallbox_meter_type)->phases==1) watts/=3;
 
             int64_t now=now_ms();
@@ -1338,22 +1257,7 @@ static cJSON *status_json(bool include_token) {
     cJSON_AddStringToObject(o,"phase_state",phase_state==PHASE_READY?"bereit":phase_state==PHASE_STOPPING?"stoppen":phase_state==PHASE_MOVING?"schalten":phase_state==PHASE_SETTLING?"pruefen":"fehler");
     /* Expose real state-machine deadlines; UI never invents a countdown. */
     int64_t phase_deadline=0; const char *phase_wait="none";
-    if(settings.phase_switch_enabled) {
-        if(phase_state==PHASE_STOPPING) {
-            phase_wait=phase_zero_at?"zero_hold":"current_zero";
-            phase_deadline=phase_zero_at?phase_zero_at+8000:phase_stop_at+60000;
-        } else if(phase_state==PHASE_MOVING) {
-            phase_wait=settings.phase_feedback_enabled?"contact":"motion";
-            phase_deadline=phase_move_at+(settings.phase_feedback_enabled?5000:2000);
-        } else if(phase_state==PHASE_SETTLING) {
-            phase_wait=now<phase_move_at+5000?"settle":"fresh_data";
-            phase_deadline=phase_move_at+(now<phase_move_at+5000?5000:30000);
-        } else if(settings.enabled && settings.mode==MODE_PV && phase_hold_until>now) {
-            phase_wait="hold";phase_deadline=phase_hold_until;
-        } else if(settings.enabled && settings.mode==MODE_PV && phase_candidate_at>0) {
-            phase_wait="candidate";phase_deadline=phase_candidate_at+(phase_candidate==1?30000:120000);
-        }
-    }
+    phase_wait_status_locked(now,&phase_wait,&phase_deadline);
     cJSON_AddStringToObject(o,"phase_wait_kind",phase_wait);
     cJSON_AddNumberToObject(o,"phase_wait_s",phase_deadline>now?(phase_deadline-now+999)/1000:0);
     cJSON_AddBoolToObject(o,"control_status_visible",true);
@@ -1379,7 +1283,13 @@ static cJSON *status_json(bool include_token) {
     cJSON_AddBoolToObject(o,"battery_use",battery_use);
     cJSON_AddBoolToObject(o,"battery_start_use",battery_start_use);
     cJSON_AddBoolToObject(o,"battery_buffer_active",battery_buffer.active);
-    cJSON_AddNumberToObject(o,"battery_buffer_remaining_s",(battery_buffer.remaining_ms+999)/1000);
+    cJSON_AddBoolToObject(o,"battery_buffer_expired",battery_buffer.started && now-battery_buffer.started_at>=EMS_BATTERY_BUFFER_MS);
+    cJSON_AddNumberToObject(o,"battery_buffer_duration_s",EMS_BATTERY_BUFFER_MS/1000);
+    int64_t cloud_left=battery_buffer.started?EMS_BATTERY_BUFFER_MS-(now-battery_buffer.started_at):0;
+    cJSON_AddNumberToObject(o,"battery_buffer_remaining_s",cloud_left>0?(cloud_left+999)/1000:0);
+    cJSON_AddBoolToObject(o,"battery_assist_active",battery_buffer.assist_active);
+    cJSON_AddBoolToObject(o,"battery_power_ok",battery_power_locked(now).fresh);
+    cJSON_AddBoolToObject(o,"control_storage_ok",control_storage_ok);
     cJSON_AddNumberToObject(o,"battery_reserve_soc",settings.battery_reserve_soc);
     cJSON_AddNumberToObject(o,"battery_capacity_kwh",EMS_BATTERY_CAPACITY_KWH);
     cJSON_AddNumberToObject(o,"battery_discharge_limit_w",settings.battery_assist_limit_w);
@@ -1391,10 +1301,11 @@ static cJSON *status_json(bool include_token) {
     nullable(o,"battery_soc_pct",battery_soc,fresh(now,battery_soc_at,EMS_INPUT_TTL));
     nullable(o,"car_soc_pct",car_soc,settings.vehicle_soc_enabled && fresh(now,car_soc_at,ems_param_ms(EP_CAR_TTL)));
     nullable(o,"pv_generation_w",pv_generation_w,settings.pv_display_enabled && fresh(now,pv_generation_at,EMS_INPUT_TTL));
-    nullable(o,"battery_charge_w",battery_charge_w,fresh(now,battery_charge_at,EMS_INPUT_TTL));
-    nullable(o,"battery_discharge_w",battery_discharge_w,fresh(now,battery_discharge_at,EMS_INPUT_TTL));
+    battery_power_t battery_power=battery_power_locked(now);
+    nullable(o,"battery_charge_w",battery_power.charge_w,battery_power.fresh);
+    nullable(o,"battery_discharge_w",battery_power.discharge_w,battery_power.fresh);
 
-    cJSON_AddNumberToObject(o,"pv_start_threshold_a",pv_start_threshold(&settings));
+    cJSON_AddNumberToObject(o,"pv_start_threshold_a",battery_start_use&&settings.battery_protect&&battery_ready_locked(now)&&battery_soc>settings.battery_reserve_soc?active_min_a():pv_start_threshold(&settings));
 
     cJSON_AddNumberToObject(o,"pv_stop_threshold_a",active_min_a()-ems_param(EP_PV_DEFICIT));
 
@@ -1409,7 +1320,7 @@ static cJSON *status_json(bool include_token) {
 
     cJSON_AddNumberToObject(o,"current_date",date);
 
-    cJSON_AddBoolToObject(o,"storage_ok",stats_storage_ok && config_storage_ok && !storage_error && plan_storage_ok);
+    cJSON_AddBoolToObject(o,"storage_ok",stats_storage_ok && config_storage_ok && !storage_error && plan_storage_ok && control_storage_ok);
 
     cJSON_AddNumberToObject(o,"uptime_s",now/1000); cJSON_AddNumberToObject(o,"free_heap",esp_get_free_heap_size());cJSON_AddNumberToObject(o,"reset_reason",esp_reset_reason());
 
@@ -1687,6 +1598,7 @@ static bool apply_control(cJSON *o) {
 
     if(!cJSON_IsObject(o) || !o->child) return false;
 
+    int64_t command_epoch,command_midnight;uint32_t command_date=calendar(&command_epoch,&command_midnight);
     LOCK();
     if(evcc_configuring){UNLOCK();return false;}
     if(evcc_control.configured) {
@@ -1696,7 +1608,7 @@ static bool apply_control(cJSON *o) {
         evcc_local_stop(&evcc_control);
     }
     settings_t next=settings; bool valid=true,pv=false,next_battery_use=battery_use,next_battery_start_use=battery_start_use,restart=false;
-    bool manual_phases_explicit=false,manual_mode_requested=false;
+    bool manual_phases_explicit=false,manual_mode_requested=false,persist_preferences=false;
     int64_t change_at=now_ms();float previous_target=target_locked(change_at);control_mode_t previous_mode=settings.mode;
     bool transition=false;
     bool user_override=cJSON_GetObjectItem(o,"mode")||cJSON_GetObjectItem(o,"enabled")||cJSON_GetObjectItem(o,"current_a");
@@ -1735,6 +1647,10 @@ static bool apply_control(cJSON *o) {
 
     if(valid && (!pv || !settings.zero_feed_enabled) && !restarting && !ota_in_progress && (!restart_pending() || !next.enabled)) {
 
+        /* Restore before changing preferences or starting a controller. A
+           later persistence pass must not overwrite newly started timers. */
+        restore_control_memory_locked(change_at,command_date?command_epoch:0,true);
+
         transition=next.mode!=settings.mode || next.enabled!=settings.enabled;
 
         if((restart && charge_guard.latched) || (next.enabled && !settings.enabled)) memset(&charge_guard,0,sizeof(charge_guard));
@@ -1749,9 +1665,10 @@ static bool apply_control(cJSON *o) {
         }
 
         if(next_battery_use!=battery_use || next_battery_start_use!=battery_start_use) {
+            persist_preferences=true;
             battery_use=next_battery_use;
             battery_start_use=next_battery_start_use;
-            if(!battery_use || battery_start_use) memset(&battery_buffer,0,sizeof(battery_buffer));
+            if(!battery_use) {battery_buffer.started=false;battery_buffer.active=false;battery_buffer.remaining_ms=0;}
             if(settings.zero_feed_enabled && fresh(now_ms(),house_power_at,house_meter_ttl()) && fresh(now_ms(),actual_at,wallbox_meter_ttl())) {
                 int64_t now=now_ms();
                 settings.pv_surplus_a=pv_available_current_locked(now,house_power_w);
@@ -1775,7 +1692,12 @@ static bool apply_control(cJSON *o) {
 
     else valid=false;
 
-    UNLOCK(); return valid;
+    UNLOCK();
+    if(valid && persist_preferences) {
+        if(xSemaphoreTake(maintenance_flash_lock,ticks(2000))==pdTRUE){valid=save_control_memory(true);xSemaphoreGive(maintenance_flash_lock);}
+        else valid=false;
+    }
+    return valid;
 
 }
 
@@ -2336,7 +2258,7 @@ static esp_err_t config_apply(httpd_req_t *req,cJSON *o,bool restore) {
                    previous_cloud_limit!=settings.battery_cloud_limit_w || previous_assist_limit!=settings.battery_assist_limit_w) && settings.mode==MODE_PV) {
         int64_t now=now_ms();
         if(settings.zero_feed_enabled && fresh(now,house_power_at,house_meter_ttl()) &&
-           fresh(now,actual_at,wallbox_meter_ttl()) && (!settings.battery_protect || battery_ready_locked(now))) {
+           fresh(now,actual_at,wallbox_meter_ttl())) {
             settings.pv_surplus_a=pv_available_current_locked(now,house_power_w);
             pv_at=now;
             /* Preference changes use the normal ramp and deficit grace period.
@@ -2412,7 +2334,10 @@ static esp_err_t reboot_handler(httpd_req_t *req) {
 
     if(!authorized(req)) return ESP_OK;
 
-    LOCK(); settings.enabled=false; restarting=true; UNLOCK(); return ok_json(req);
+    LOCK();bool allowed=!ota_in_progress&&!backup_in_progress&&!evcc_configuring;
+    if(allowed){settings.enabled=false;restarting=true;}UNLOCK();
+    if(!allowed){httpd_resp_set_status(req,"409 Conflict");return httpd_resp_sendstr(req,"Wartung zuerst abschliessen. Neustart noch nicht ausgefuehrt.");}
+    return ok_json(req);
 
 }
 
@@ -2420,7 +2345,9 @@ static esp_err_t factory_handler(httpd_req_t *req) {
 
     if(!authorized(req)) return ESP_OK;
 
-    LOCK(); settings.enabled=false; restarting=true; factory_reset_requested=true; UNLOCK();
+    LOCK();bool allowed=!ota_in_progress&&!backup_in_progress&&!evcc_configuring;
+    if(allowed){settings.enabled=false;restarting=true;factory_reset_requested=true;}UNLOCK();
+    if(!allowed){httpd_resp_set_status(req,"409 Conflict");return httpd_resp_sendstr(req,"Wartung zuerst abschliessen. Werksreset noch nicht ausgefuehrt.");}
 
     return ok_json(req);
 
@@ -3188,6 +3115,7 @@ static void status_task(void *arg) {
     while(true) {
 
         int64_t now=now_ms(),epoch,midnight; uint32_t date=calendar(&epoch,&midnight); LOCK();
+        restore_control_memory_locked(now,date?epoch:0,false);
         if(reset_count_pending && now>=reset_clear_at && !backup_in_progress) { UNLOCK(); reset_sequence_clear(); LOCK(); }
 
         opendtu_apply_locked(now);
@@ -3200,7 +3128,12 @@ static void status_task(void *arg) {
         contacts_step_locked(now);
         phase_step_locked(now);
         relay_signals_locked(now);
-        pv_control_step_threshold(&pv_control,pv_permitted_locked(now),pv_ramp_available_phases(settings.pv_surplus_a,pv_control.target_a,actual_a,settings.charge_phases),active_min_a(),settings.max_charge_a,pv_start_threshold(&settings),now);
+        if(settings.mode==MODE_PV && settings.zero_feed_enabled && fresh(now,house_power_at,house_meter_ttl()) && fresh(now,actual_at,wallbox_meter_ttl())) {
+            settings.pv_surplus_a=pv_available_current_locked(now,house_power_w);pv_at=now;
+        }
+        bool assisted_start=battery_start_use && settings.battery_protect && battery_ready_locked(now) && battery_soc>settings.battery_reserve_soc;
+        pv_control_step_timed(&pv_control,pv_permitted_locked(now),pv_ramp_available_phases(settings.pv_surplus_a,pv_control.target_a,actual_a,settings.charge_phases),active_min_a(),settings.max_charge_a,
+            assisted_start?active_min_a():pv_start_threshold(&settings),assisted_start?0:EMS_PV_START_MS,now);
         /* Keep the anti-cycle detector on the deterministic one-second
            controller clock. HTTP rendering and frequent Wallbox requests
            must be read-only views of this state. */
@@ -3244,7 +3177,10 @@ static void status_task(void *arg) {
             fresh(now,battery_soc_at,EMS_INPUT_TTL)?battery_soc:NAN);
 
         if(event_log.sequence!=previous_event_sequence&&diagnostic_store_add(&fault_log,ems_event_recent(&event_log,0))){fault_dirty=true;fault_revision++;}
-        bool reboot=restarting,online=wifi_online,session_checkpoint=sessions.checkpoint,changed=energy.store.total_wh[0]!=saved_total[0] || energy.store.total_wh[1]!=saved_total[1]; UNLOCK();
+        /* A reboot releases GPIO12. Let the phase controller confirm zero
+           current and park the contactor first, also under evcc ownership. */
+        bool reboot=restarting && (!settings.phase_switch_enabled || !relay_on[0]),online=wifi_online,session_checkpoint=sessions.checkpoint,changed=energy.store.total_wh[0]!=saved_total[0] || energy.store.total_wh[1]!=saved_total[1]; UNLOCK();
+        bool flash_finished=false;
         if(xSemaphoreTake(maintenance_flash_lock,0)==pdTRUE){
         LOCK();bool persist_calibration=calibration_dirty && (reboot || now-calibration_saved_at>=1800000);
         float offset_to_save=settings.current_offset_a;UNLOCK();
@@ -3268,9 +3204,11 @@ static void status_task(void *arg) {
         if(persist_plan)save_plan();
 
         save_diagnostics(reboot);
+        save_control_memory(reboot);
+        flash_finished=true;
         xSemaphoreGive(maintenance_flash_lock);
         }
-        if(reboot) {
+        if(reboot && flash_finished) {
 
             vTaskDelay(ticks(1000));
 
@@ -3329,7 +3267,7 @@ void app_main(void) {
 
     }
 
-    load_settings(); expert_load(); terms_load(); evcc_load(); load_energy(); load_plan(); load_diagnostics();
+    load_settings(); expert_load(); load_control_memory(); terms_load(); evcc_load(); load_energy(); load_plan(); load_diagnostics();
     if(evcc_control.configured&&charge_plan.active){charge_plan.active=false;plan_phase=PLAN_OFF;plan_dirty=true;plan_revision++;} phase_setup(); contact_setup(); setenv("TZ","CET-1CEST,M3.5.0,M10.5.0/3",1); tzset();
     LOCK();esp_reset_reason_t reset=esp_reset_reason();event_locked(reset==ESP_RST_TASK_WDT||reset==ESP_RST_INT_WDT||reset==ESP_RST_WDT?"boot_watchdog":reset==ESP_RST_BROWNOUT?"boot_brownout":"boot");UNLOCK();
 

@@ -104,7 +104,8 @@ int main(void){
     near(feedback[0],8.1f);near(feedback[1],12.345f);near(feedback[2],65);near(watts,10937.6f);
     settings.charge_phases=1;
     assert(read_wallbox_network(feedback,&watts));
-    near(feedback[0],8.1f);near(feedback[1],0);near(feedback[2],0);near(watts,10937.6f);
+    near(feedback[0],8.1f);near(feedback[1],12.345f);near(feedback[2],65);near(watts,10937.6f);
+    assert(wallbox_inactive_phase_current(&settings,feedback));
     corrupt=7;assert(!read_wallbox_network(feedback,&watts));near(watts,10937.6f);
     corrupt=0;wifi_online=false;int previous_connects=connects;
     assert(!read_wallbox_network(feedback,&watts));assert(connects==previous_connects);

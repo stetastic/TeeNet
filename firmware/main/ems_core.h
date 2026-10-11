@@ -23,6 +23,7 @@
 #define EMS_BATTERY_BUFFER_MS (ems_param_ms(EP_BAT_BUFFER))
 #define EMS_BATTERY_BUFFER_RECOVERY_MS (ems_param_ms(EP_BAT_RECOVERY))
 #define EMS_PV_START_MS (ems_param_ms(EP_PV_START))
+#define EMS_BATTERY_RESPONSE_MS 45000
 
 typedef enum { MODE_OFF, MODE_MANUAL, MODE_GRID_LIMIT, MODE_PV } control_mode_t;
 typedef struct {
@@ -173,6 +174,7 @@ bool settings_valid(const settings_t *s);
 bool settings_decode(const void *blob, size_t length, settings_t *out);
 bool settings_apply_live(settings_t *runtime, const settings_t *before, const settings_t *after);
 bool reconstruct_currents(float values[3], unsigned coils);
+bool wallbox_inactive_phase_current(const settings_t *settings,const float actual[3]);
 typedef struct { uint16_t current_register, power_register; unsigned phases; } sdm_profile_t;
 const sdm_profile_t *sdm_profile(const char *type);
 bool decode_sdm_reading(const sdm_profile_t *profile, uint8_t address,
@@ -190,10 +192,14 @@ float battery_assisted_current(const settings_t *s, const float actual[3], float
                               float soc, bool battery_fresh, float discharge_w, bool discharge_fresh,
                               bool allow_battery, bool charging);
 typedef struct {
-    int64_t started_at, recovery_at;
-    bool active;
+    int64_t started_at, recovery_at, cloud_response_at, assist_response_at, last_at;
+    bool started, active, assist_active;
     uint32_t remaining_ms;
 } battery_buffer_t;
+typedef struct { bool fresh, conflicting; float net_w, charge_w, discharge_w; } battery_power_t;
+battery_power_t battery_power_normalize(float charge_w,float discharge_w,int64_t charge_at,int64_t discharge_at,int64_t now,int64_t ttl);
+float battery_support_current(battery_buffer_t *buffer,const settings_t *s,const float actual[3],float grid_w,float soc,
+    bool soc_fresh,float discharge_w,bool power_fresh,bool cloud_enabled,bool assist_enabled,bool charging,float minimum_a,int64_t now);
 float battery_cloud_current(battery_buffer_t *buffer, const settings_t *s,
                             const float actual[3], float grid_w, float soc,
                             bool battery_fresh, float discharge_w, bool discharge_fresh,
@@ -212,8 +218,17 @@ void pv_control_step(pv_control_t *control, bool permitted, float available_a,
                      float minimum_a, float maximum_a, int64_t now);
 void pv_control_step_threshold(pv_control_t *control, bool permitted, float available_a,
     float minimum_a, float maximum_a, float start_a, int64_t now);
+void pv_control_step_timed(pv_control_t *control,bool permitted,float available_a,float minimum_a,float maximum_a,float start_a,int64_t start_delay_ms,int64_t now);
 bool pv_control_takeover(pv_control_t *control, bool permitted, float previous_target,
     const float actual[3], unsigned phases, float minimum, float maximum, int64_t now);
+typedef struct {
+    uint32_t version,flags,cloud_ms,cooldown_ms;
+    int64_t cloud_epoch_ms,cooldown_epoch_ms;
+    uint32_t checksum;
+} control_memory_t;
+void control_memory_capture(control_memory_t *memory,const battery_buffer_t *buffer,const pv_control_t *pv,bool cloud_enabled,bool assist_enabled,int64_t now,int64_t epoch_ms);
+bool control_memory_valid(const control_memory_t *memory,size_t size);
+void control_memory_restore(const control_memory_t *memory,battery_buffer_t *buffer,pv_control_t *pv,int64_t now,int64_t epoch_ms);
 bool parse_number(const char *text, double lo, double hi, double *out);
 bool parse_mode(const char *text, control_mode_t *out);
 const char *mode_name(control_mode_t mode);

@@ -44,6 +44,7 @@ static cJSON *expert_snapshot(void){
     cJSON_AddBoolToObject(root,"pending",pending);
     return root;
 }
+#include "expert_storage.inc"
 static esp_err_t expert_post(httpd_req_t *req){
     if(!authorized(req))return ESP_OK;
     if(now_ms()<expert_wrong_until){httpd_resp_set_status(req,"429 Too Many Requests");return httpd_resp_sendstr(req,"Kurz warten und erneut versuchen.");}
@@ -55,9 +56,7 @@ static esp_err_t expert_post(httpd_req_t *req){
     }
     if(!cJSON_IsString(action)){cJSON_Delete(o);return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Aktion fehlt.");}
     if(!strcmp(action->valuestring,"read")){cJSON_Delete(o);return send_json(req,expert_snapshot());}
-    LOCK();bool stopped=!settings.enabled && !ota_in_progress && !restarting && !backup_in_progress &&
-        !evcc_configuring && !(evcc_control.configured&&evcc_control.enabled) && phase_state==PHASE_READY &&
-        fresh(now_ms(),actual_at,wallbox_meter_ttl()) && actual_a[0]<1 && actual_a[1]<1 && actual_a[2]<1;UNLOCK();
+    LOCK();bool stopped=expert_stopped_locked();UNLOCK();
     if(!stopped){cJSON_Delete(o);httpd_resp_set_status(req,"409 Conflict");return httpd_resp_sendstr(req,"Ladung zuerst stoppen; frische Messwerte unter 1 A erforderlich.");}
     if(!strcmp(action->valuestring,"config")){
         cJSON *changes=cJSON_DetachItemFromObjectCaseSensitive(o,"changes");cJSON_Delete(o);
@@ -79,15 +78,13 @@ static esp_err_t expert_post(httpd_req_t *req){
     cJSON_Delete(o);
     if(!expert_valid(&next) || next.values[EP_MIN_CURRENT]>saved_settings.max_charge_a)
         return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Grenzen pruefen: Mindeststrom, Stillstandszeit, Messwartezeit und evcc-Frist muessen zueinander passen.");
-    if(memcmp(next.values,expert_saved.values,sizeof(next.values))){
-        nvs_handle_t nvs;esp_err_t err=nvs_open("expert",NVS_READWRITE,&nvs);
-        if(err==ESP_OK){err=nvs_set_blob(nvs,"values",&next,sizeof(next));if(err==ESP_OK)err=nvs_commit(nvs);nvs_close(nvs);}
-        if(err!=ESP_OK)return httpd_resp_send_err(req,HTTPD_500_INTERNAL_SERVER_ERROR,"Regelparameter konnten nicht gespeichert werden.");
-        LOCK();expert_saved=next;UNLOCK();
+    esp_err_t err=save_expert_values(&next);
+    if(err==ESP_ERR_INVALID_STATE || err==ESP_ERR_TIMEOUT){
+        httpd_resp_set_status(req,"409 Conflict");return httpd_resp_sendstr(req,"Ladung oder Wartung aktiv. Regelparameter noch nicht gespeichert.");
     }
+    if(err!=ESP_OK)return httpd_resp_send_err(req,HTTPD_500_INTERNAL_SERVER_ERROR,"Regelparameter konnten nicht gespeichert werden.");
     cJSON *result=cJSON_CreateObject();cJSON_AddBoolToObject(result,"ok",true);
-    bool pending=false;for(unsigned p=0;p<EP_COUNT;p++)pending|=fabsf(expert_saved.values[p]-ems_param(p))>.00001f;
-    LOCK();expert_reboot_pending=pending;bool needs_reboot=restart_pending();UNLOCK();
+    LOCK();bool pending=expert_reboot_pending,needs_reboot=restart_pending();UNLOCK();
     cJSON_AddBoolToObject(result,"restart_needed",pending);cJSON_AddBoolToObject(result,"reboot_required",needs_reboot);
     return send_json(req,result);
 }

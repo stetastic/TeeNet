@@ -31,8 +31,8 @@ static void evcc_load(void) {
 
 static bool evcc_ready_locked(int64_t now) {
     return terms_accepted && evcc_shell_fresh(&evcc_shell,evcc_shell_at,now) && evcc_shell.state!='F' &&
-        feedback_ready(now) && fresh(now,meter_at,EMS_METER_TTL) && fresh(now,actual_at,EMS_METER_TTL) &&
-        wallbox_ready && fresh(now,wallbox_at,10000) && !reboot_required && !restarting && !ota_in_progress &&
+        feedback_ready(now) && fresh(now,meter_at,wallbox_meter_ttl()) && fresh(now,actual_at,wallbox_meter_ttl()) &&
+        wallbox_ready && fresh(now,wallbox_at,ems_param_ms(EP_SHELL_TTL)) && !restart_pending() && !restarting && !ota_in_progress &&
         !charge_guard_blocked(&charge_guard,now) && (!settings.phase_switch_enabled || (phase_gpio_ready && phase_state!=PHASE_FAULT && !phase_idle_inhibit));
 }
 
@@ -56,7 +56,7 @@ static esp_err_t evcc_config_post(httpd_req_t *req) {
     if(valid)strcpy(selected,host->valuestring);
     cJSON_Delete(o);
     if(!valid)return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Shell-Adresse und evcc-Auswahl pruefen.");
-    LOCK();bool stopped=!settings.enabled && fresh(now_ms(),actual_at,EMS_METER_TTL) &&
+    LOCK();bool stopped=!settings.enabled && fresh(now_ms(),actual_at,wallbox_meter_ttl()) &&
         actual_a[0]<1 && actual_a[1]<1 && actual_a[2]<1 && (!settings.phase_switch_enabled || phase_state==PHASE_READY);
     bool ready=settings.evcc_feature_enabled&&!reboot_required&&!restarting&&!ota_in_progress;
     if(!active || (stopped && ready))evcc_configuring=true;
@@ -86,7 +86,7 @@ static esp_err_t evcc_status_get(httpd_req_t *req) {
     cJSON *o=cJSON_CreateObject();if(!o)return send_json(req,NULL);
     LOCK();int64_t now=now_ms();evcc_touch(&evcc_control,now);
     bool known=evcc_shell_fresh(&evcc_shell,evcc_shell_at,now);
-    bool meter_ok=feedback_ready(now)&&fresh(now,meter_at,EMS_METER_TTL)&&fresh(now,actual_at,EMS_METER_TTL);
+    bool meter_ok=feedback_ready(now)&&fresh(now,meter_at,wallbox_meter_ttl())&&fresh(now,actual_at,wallbox_meter_ttl());
     char status[2]={known?evcc_shell.state:'?',0};
     cJSON_AddStringToObject(o,"status",status);cJSON_AddStringToObject(o,"raw_statuscar",evcc_shell.raw);
     cJSON_AddStringToObject(o,"status_reason",evcc_shell_at && now-evcc_shell_at>=EVCC_SHELL_TTL_MS?"shell_status_stale":evcc_shell.reason);

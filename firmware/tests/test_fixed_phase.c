@@ -10,16 +10,22 @@ int main(void){
  s.version=19;size_t old_length=(offsetof(settings_t,fixed_charge_phases)+3)&~(size_t)3;
  unsigned char blob[sizeof(s)];memcpy(blob,&s,sizeof(s));memset(blob+offsetof(settings_t,fixed_charge_phases),0xff,old_length-offsetof(settings_t,fixed_charge_phases));
  assert(settings_decode(blob,old_length,&loaded));assert(loaded.fixed_charge_phases==3 && loaded.charge_phases==3);
- settings_defaults(&s);s.min_charge_a=8;s.fixed_charge_phases=1;s.charge_phases=s.manual_phases=1;s.enabled=true;s.mode=MODE_MANUAL;
+ settings_defaults(&s);s.min_charge_a=8;s.fixed_charge_phases=1;s.charge_phases=s.manual_phases=1;s.enabled=true;s.mode=MODE_MANUAL;s.current_offset_a=0;
  assert(settings_valid(&s));assert(settings_decode(&s,sizeof(s),&loaded));assert(!loaded.enabled&&loaded.charge_phases==1&&loaded.manual_phases==1);
  float a[]={8,8,8};near(estimated_charge_power(&s,a),1840);near(solar_current(&s,a,920),4);
  near(charge_plan_maximum_kw(&s,true,false),3.68f);
  s.manual_current_a=6;near(control_target(&s,true,true,true),0);
  s.manual_current_a=8;near(control_target(&s,true,true,true),8);
- float out[3];control_report(&s,a,8,0,true,out);near(out[0],s.grid_limit_a+s.current_offset_a);
+ float out[3];control_report(&s,a,8,0,true,out);near(out[0],s.grid_limit_a);
  near(out[1],0);near(out[2],0);
  control_report(&s,a,0,0,false,out);near(out[0],49);near(out[1],0);near(out[2],0);
- float only_l1[]={8,NAN,NAN};control_report(&s,only_l1,8,0,false,out);near(out[0],32.8f);near(out[1],0);near(out[2],0);
+ float only_l1[]={8,NAN,NAN};control_report(&s,only_l1,8,0,false,out);near(out[0],32);near(out[1],0);near(out[2],0);
+ /* Both one-phase modes retain the commissioned actuator compensation. */
+ s.mode=MODE_PV;s.current_offset_a=2;control_report(&s,only_l1,8,0,false,out);near(out[0],34);
+ float low_l1[]={7.9f,NAN,NAN};control_report(&s,low_l1,8.7f,0,false,out);near(out[0],33.2f);
+ s.mode=MODE_MANUAL;s.current_offset_a=.8f;
+ control_report(&s,only_l1,8.7f,0,false,out);near(out[0],32);
+ control_report(&s,only_l1,8,0,false,out);near(out[0],32.8f);
  manual_report_filter_t filter={.active=true,.last_ms=1000,.reported={20,30,40}};
  out[0]=32;out[1]=out[2]=35;manual_report_smooth(&filter,&s,8,3000,out);near(out[1],0);near(out[2],0);
  s.grid_guard_enabled=true;float house[]={45,80,90};grid_guard_report(&s,true,house,out);near(out[0],45);near(out[1],0);near(out[2],0);
@@ -38,6 +44,16 @@ int main(void){
  out[0]=31;manual_report_smooth(&filter,&s,8.7f,13000,out);near(out[0],31.4f);
  out[0]=49;manual_report_smooth(&filter,&s,8.7f,15000,out);near(out[0],49);assert(!filter.active);
  out[0]=49;manual_report_smooth(&filter,&s,0,17000,out);near(out[0],49);near(out[1],0);near(out[2],0);
+
+ /* Switching the control policy must not bypass the proven one-phase ramp. */
+ manual_report_filter_t manual={0},pv={0};settings_t pv_settings=s;pv_settings.mode=MODE_PV;
+ const float sequence[]={24,39,32.8f,32,33,31,31,49};
+ for(unsigned i=0;i<sizeof(sequence)/sizeof(sequence[0]);i++){
+  float m[]={sequence[i],9,9},v[]={sequence[i],9,9};
+  manual_report_smooth(&manual,&s,8.7f,1000+2000*i,m);
+  manual_report_smooth(&pv,&pv_settings,8.7f,1000+2000*i,v);
+  for(unsigned p=0;p<3;p++)near(m[p],v[p]);
+ }
 
  settings_t before=s;before.fixed_charge_phases=3;assert(!settings_apply_live(&s,&before,&s));
  s.phase_switch_enabled=true;s.relay_board_enabled=true;s.relay1_mode=3;assert(!settings_valid(&s));

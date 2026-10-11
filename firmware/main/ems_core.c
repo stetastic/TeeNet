@@ -438,6 +438,14 @@ bool reconstruct_currents(float values[3],unsigned coils) {
     for(unsigned i=coils;i<3;i++) values[i]=sum/coils;
     return true;
 }
+bool wallbox_inactive_phase_current(const settings_t *s,const float actual[3]) {
+    const sdm_profile_t *profile=sdm_profile(s->wallbox_meter_type);
+    bool measured_three=(!strcmp(s->wallbox_meter_type,"xemex")&&s->xemex_coils==3) ||
+        (profile&&profile->phases==3) || !strcmp(s->wallbox_meter_type,"shelly_gen2") ||
+        !strcmp(s->wallbox_meter_type,"em24_tcp");
+    /* Reconstructed L2/L3 from one coil are not independent measurements. */
+    return s->charge_phases==1 && measured_three && (actual[1]>=1 || actual[2]>=1);
+}
 float estimated_charge_power(const settings_t *s,const float currents[3]) {
     float sum=0,peak=0;
     for(int p=0;p<s->charge_phases;p++) {
@@ -496,7 +504,7 @@ float pv_start_threshold(const settings_t *s) {
 
 float battery_solar_current(const settings_t *s,const float actual[3],float grid_w,float soc,bool battery_fresh,float discharge_w,bool discharge_fresh) {
     if(!s->battery_protect) return solar_current(s,actual,grid_w);
-    if(!battery_fresh || !range(soc,0,100) || soc<=s->battery_reserve_soc) return 0;
+    (void)soc; (void)battery_fresh; /* Reserve blocks battery support, never genuine PV. */
     /* Grid power already includes inverter output. When the battery must be
        spared, remove its measured discharge from apparent PV surplus. If that
        telemetry is stale, reserve the full rated 4 kW conservatively. */
@@ -514,7 +522,7 @@ bool parse_number(const char *text, double lo, double hi, double *out) {
 float battery_assisted_current(const settings_t *s,const float actual[3],float grid_w,float soc,bool valid,float discharge_w,bool discharge_fresh,bool allow,bool charging) {
     float protected=battery_solar_current(s,actual,grid_w,soc,valid,discharge_w,discharge_fresh);
     if(!allow || !s->battery_protect) return protected;
-    if(!valid || !range(soc,0,100) || soc<=s->battery_reserve_soc) return 0;
+    if(!valid || !range(soc,0,100) || soc<=s->battery_reserve_soc) return protected;
     if(!discharge_fresh || !range(discharge_w,0,12000)) return protected;
     /* Before charging, add only the unused part of the configured battery
        allowance. Once charging, remove discharge above that allowance. */
@@ -526,21 +534,55 @@ float battery_assisted_current(const settings_t *s,const float actual[3],float g
 static void battery_buffer_reset(battery_buffer_t *buffer) {
     memset(buffer,0,sizeof(*buffer));
 }
+battery_power_t battery_power_normalize(float charge,float discharge,int64_t charge_at,int64_t discharge_at,int64_t now,int64_t ttl) {
+    battery_power_t power={0};
+    if(!fresh(now,charge_at,ttl)||!fresh(now,discharge_at,ttl)||!range(charge,0,30000)||!range(discharge,0,12000))return power;
+    power.fresh=true;power.conflicting=charge>50&&discharge>50;
+    /* MQTT sends the two directions separately. Prefer the newer direction
+       during a transition; simultaneous samples represent one net flow. */
+    if(power.conflicting&&charge_at!=discharge_at)power.net_w=charge_at>discharge_at?charge:-discharge;
+    else power.net_w=charge-discharge;
+    power.charge_w=fmaxf(0,power.net_w);power.discharge_w=fmaxf(0,-power.net_w);return power;
+}
+static float battery_response_current(int64_t *response_at,const settings_t *s,const float actual[3],float grid_w,
+    float protected,float discharge,float allowance,float minimum,int64_t now) {
+    float observed=solar_current(s,actual,grid_w+fmaxf(0,discharge-allowance));
+    float possible=fminf(s->max_charge_a,protected+allowance/(s->nominal_v*s->charge_phases));
+    if(observed>=minimum||possible<minimum){*response_at=0;return observed;}
+    /* The vehicle can still be ramping below the minimum request while the
+       inverter already covers it. Judge the response by the measured grid
+       balance, rather than treating a slow vehicle as a failed battery.
+       Preserve only the minimum request, with confirmed discharge and enough
+       configured headroom. Persistent grid import still expires below. */
+    if(discharge>50 && grid_w+fmaxf(0,discharge-allowance)<=100) {
+        *response_at=0;return fmaxf(observed,fminf(minimum,possible));
+    }
+    if(!*response_at)*response_at=now;
+    /* Allow one bounded inverter/telemetry response interval. A battery that
+       fails to supply power must not turn into unlimited grid charging. */
+    return now>=*response_at&&now-*response_at<EMS_BATTERY_RESPONSE_MS?minimum:observed;
+}
 float battery_cloud_current(battery_buffer_t *buffer,const settings_t *s,
                             const float actual[3],float grid_w,float soc,
                             bool battery_fresh,float discharge_w,bool discharge_fresh,
                             bool enabled,bool charging,float minimum_a,int64_t now) {
     float protected=battery_solar_current(s,actual,grid_w,soc,battery_fresh,discharge_w,discharge_fresh);
     if(!buffer) return protected;
-    buffer->active=false; buffer->remaining_ms=0;
+    /* A pause or missing control/input interval is not continuous PV recovery.
+       Preserve the original cloud deadline, but restart recovery validation. */
+    if(buffer->last_at>0 && (now<buffer->last_at || now-buffer->last_at>5000))buffer->recovery_at=0;
+    buffer->last_at=now;
+    buffer->active=false;
+    buffer->remaining_ms=buffer->started&&now>=buffer->started_at&&now-buffer->started_at<EMS_BATTERY_BUFFER_MS?(uint32_t)(EMS_BATTERY_BUFFER_MS-(now-buffer->started_at)):0;
     if(!enabled || !s->battery_protect || !battery_fresh || !range(soc,0,100) ||
-       soc<=s->battery_reserve_soc || !charging || !range(minimum_a,EMS_MIN_CHARGE_A,63)) {
-        battery_buffer_reset(buffer); return protected;
+       soc<=s->battery_reserve_soc || !range(minimum_a,EMS_MIN_CHARGE_A,63)) {
+        buffer->cloud_response_at=0;buffer->recovery_at=0;return protected;
     }
+    if(!charging){buffer->recovery_at=0;return protected;} /* A restart/phase pause does not refill the timer. */
     /* A full minute of PV-only operation rearms the complete cloud allowance.
        Short sunny gaps therefore do not create an unlimited repeated drain. */
     if(protected>=minimum_a) {
-        if(buffer->started_at>0) {
+        if(buffer->started) {
             if(buffer->recovery_at<=0) buffer->recovery_at=now;
             if(now>=buffer->recovery_at && now-buffer->recovery_at>=EMS_BATTERY_BUFFER_RECOVERY_MS)
                 battery_buffer_reset(buffer);
@@ -548,25 +590,44 @@ float battery_cloud_current(battery_buffer_t *buffer,const settings_t *s,
         return protected;
     }
     buffer->recovery_at=0;
-    if(buffer->started_at<=0) buffer->started_at=now;
+    if(!buffer->started) {buffer->started=true;buffer->started_at=now;}
     if(now<buffer->started_at || now-buffer->started_at>=EMS_BATTERY_BUFFER_MS) return protected;
     buffer->remaining_ms=(uint32_t)(EMS_BATTERY_BUFFER_MS-(now-buffer->started_at));
-    if(!discharge_fresh || !range(discharge_w,0,12000) || discharge_w<1) return protected;
+    if(!discharge_fresh || !range(discharge_w,0,12000)) return protected;
     /* Remove discharge above the configured cloud-buffer allowance from the
        apparent PV surplus before calculating current. */
-    float excess=fmaxf(0,discharge_w-s->battery_cloud_limit_w);
-    float supported=solar_current(s,actual,grid_w+excess);
+    float supported=battery_response_current(&buffer->cloud_response_at,s,actual,grid_w,protected,discharge_w,s->battery_cloud_limit_w,minimum_a,now);
+    supported=fminf(minimum_a,supported);
     buffer->active=supported>=minimum_a && supported>protected+0.05f;
     return supported;
+}
+float battery_support_current(battery_buffer_t *buffer,const settings_t *s,const float actual[3],float grid_w,float soc,
+    bool soc_fresh,float discharge,bool power_fresh,bool cloud,bool assist,bool charging,float minimum,int64_t now) {
+    float available=battery_cloud_current(buffer,s,actual,grid_w,soc,soc_fresh,discharge,power_fresh,cloud,charging,minimum,now);
+    buffer->assist_active=false;
+    if(!assist||!s->battery_protect||!soc_fresh||!power_fresh||!range(soc,0,100)||soc<=s->battery_reserve_soc){buffer->assist_response_at=0;return available;}
+    float supported=battery_assisted_current(s,actual,grid_w,soc,soc_fresh,discharge,power_fresh,true,charging);
+    float protected=battery_solar_current(s,actual,grid_w,soc,soc_fresh,discharge,power_fresh);
+    if(!charging) {
+        if(protected>=minimum)buffer->assist_response_at=0;
+        else if(buffer->assist_response_at>0&&now-buffer->assist_response_at>=EMS_BATTERY_RESPONSE_MS)
+            supported=protected; /* No automatic retry loop after refused battery power. */
+    }
+    if(charging) {
+        supported=battery_response_current(&buffer->assist_response_at,s,actual,grid_w,protected,discharge,s->battery_assist_limit_w,minimum,now);
+    }
+    buffer->assist_active=charging&&supported>available+0.05f;
+    return fmaxf(available,supported);
 }
 float pv_ramp_available_phases(float available,float target,const float actual[3],unsigned phases) {
     if(phases!=1 && phases!=3) return 0;
     if(target<=0) return available; /* start threshold uses actual surplus */
     float sum=0,peak=0;
     for(unsigned p=0;p<phases;p++) { if(!range(actual[p],0,999)) return 0; sum+=actual[p]; peak=fmaxf(peak,actual[p]); }
-    /* No upward ramp before the vehicle draws current; keep the start request.
-       Afterwards allow at most 1 A ahead of measured vehicle current. */
-    return fminf(available,peak<1?target:sum/phases+ems_param(EP_PV_LEAD));
+    /* Limit only upward movement ahead of the measured vehicle. A slow EV
+       start must not fabricate a PV shortage below the existing request.
+       Genuine energy deficits still pass through the outer minimum. */
+    return fminf(available,peak<1?target:fmaxf(target,sum/phases+ems_param(EP_PV_LEAD)));
 }
 float pv_ramp_available(float available,float target,const float actual[3]) {
     return pv_ramp_available_phases(available,target,actual,3);
@@ -575,28 +636,32 @@ static void pv_stop(pv_control_t *c,int64_t now) {
     if(c->target_a>0) { c->stopped=true; c->stopped_at=now; }
     c->target_a=0; c->above_at=-1; c->below_at=-1; c->wait_ms=0;
 }
-void pv_control_step_threshold(pv_control_t *c,bool permitted,float available,float minimum,float maximum,float start_threshold,int64_t now) {
+void pv_control_step_timed(pv_control_t *c,bool permitted,float available,float minimum,float maximum,float start_threshold,int64_t start_delay,int64_t now) {
     bool clock_reset=c->initialized && now<c->last_at;
     bool stalled=c->initialized && now-c->last_at>5000;
     if(!c->initialized || clock_reset) {
         memset(c,0,sizeof(*c)); c->initialized=true; c->above_at=-1; c->below_at=-1;
-        if(clock_reset) { c->stopped=true; c->stopped_at=now; }
+        /* A reset needs fresh start validation, not a fabricated PV deficit. */
     }
     c->last_at=now; c->wait_ms=0;
     if(!permitted || stalled || !range(available,0,63) || !range(minimum,6,63) || !range(maximum,minimum,63) || !range(start_threshold,minimum,maximum)) {
-        pv_stop(c,now); c->phase=PV_BLOCKED; return;
+        bool was_running=c->target_a>0;pv_stop(c,now);
+        if(was_running){c->stopped=false;c->stopped_at=0;}
+        c->phase=PV_BLOCKED; return;
     }
     if(c->target_a<=0) {
+        if(available+0.0001f<start_threshold)c->above_at=-1;
+        else if(c->above_at<0)c->above_at=now;
         if(c->stopped && now-c->stopped_at<ems_param_ms(EP_PV_COOLDOWN)) {
-            c->phase=PV_COOLDOWN; c->above_at=-1;
+            c->phase=PV_COOLDOWN;
             c->wait_ms=(uint32_t)(ems_param_ms(EP_PV_COOLDOWN)-(now-c->stopped_at)); return;
         }
         if(available+0.0001f<start_threshold) { c->above_at=-1; c->phase=PV_WAITING; return; }
         if(c->above_at<0) c->above_at=now;
-        if(now-c->above_at<EMS_PV_START_MS) {
-            c->phase=PV_STARTING; c->wait_ms=(uint32_t)(EMS_PV_START_MS-(now-c->above_at)); return;
+        if(now-c->above_at<start_delay) {
+            c->phase=PV_STARTING; c->wait_ms=(uint32_t)(start_delay-(now-c->above_at)); return;
         }
-        c->target_a=start_threshold; c->adjusted_at=now; c->below_at=-1; c->phase=PV_RUNNING;
+        c->target_a=start_threshold; c->adjusted_at=now; c->below_at=-1; c->stopped=false; c->phase=PV_RUNNING;
         return;
     }
     if(available<minimum-ems_param(EP_PV_DEFICIT)) {
@@ -615,6 +680,9 @@ void pv_control_step_threshold(pv_control_t *c,bool permitted,float available,fl
         c->adjusted_at=now;
     }
 }
+void pv_control_step_threshold(pv_control_t *c,bool permitted,float available,float minimum,float maximum,float start_threshold,int64_t now) {
+    pv_control_step_timed(c,permitted,available,minimum,maximum,start_threshold,EMS_PV_START_MS,now);
+}
 void pv_control_step(pv_control_t *c,bool permitted,float available,float minimum,float maximum,int64_t now) {
     pv_control_step_threshold(c,permitted,available,minimum,maximum,fminf(maximum,minimum+ems_param(EP_PV_START_MARGIN)),now);
 }
@@ -628,6 +696,37 @@ bool pv_control_takeover(pv_control_t *c,bool permitted,float previous,
     c->above_at=c->below_at=-1;c->phase=PV_RUNNING;
     c->target_a=fmaxf(minimum,fminf(previous,sum/phases));
     return true;
+}
+
+static uint32_t control_memory_checksum(const control_memory_t *memory) {
+    const uint8_t *bytes=(const uint8_t *)memory;uint32_t value=2166136261u;
+    for(size_t i=0;i<offsetof(control_memory_t,checksum);i++)value=(value^bytes[i])*16777619u;
+    return value;
+}
+void control_memory_capture(control_memory_t *m,const battery_buffer_t *b,const pv_control_t *pv,bool cloud,bool assist,int64_t now,int64_t epoch) {
+    memset(m,0,sizeof(*m));m->version=1;m->flags=(cloud?1u:0u)|(assist?2u:0u)|(b->started?4u:0u);
+    int64_t left=b->started?EMS_BATTERY_BUFFER_MS-(now-b->started_at):0;
+    m->cloud_ms=(uint32_t)fmax(0,fmin(EMS_BATTERY_BUFFER_MS,left));
+    left=pv->stopped&&pv->target_a<=0?ems_param_ms(EP_PV_COOLDOWN)-(now-pv->stopped_at):0;
+    m->cooldown_ms=(uint32_t)fmax(0,fmin(ems_param_ms(EP_PV_COOLDOWN),left));
+    if(epoch>0){if(m->cloud_ms)m->cloud_epoch_ms=epoch+m->cloud_ms;if(m->cooldown_ms)m->cooldown_epoch_ms=epoch+m->cooldown_ms;}
+    m->checksum=control_memory_checksum(m);
+}
+bool control_memory_valid(const control_memory_t *m,size_t size) {
+    return m&&size==sizeof(*m)&&m->version==1&&m->flags<8&&m->cloud_ms<=3600000u&&m->cooldown_ms<=3600000u&&
+        m->cloud_epoch_ms>=0&&m->cooldown_epoch_ms>=0&&m->checksum==control_memory_checksum(m);
+}
+void control_memory_restore(const control_memory_t *m,battery_buffer_t *b,pv_control_t *pv,int64_t now,int64_t epoch) {
+    memset(b,0,sizeof(*b));memset(pv,0,sizeof(*pv));
+    /* Never restore an active current request. Only preferences and deadlines. */
+    if(m->flags&4u){
+        int64_t left=epoch>0&&m->cloud_epoch_ms>0?m->cloud_epoch_ms-epoch:0;
+        b->remaining_ms=(uint32_t)fmax(0,fmin(EMS_BATTERY_BUFFER_MS,fmin(m->cloud_ms,left)));b->started=true;
+        b->started_at=now-(EMS_BATTERY_BUFFER_MS-b->remaining_ms);
+    }
+    int64_t left=epoch>0&&m->cooldown_epoch_ms>0?m->cooldown_epoch_ms-epoch:m->cooldown_ms;
+    left=(int64_t)fmax(0,fmin(ems_param_ms(EP_PV_COOLDOWN),fmin(m->cooldown_ms,left)));
+    if(left>0){pv->initialized=true;pv->last_at=now;pv->above_at=pv->below_at=-1;pv->stopped=true;pv->stopped_at=now-(ems_param_ms(EP_PV_COOLDOWN)-left);pv->phase=PV_COOLDOWN;pv->wait_ms=(uint32_t)left;}
 }
 
 const char *mode_name(control_mode_t m) {
@@ -754,7 +853,7 @@ void control_report(const settings_t *s,const float actual[3],float target,float
            settles above its DLB request, so compensate that measured offset.
            The protocol floor remains 6 A; the commissioned 8 A floor applies
            to the measured target and must not suppress this compensation. */
-        if(desired>0) desired=fmaxf(EMS_MIN_CHARGE_A,desired-s->current_offset_a);
+        if(desired>0)desired=fmaxf(EMS_MIN_CHARGE_A,desired-s->current_offset_a);
         /* A stop must remove the entire configured charging headroom, including
            while the car is still drawing current. A 1 A overload is only a
            small reduction request, not an unambiguous zero-headroom request.
@@ -908,7 +1007,10 @@ void manual_report_smooth(manual_report_filter_t *filter,const settings_t *s,flo
         report[1]=report[2]=0;
         filter->reported[1]=filter->reported[2]=0;
     }
-    if(s->mode!=MODE_MANUAL||target<=0||!isfinite(target)) { filter->active=false; return; }
+    /* The same one-phase actuator must use the same feedback timing in PV
+       and manual operation. The former bypass in PV made the compensated
+       minimum undershoot; removing compensation instead left an overshoot. */
+    if((s->mode!=MODE_MANUAL && !(s->mode==MODE_PV && s->charge_phases==1))||target<=0||!isfinite(target)) { filter->active=false; return; }
     if(s->charge_phases==1) {
         /* A lagging synthetic overload keeps lowering the Shell limit even
            after measured L1 has fallen. Release an obsolete reduction at once;
