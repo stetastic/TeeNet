@@ -80,7 +80,7 @@ static void pv_replay(void) {
     s.version=17;s.charge_plan_enabled=true;
     assert(settings_decode(&s,(offsetof(settings_t,charge_plan_enabled)+3)&~(size_t)3,&out));
     assert(!out.charge_plan_enabled && out.min_charge_a==8.7f && out.max_charge_a==16);
-    settings_defaults(&s);settings_t runtime=s,next=s;runtime.enabled=true;runtime.mode=MODE_MANUAL;
+    settings_defaults(&s);s.basic_mode=false;settings_t runtime=s,next=s;runtime.enabled=true;runtime.mode=MODE_MANUAL;
     next.charge_plan_enabled=true;assert(settings_apply_live(&runtime,&s,&next));
     assert(runtime.charge_plan_enabled && runtime.enabled && runtime.mode==MODE_MANUAL);
     s=next;next.charge_plan_enabled=false;assert(settings_apply_live(&runtime,&s,&next));

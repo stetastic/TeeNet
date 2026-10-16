@@ -12,6 +12,9 @@ async function press(state){context.state=state;calls.length=0;await submit({pre
   assert.equal(context.chargeButtonLabel({enabled:true,mode:'pv'},true,false),'PV wartet · Stoppen');
   assert.equal(context.chargeButtonLabel({enabled:false},true,true),'Stoppt …');
   assert.equal(context.chargeButtonLabel({},false,false),'Verbindung fehlt');
+  assert.equal(context.chargeButtonLabel({enabled:true,phase_state:'fehler',can_unlock:false},true,false),'Gestört · Stoppen');
+  assert.deepEqual(await press({enabled:true,phase_state:'fehler',can_unlock:false}),[{enabled:false,mode:'off'}]);
+  assert.deepEqual(await press({phase_test_active:true}),[{stop:true}]);
   assert.deepEqual(await press({enabled:true}),[{enabled:false,mode:'off'}]);
   assert.deepEqual(await press({enabled:false,feedback_ok:true,actual_a:[0,0,0]}),[{mode:'manual',current_a:9.42,manual_phases:3,enabled:true,restart:true}]);
   assert.deepEqual(await press({enabled:false,feedback_ok:true,actual_a:[5,5,5]}),[], 'A pending stop must not become an accidental restart');

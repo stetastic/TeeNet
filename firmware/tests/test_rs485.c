@@ -13,7 +13,7 @@ int main(void){
  s.meter_rs485_interface=1;strcpy(s.meter_rs485_host,"192.168.1.20");assert(!settings_valid(&s));
  strcpy(s.meter_rs485_host,"192.168.1.20:8900");assert(settings_valid(&s));
  s.house_rs485_interface=1;strcpy(s.house_meter_type,"sdm630");strcpy(s.house_rs485_host,"192.168.1.20:8901");assert(settings_valid(&s));
- s.evcc_feature_enabled=true;assert(settings_decode(&s,sizeof(s),&o));
+ s.basic_mode=false;s.evcc_feature_enabled=true;assert(settings_decode(&s,sizeof(s),&o));
  assert(o.shell_rs485_interface==1 && o.meter_rs485_interface==1 && o.house_rs485_interface==1 && o.evcc_feature_enabled);
  assert(!strcmp(o.shell_rs485_host,s.shell_rs485_host));
  settings_t live,stored;settings_defaults(&live);stored=live;assert(!settings_apply_live(&live,&stored,&s));assert(live.shell_rs485_interface==0);

@@ -8,11 +8,14 @@
 #include "diagnostic_store.h"
 #include "firmware_check.h"
 #include "hardware_profile.h"
+#include "http_encoding.h"
+#include "boot_check.h"
 #include "ems_build.h"
 
 #include "evcc_bridge.h"
 #include "meter_json.h"
 #include "shelly_modbus.h"
+#include "shelly_phase.h"
 #include "em24_modbus.h"
 #include "huawei_modbus.h"
 
@@ -66,6 +69,7 @@
 #include "esp_random.h"
 
 #include "esp_system.h"
+#include "esp_heap_caps.h"
 
 #include "esp_timer.h"
 
@@ -93,9 +97,9 @@
 
 #define HOUSE_UART UART_NUM_0
 
-#define STATUS_LED_GPIO 48
-#define PHASE_RELAY_GPIO GPIO_NUM_12
-#define PHASE_FEEDBACK_GPIO GPIO_NUM_13
+#define STATUS_LED_GPIO settings.status_led_pin
+#define PHASE_FEEDBACK_GPIO settings.phase_feedback_pin
+#define PHASE_FEEDBACK_SECOND_GPIO settings.phase_feedback_second_pin
 
 #define LOCK() xSemaphoreTake(state_lock,portMAX_DELAY)
 
@@ -140,6 +144,9 @@ static bool calibration_dirty;
 static int64_t calibration_saved_at;
 typedef struct { char host[16],type[20]; float watts; int64_t at; bool locked; } shelly_found_t;
 static shelly_found_t shelly_found[12];
+static struct {char host[16];shelly_phase_identity_t identity;bool contacts_checked;} phase_shelly_found[12];
+static unsigned phase_shelly_found_count;
+static bool scan_phase_shelly;
 static unsigned shelly_found_count,shelly_scan_progress,shelly_locked_count;
 static bool shelly_scan_running,shelly_scan_partial;
 static bool scan_tasmota;
@@ -168,8 +175,14 @@ static bool house_bus_ready,relay_ready,relay_on[1];
 
 static bool config_storage_ok,stats_storage_ok,storage_error,reboot_required,restarting,sntp_ready,factory_reset_requested;
 static bool expert_reboot_pending;
+static volatile bool boot_validation_pending=true,boot_validation_failed,boot_validation_ok;
+static bool boot_config_ok=true,boot_rollback_armed,web_started;
+static volatile uint32_t boot_task_seen[5];
+/* Permission is persisted; phase commands are deliberately volatile. */
+static bool phase_mqtt_allowed,phase_mqtt_saving;
+static SemaphoreHandle_t phase_mqtt_send_lock;
 static expert_values_t expert_saved;
-static bool restart_pending(void){return reboot_required||expert_reboot_pending;}
+static bool restart_pending(void){return reboot_required||expert_reboot_pending||boot_validation_pending||boot_validation_failed;}
 
 static float meter_a[3],actual_a[3],xemex_a[3],wallbox_w,house_power_w,house_a[3];
 static int64_t house_current_at;
@@ -186,6 +199,9 @@ static int64_t phase_candidate_at,phase_stop_at,phase_zero_at,phase_move_at,phas
 static bool phase_startup=true;
 static int64_t phase_attempt_at,phase_no_load_since;
 static bool phase_idle_inhibit;
+static bool phase_test_active,phase_config_saving;
+static uint8_t phase_test_goal;
+static int64_t phase_test_until;
 static bool phase_gpio_ready;
 typedef struct { bool raw,stable; int64_t changed_at; } contact_state_t;
 static contact_state_t mode_contact,evu_contact;
@@ -247,6 +263,7 @@ static int64_t now_ms(void) { return esp_timer_get_time()/1000; }
 static TickType_t ticks(uint32_t ms) { return (ms+portTICK_PERIOD_MS-1)/portTICK_PERIOD_MS; }
 
 static void status_led_setup(void) {
+    if(STATUS_LED_GPIO<0)return;
     /* Clear the addressable RGB LED once, then release the RMT resources. It
        has no status or diagnostic role after startup. */
     rmt_channel_handle_t channel_handle=NULL; rmt_encoder_handle_t encoder=NULL;
@@ -292,7 +309,7 @@ static void load_settings(void) {
 
         /* The decoder has its own settings copy. Keep the input off the small
            startup stack as the append-only settings layout grows. */
-        unsigned char *blob=malloc(sizeof(settings_t));
+        unsigned char *blob=malloc(sizeof(settings_t));if(!blob)boot_config_ok=false;
         for(unsigned i=0;blob && i<sizeof(keys)/sizeof(keys[0]);i++) {
 
             size_t len=sizeof(settings_t);
@@ -302,7 +319,7 @@ static void load_settings(void) {
             if(err==ESP_ERR_NVS_NOT_FOUND) continue;
 
             if(err==ESP_OK && len>=sizeof(uint32_t))memcpy(&loaded_settings_version,blob,sizeof(uint32_t));
-            if(err!=ESP_OK || !settings_decode(blob,len,&settings)) ESP_LOGW(TAG,"Stored settings rejected; defaults loaded");
+            if(err!=ESP_OK || !settings_decode(blob,len,&settings)){boot_config_ok=false;ESP_LOGW(TAG,"Stored settings rejected; defaults loaded");}
 
             break;
 
@@ -518,37 +535,69 @@ static bool unsupported_meter(void) {
 
 static float active_min_a(void) { return settings.min_charge_a; }
 
-/* GPIO13 is pulled up; the isolated position contact closes to ESP GND.
-   NO and NC contacts have separately selectable position polarity. */
-static uint8_t phase_observed(void) { return settings.phase_feedback_enabled?phase_feedback_position(gpio_get_level(PHASE_FEEDBACK_GPIO)==0,settings.phase_feedback_closed_is_single):0; }
+    /* Fixed contact assignment: GPIO13 closed to GND confirms three phases;
+       optional GPIO14 closed confirms one phase. Two contacts must be opposite. */
+#include "phase_mqtt_runtime.inc"
+#include "phase_shelly_runtime.inc"
+#include "phase_config_guard.inc"
+#include "phase_test_runtime.inc"
+static uint8_t phase_observed(void) {
+    if(phase_shelly_remote())return (uint8_t)phase_shelly_observed_locked(now_ms());
+    return settings.phase_feedback_enabled?(uint8_t)phase_feedback_contacts(gpio_get_level(PHASE_FEEDBACK_GPIO)==0,
+        settings.phase_feedback_count==2&&gpio_get_level(PHASE_FEEDBACK_SECOND_GPIO)==0,
+        settings.phase_feedback_count,settings.phase_feedback_closed_is_single):0;
+}
 
 static bool phase_can_unlock_locked(int64_t now) {
+    if(phase_mqtt_remote())return phase_gpio_ready&&phase_state==PHASE_FAULT&&phase_mqtt_allowed&&
+        phase_output_link_locked()&&phase_mqtt_supported_locked()&&phase_mqtt_stopped_locked();
+    if(phase_shelly_remote()){
+        unsigned observed=phase_shelly_observed_locked(now);
+        return phase_state==PHASE_FAULT && observed &&
+            phase_shelly_at>phase_shelly_command_at && now-phase_shelly_command_at>1000 &&
+            fresh(now,actual_at,wallbox_meter_ttl()) &&
+            isfinite(actual_a[0]) && actual_a[0]>=0 && actual_a[0]<1 &&
+            isfinite(actual_a[1]) && actual_a[1]>=0 && actual_a[1]<1 &&
+            isfinite(actual_a[2]) && actual_a[2]>=0 && actual_a[2]<1;
+    }
     return settings.phase_switch_enabled && phase_fault_reset_allowed(phase_state==PHASE_FAULT,
         phase_gpio_ready,settings.phase_feedback_enabled,phase_gpio_ready?phase_observed():0,
         relay_on[0],fresh(now,actual_at,wallbox_meter_ttl()),actual_a);
 }
 
 static void relay_set(unsigned index,bool energized) {
-    if(!relay_ready || !settings.relay_board_enabled || index>0) return;
+    if(settings.phase_actuator_type!=0 || !relay_ready || !settings.relay_board_enabled || index>0) return;
     gpio_set_level(settings.relay1_pin,
-        relay_output_level(settings.relay_active_low,energized));
+        energized?1:0);
     relay_on[index]=energized;
 }
 
+static bool phase_actuator_begin_locked(uint8_t goal,int64_t now){
+    if(phase_mqtt_remote())return phase_mqtt_begin_locked(goal,now);
+    if(phase_shelly_remote())return phase_shelly_begin_locked(goal,now);
+    relay_set(0,goal==1);return true;
+}
 static void phase_setup(void) {
     settings.charge_phases=settings.phase_switch_enabled?3:settings.fixed_charge_phases; settings.manual_phases=settings.charge_phases;
     if(!settings.relay_board_enabled) return;
-    int off=relay_output_level(settings.relay_active_low,false);
+    if(phase_mqtt_remote()){phase_mqtt_setup_locked(now_ms());return;}
+    if(phase_shelly_remote()){
+        relay_ready=phase_gpio_ready=true;
+        if(settings.phase_switch_enabled){phase_goal=3;phase_move_at=now_ms();phase_state=PHASE_MOVING;}
+        return; /* Never touch GPIO12/13 for the Shelly profile. */
+    }
+    int off=0;
     gpio_set_level(settings.relay1_pin,off);
     gpio_config_t output={.pin_bit_mask=(1ULL<<settings.relay1_pin),.mode=GPIO_MODE_OUTPUT,
-        .pull_up_en=settings.relay_active_low?GPIO_PULLUP_ENABLE:GPIO_PULLUP_DISABLE,
-        .pull_down_en=settings.relay_active_low?GPIO_PULLDOWN_DISABLE:GPIO_PULLDOWN_ENABLE,.intr_type=GPIO_INTR_DISABLE};
+        .pull_up_en=GPIO_PULLUP_DISABLE,
+        .pull_down_en=GPIO_PULLDOWN_ENABLE,.intr_type=GPIO_INTR_DISABLE};
     relay_ready=gpio_config(&output)==ESP_OK;
     relay_set(0,false);
     if(!settings.phase_switch_enabled) return;
     if(!settings.phase_feedback_enabled) phase_gpio_ready=relay_ready;
     else {
-        gpio_config_t input={.pin_bit_mask=(1ULL<<PHASE_FEEDBACK_GPIO),.mode=GPIO_MODE_INPUT,
+        gpio_config_t input={.pin_bit_mask=(1ULL<<PHASE_FEEDBACK_GPIO)|
+            (settings.phase_feedback_count==2?(1ULL<<PHASE_FEEDBACK_SECOND_GPIO):0),.mode=GPIO_MODE_INPUT,
             .pull_up_en=GPIO_PULLUP_ENABLE,.pull_down_en=GPIO_PULLDOWN_DISABLE,.intr_type=GPIO_INTR_DISABLE};
         phase_gpio_ready=relay_ready && gpio_config(&input)==ESP_OK;
     }
@@ -623,6 +672,7 @@ static float phase_surplus_w_locked(int64_t now) {
     return measured-allocation_grid_locked(now,house_power_w)+settings.zero_reserve_w-reserve+allowance;
 }
 
+
 #include "phase_status.inc"
 #include "phase_controller.inc"
 
@@ -652,7 +702,7 @@ static bool pv_permitted_locked(int64_t now) {
     return settings.mode==MODE_PV && settings.enabled && !charge_guard.latched &&
         (!settings.phase_switch_enabled || phase_state==PHASE_READY) &&
 
-        !restart_pending() && !restarting && !ota_in_progress && !unsupported_meter() &&
+        !phase_test_active && !restart_pending() && !restarting && !ota_in_progress && !phase_mqtt_saving && !unsupported_meter() &&
 
         feedback_ready(now) && wallbox_ready && fresh(now,meter_at,wallbox_meter_ttl()) &&
 
@@ -665,14 +715,14 @@ static bool house_currents_ready_locked(int64_t now) {
 }
 
 static float unlatched_target_locked(int64_t now) {
-    if(!terms_accepted || evcc_configuring)return 0;
+    if(!terms_accepted || evcc_configuring || phase_mqtt_saving)return 0;
     if(evcc_control.configured && (!evcc_control.enabled || evcc_control.inhibited || evcc_control.expired ||
        evcc_control.last_contact<=0 || now<evcc_control.last_contact || now-evcc_control.last_contact>=EVCC_LEASE_MS ||
        !evcc_shell_fresh(&evcc_shell,evcc_shell_at,now) || evcc_shell.state=='F'))return 0;
     if(evcc_control.configured && settings.phase_switch_enabled &&
        (phase_idle_inhibit || evcc_desired_phases(&evcc_control,settings.charge_phases)!=settings.charge_phases))return 0;
 
-    if(restart_pending() || restarting || ota_in_progress || unsupported_meter()) return 0;
+    if(phase_config_saving || phase_test_active || restart_pending() || restarting || ota_in_progress || unsupported_meter()) return 0;
     if(settings.phase_switch_enabled && phase_state!=PHASE_READY) return 0;
     if(charge_plan.active && plan_phase==PLAN_CLOCK)return 0;
 
@@ -722,8 +772,11 @@ static void mode_transition_locked(control_mode_t previous,float previous_target
 
 static const char *block_reason_locked(int64_t now) {
 
-    if(restarting || ota_in_progress) return "maintenance";
+    if(restarting || ota_in_progress || phase_mqtt_saving) return "maintenance";
 
+    if(phase_test_active)return "phase_test";
+    if(boot_validation_pending)return "firmware_check";
+    if(boot_validation_failed)return "firmware_failed";
     if(restart_pending()) return "reboot";
     if(!terms_accepted)return "agreement";
     if(evcc_configuring)return "maintenance";
@@ -925,6 +978,7 @@ static bool read_wallbox_network(float out[3],float *total_w);
 static void meter_task(void *arg) {
     unsigned network_failures=0;
     while(true) {
+        boot_task_seen[2]=(uint32_t)now_ms();
         uint32_t delay_ms=1000;
         float values[3],watts=0; bool sdm=sdm_meter(),network=network_wallbox_meter();
         LOCK();uint32_t revision=wallbox_meter_revision;UNLOCK();
@@ -961,6 +1015,7 @@ static void wallbox_task(void *arg) {
     uint8_t req[8],response[256]; size_t used=0;int64_t last_byte=0;
 
     while(true) {
+        boot_task_seen[1]=(uint32_t)now_ms();
 
         int n=rs485_read(WALLBOX_UART,req+used,1,20);
         if(n!=1) {
@@ -1130,6 +1185,7 @@ static bool read_house_meter(float currents[3],float *watts,bool *currents_valid
 static void house_meter_task(void *arg) {
     unsigned network_failures=0;
     while(true) {
+        boot_task_seen[3]=(uint32_t)now_ms();
         uint32_t delay_ms=2000;
         if(serial_house_meter()) {
             network_failures=0;
@@ -1199,7 +1255,13 @@ static cJSON *status_json(bool include_token) {
     cJSON_AddNumberToObject(o,"default_shell_rx_pin",EMS_DEFAULT_SHELL_RX_PIN);
     cJSON_AddNumberToObject(o,"default_meter_tx_pin",EMS_DEFAULT_METER_TX_PIN);
     cJSON_AddNumberToObject(o,"default_meter_rx_pin",EMS_DEFAULT_METER_RX_PIN);
-    cJSON_AddNumberToObject(o,"external_mode_input_pin",EMS_DEFAULT_MODE_INPUT_PIN);
+    cJSON_AddNumberToObject(o,"external_mode_input_pin",settings.external_mode_input_pin);
+    cJSON *gpio=cJSON_AddObjectToObject(o,"gpio_pins");
+    for(unsigned i=0;i<EMS_GPIO_ROLES;i++)cJSON_AddNumberToObject(gpio,gpio_roles[i].id,settings_gpio_value(&settings,i));
+    cJSON_AddBoolToObject(o,"gpio_setup_allowed",!phase_test_active&&!boot_validation_pending&&!ota_in_progress&&!restarting&&!backup_in_progress&&!evcc_configuring&&
+        hardware_config_change_allowed(settings.enabled||(evcc_control.configured&&evcc_control.enabled),
+            phase_config_quiescent_locked(),actual_at>0||meter_at>0,
+            fresh(now,actual_at,wallbox_meter_ttl()),actual_a));
     const esp_app_desc_t *app_description=esp_app_get_description();char app_hash[65];
     for(unsigned i=0;i<32;i++)snprintf(app_hash+i*2,3,"%02x",app_description->app_elf_sha256[i]);
     cJSON_AddStringToObject(o,"app_elf_sha256",app_hash);
@@ -1224,7 +1286,27 @@ static cJSON *status_json(bool include_token) {
     cJSON_AddNumberToObject(plan,"delivered_kwh",charge_plan.delivered_wh/1000);
     cJSON_AddNumberToObject(plan,"deadline_epoch",charge_plan.deadline_s);
     cJSON_AddBoolToObject(o,"expert_mode",settings.expert_mode);
-    cJSON_AddBoolToObject(o,"expert_parameters_modified",expert_modified(&expert_saved));
+    cJSON_AddBoolToObject(o,"expert_parameters_modified",expert_modified(&expert_saved)||settings_gpio_modified(&saved_settings));
+    cJSON_AddBoolToObject(o,"phase_mqtt_allowed",phase_mqtt_allowed);
+    cJSON_AddBoolToObject(o,"phase_mqtt_ready",phase_mqtt_supported_locked());
+    cJSON_AddBoolToObject(o,"phase_output_base_ready",wifi_online&&phase_switch_meter_supported(&settings));
+    cJSON_AddBoolToObject(o,"phase_output_setup_allowed",!phase_test_active&&!restart_pending()&&phase_mqtt_stopped_locked());
+    cJSON_AddBoolToObject(o,"phase_test_active",phase_test_active);
+    cJSON_AddBoolToObject(o,"phase_test_ready",phase_test_ready_locked(now));
+    cJSON_AddStringToObject(o,"phase_test_block",phase_test_block_locked(now));
+    cJSON_AddNumberToObject(o,"phase_test_goal",phase_test_active?phase_test_goal:0);
+    cJSON_AddBoolToObject(o,"phase_output_mqtt_ready",mqtt_online&&settings.mqtt_enabled);
+    cJSON_AddNumberToObject(o,"phase_output_transport",saved_settings.phase_output_transport);
+    cJSON_AddBoolToObject(o,"phase_output_meter_ready",phase_switch_meter_supported(&settings));
+    cJSON_AddNumberToObject(o,"phase_output_measured_phases",phase_measured_currents(&settings));
+    cJSON_AddBoolToObject(o,"phase_output_connected",phase_output_link_locked());
+    cJSON_AddBoolToObject(o,"phase_mqtt_true_three_phase",saved_settings.phase_mqtt_true_three_phase);
+    char phase_topic[128];
+    if(phase_mqtt_output_topic(&saved_settings,phase_topic,sizeof(phase_topic)))cJSON_AddStringToObject(o,"phase_mqtt_output_topic",phase_topic);
+    if(phase_mqtt_remote()&&phase_mqtt_known){
+        cJSON_AddBoolToObject(o,"phase_mqtt_output_single",phase_mqtt_assumed==1);
+        cJSON_AddBoolToObject(o,"phase_mqtt_output_on",phase_mqtt_output_value(&settings,phase_mqtt_assumed));
+    }else{cJSON_AddNullToObject(o,"phase_mqtt_output_single");cJSON_AddNullToObject(o,"phase_mqtt_output_on");}
     cJSON_AddBoolToObject(o,"basic_mode",settings.basic_mode);
     cJSON_AddBoolToObject(o,"pv_allocation_enabled",settings.pv_allocation_enabled);
     cJSON_AddNumberToObject(o,"pv_priority",settings.pv_priority);
@@ -1240,8 +1322,28 @@ static cJSON *status_json(bool include_token) {
     }
     cJSON_AddNumberToObject(o,"power_per_amp_kw",settings.charge_phases*settings.nominal_v*settings.power_factor/1000);
     cJSON_AddNumberToObject(o,"single_power_per_amp_kw",settings.nominal_v*settings.power_factor/1000);
+    cJSON_AddNumberToObject(o,"phase_actuator_type",settings.phase_actuator_type);
+    if(phase_shelly_remote()){
+        cJSON_AddBoolToObject(o,"phase_shelly_connected",phase_shelly_observed_locked(now)!=0);
+        cJSON_AddBoolToObject(o,"phase_shelly_config_ok",phase_shelly_config_ok);
+        cJSON_AddBoolToObject(o,"phase_shelly_no_closed",phase_shelly_feedback_value.no_closed);
+        cJSON_AddBoolToObject(o,"phase_shelly_nc_closed",phase_shelly_feedback_value.nc_closed);
+        cJSON_AddBoolToObject(o,"phase_shelly_output",phase_shelly_feedback_value.output);
+    }
     cJSON_AddBoolToObject(o,"phase_switch_enabled",settings.phase_switch_enabled);
     cJSON_AddBoolToObject(o,"phase_feedback_enabled",settings.phase_feedback_enabled);
+    cJSON_AddNumberToObject(o,"phase_feedback_count",settings.phase_feedback_count);
+    bool contact_values_ok=settings.phase_switch_enabled&&settings.phase_feedback_enabled&&
+        (phase_shelly_remote()?(phase_shelly_config_ok&&fresh(now,phase_shelly_at,SHELLY_PHASE_TTL_MS)):
+         settings.phase_actuator_type==0&&phase_gpio_ready);
+    if(contact_values_ok){
+        cJSON_AddBoolToObject(o,"phase_contact1_closed",phase_shelly_remote()?phase_shelly_feedback_value.no_closed:gpio_get_level(PHASE_FEEDBACK_GPIO)==0);
+        if(settings.phase_feedback_count==2)
+            cJSON_AddBoolToObject(o,"phase_contact2_closed",phase_shelly_remote()?phase_shelly_feedback_value.nc_closed:gpio_get_level(PHASE_FEEDBACK_SECOND_GPIO)==0);
+        else cJSON_AddNullToObject(o,"phase_contact2_closed");
+    }else{
+        cJSON_AddNullToObject(o,"phase_contact1_closed");cJSON_AddNullToObject(o,"phase_contact2_closed");
+    }
     cJSON_AddBoolToObject(o,"phase_feedback_closed_is_single",settings.phase_feedback_closed_is_single);
     cJSON_AddNumberToObject(o,"fixed_charge_phases",settings.fixed_charge_phases);
     cJSON_AddBoolToObject(o,"shell_limits_auto",settings.shell_limits_auto);
@@ -1316,13 +1418,19 @@ static cJSON *status_json(bool include_token) {
 
     cJSON_AddBoolToObject(o,"wallbox_uart_ready",wallbox_ready); cJSON_AddBoolToObject(o,"meter_uart_ready",meter_ready);
 
-    cJSON_AddBoolToObject(o,"reboot_required",restart_pending()); cJSON_AddBoolToObject(o,"clock_ok",date!=0);
+    cJSON_AddBoolToObject(o,"reboot_required",reboot_required||expert_reboot_pending);
+    cJSON_AddBoolToObject(o,"firmware_check_pending",boot_validation_pending);
+    cJSON_AddBoolToObject(o,"firmware_check_ok",boot_validation_ok);
+    cJSON_AddBoolToObject(o,"firmware_check_failed",boot_validation_failed);
+    cJSON_AddBoolToObject(o,"ota_rollback_armed",boot_rollback_armed); cJSON_AddBoolToObject(o,"clock_ok",date!=0);
 
     cJSON_AddNumberToObject(o,"current_date",date);
 
     cJSON_AddBoolToObject(o,"storage_ok",stats_storage_ok && config_storage_ok && !storage_error && plan_storage_ok && control_storage_ok);
 
-    cJSON_AddNumberToObject(o,"uptime_s",now/1000); cJSON_AddNumberToObject(o,"free_heap",esp_get_free_heap_size());cJSON_AddNumberToObject(o,"reset_reason",esp_reset_reason());
+    cJSON_AddNumberToObject(o,"uptime_s",now/1000);
+    cJSON_AddNumberToObject(o,"min_free_heap",heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT));
+    cJSON_AddNumberToObject(o,"largest_free_block",heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));cJSON_AddNumberToObject(o,"reset_reason",esp_reset_reason());
 
     cJSON_AddNumberToObject(o,"meter_failures",meter_failures); cJSON_AddNumberToObject(o,"wallbox_requests",wallbox_requests);
 
@@ -1377,7 +1485,7 @@ static cJSON *status_json(bool include_token) {
 
     cJSON_AddStringToObject(o,"wallbox_power_source",(sdm_meter()||network_wallbox_meter())?settings.wallbox_meter_type:"mqtt");
 
-    bool extrapolated=sdm_meter() && sdm_profile(settings.wallbox_meter_type)->phases==1;
+    bool extrapolated=(sdm_meter()&&sdm_profile(settings.wallbox_meter_type)->phases==1)||(!strcmp(settings.wallbox_meter_type,"xemex")&&settings.xemex_coils<3);
     cJSON_AddBoolToObject(o,"power_is_extrapolated",extrapolated);
 
     cJSON_AddBoolToObject(o,"house_meter_ok",house_power_capable()?fresh(now,house_power_at,house_meter_ttl()):fresh(now,house_current_at,house_meter_ttl()));
@@ -1573,6 +1681,14 @@ static void mqtt_state(void) {
 
     }
 
+    static bool phase_topics_published;
+    if(phase_mqtt_allowed || phase_topics_published) {
+        const char *phase_names[]={"phase_mqtt_allowed","charge_phases"};
+        for(unsigned i=0;i<sizeof(phase_names)/sizeof(phase_names[0]);i++)
+            publish_value(phase_names[i],cJSON_GetObjectItemCaseSensitive(o,phase_names[i]));
+    }
+    phase_topics_published=phase_mqtt_allowed;
+
     if(settings.homeassistant_enabled) {
         const char *homeassistant_values[]={"battery_soc_pct","pv_generation_w","battery_charge_w","battery_discharge_w"};
         for(unsigned i=0;i<sizeof(homeassistant_values)/sizeof(homeassistant_values[0]);i++)
@@ -1600,7 +1716,7 @@ static bool apply_control(cJSON *o) {
 
     int64_t command_epoch,command_midnight;uint32_t command_date=calendar(&command_epoch,&command_midnight);
     LOCK();
-    if(evcc_configuring){UNLOCK();return false;}
+    if(evcc_configuring || phase_mqtt_saving){UNLOCK();return false;}
     if(evcc_control.configured) {
         char *body=cJSON_PrintUnformatted(o);
         bool stop=evcc_emergency_stop_json(body);free(body);
@@ -1645,17 +1761,23 @@ static bool apply_control(cJSON *o) {
     if(next.mode==MODE_OFF) next.enabled=false;
     if(restart && phase_state==PHASE_FAULT && !phase_can_unlock_locked(now_ms())) valid=false;
 
-    if(valid && (!pv || !settings.zero_feed_enabled) && !restarting && !ota_in_progress && (!restart_pending() || !next.enabled)) {
+    if(valid && (!pv || !settings.zero_feed_enabled) && !restarting && !ota_in_progress && ((!phase_test_active&&!phase_config_saving) || !next.enabled) && (!restart_pending() || !next.enabled)) {
 
         /* Restore before changing preferences or starting a controller. A
            later persistence pass must not overwrite newly started timers. */
         restore_control_memory_locked(change_at,command_date?command_epoch:0,true);
 
         transition=next.mode!=settings.mode || next.enabled!=settings.enabled;
+        if(phase_test_active&&user_override&&!next.enabled)phase_test_end_locked();
 
         if((restart && charge_guard.latched) || (next.enabled && !settings.enabled)) memset(&charge_guard,0,sizeof(charge_guard));
         if(restart && phase_can_unlock_locked(now_ms())) {
-            phase_goal=3;settings.charge_phases=3;phase_move_at=now_ms();phase_state=PHASE_SETTLING;
+            phase_goal=phase_shelly_remote()?phase_observed():3;
+            if(phase_shelly_remote()){phase_shelly_uncertain=false;phase_shelly_pending=false;}
+            if(phase_mqtt_remote()){
+                phase_mqtt_pending=false;phase_mqtt_known=false;phase_goal=3;
+                phase_stop_at=now_ms();phase_zero_at=0;phase_state=PHASE_STOPPING;
+            }else {settings.charge_phases=phase_goal;phase_move_at=now_ms();phase_state=PHASE_SETTLING;}
         }
         if(phase_idle_inhibit && next.enabled &&
            (restart || !settings.enabled || next.mode!=settings.mode ||
@@ -1679,6 +1801,7 @@ static bool apply_control(cJSON *o) {
                    SOC limits and stale telemetry still block independently. */
             }
         }
+
         settings.mode=next.mode; settings.enabled=next.enabled;
 
         settings.manual_current_a=next.manual_current_a; settings.manual_phases=next.manual_phases; settings.pv_surplus_a=next.pv_surplus_a;
@@ -1704,6 +1827,7 @@ static bool apply_control(cJSON *o) {
 static bool mqtt_input(const char *suffix,const char *payload) {
 
     if(!settings.mqtt_enabled) return false;
+    /* Retired command/phases and outgoing boolean topics have no input handler. */
     if(settings.mqtt_input_source==2 && (!strncmp(suffix,"input/battery_",14)||!strncmp(suffix,"input/pv_generation",19)))return true;
     if((!settings.battery_protect || (settings.huawei_enabled && settings.huawei_battery)) && !strncmp(suffix,"input/battery_",14))return true;
     if((!settings.pv_display_enabled || (settings.huawei_enabled && settings.huawei_pv)) && !strncmp(suffix,"input/pv_generation",19))return true;
@@ -1812,6 +1936,7 @@ static void mqtt_event(void *arg,esp_event_base_t base,int32_t id,void *data) {
     static char topic[192],payload[512]; static int received,expected;static bool retained;
 
     if(id==MQTT_EVENT_CONNECTED) {
+        LOCK();if(settings.phase_output_transport==0)phase_mqtt_seen_connection=true;UNLOCK();
 
         LOCK(); mqtt_online=true; UNLOCK(); char subscription[100];
 
@@ -1831,7 +1956,7 @@ static void mqtt_event(void *arg,esp_event_base_t base,int32_t id,void *data) {
 
     } else if(id==MQTT_EVENT_DISCONNECTED) {
 
-        LOCK();memset(&opendtu,0,sizeof(opendtu)); mqtt_online=false; if(!(settings.huawei_enabled && settings.huawei_battery)){battery_soc_at=0;battery_charge_at=0;battery_discharge_at=0;} car_soc_at=0; if(!(settings.huawei_enabled && settings.huawei_pv))pv_generation_at=0; if(!sdm_meter() && !network_wallbox_meter()) power_at=0; if(!settings.zero_feed_enabled) pv_at=0; UNLOCK(); expected=received=0;
+        LOCK();if(settings.phase_output_transport==0&&phase_mqtt_seen_connection)phase_mqtt_cancel_locked(true);memset(&opendtu,0,sizeof(opendtu)); mqtt_online=false; if(!(settings.huawei_enabled && settings.huawei_battery)){battery_soc_at=0;battery_charge_at=0;battery_discharge_at=0;} car_soc_at=0; if(!(settings.huawei_enabled && settings.huawei_pv))pv_generation_at=0; if(!sdm_meter() && !network_wallbox_meter()) power_at=0; if(!settings.zero_feed_enabled) pv_at=0; UNLOCK(); expected=received=0;
 
     } else if(id==MQTT_EVENT_DATA) {
 
@@ -1872,6 +1997,8 @@ static void mqtt_event(void *arg,esp_event_base_t base,int32_t id,void *data) {
 }
 
 /* Called only by status_task, so reconnects cannot create duplicate clients. */
+
+#include "phase_mqtt_network.inc"
 
 static void start_mqtt(void) {
 
@@ -1917,13 +2044,15 @@ static esp_err_t send_json(httpd_req_t *req,cJSON *o) {
 
 static esp_err_t ok_json(httpd_req_t *req) { cJSON *o=cJSON_CreateObject(); cJSON_AddBoolToObject(o,"ok",true); return send_json(req,o); }
 
+#include "http_json.inc"
+
 static bool authorized(httpd_req_t *req) {
 
     char token[40];
 
     if(httpd_req_get_hdr_value_str(req,"X-EMS-Token",token,sizeof(token))!=ESP_OK || strcmp(token,csrf_token)) {
 
-        httpd_resp_send_err(req,HTTPD_403_FORBIDDEN,"Seite neu laden; Zugriffstoken fehlt."); return false;
+        http_json_error(req,HTTPD_403_FORBIDDEN,"Seite neu laden; Zugriffstoken fehlt."); return false;
 
     }
 
@@ -1936,40 +2065,6 @@ static bool authorized(httpd_req_t *req) {
         httpd_resp_send_err(req,HTTPD_403_FORBIDDEN,"Nutzungsbedingungen zuerst bestaetigen.");return false;
     }
     return true;
-
-}
-
-static cJSON *read_json(httpd_req_t *req) {
-
-    if(req->content_len<=0 || req->content_len>8192) { httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Anfrage zu gross oder leer."); return NULL; }
-
-    char *body=malloc(req->content_len+1); if(!body) { httpd_resp_send_err(req,HTTPD_500_INTERNAL_SERVER_ERROR,"Out of memory"); return NULL; }
-
-    int received=0,timeouts=0;
-
-    while(received<req->content_len) {
-
-        int n=httpd_req_recv(req,body+received,req->content_len-received);
-
-        if(n==HTTPD_SOCK_ERR_TIMEOUT && ++timeouts<=2) continue;
-
-        if(n<=0) break;
-
-        received+=n;
-
-    }
-
-    body[received]=0; cJSON *o=NULL;
-
-    if(received==req->content_len && !memchr(body,0,received)) o=cJSON_ParseWithOpts(body,NULL,true);
-
-    free(body); bool valid=cJSON_IsObject(o);
-
-    if(valid) for(cJSON *i=o->child;i;i=i->next) for(cJSON *j=i->next;j;j=j->next) if(!strcmp(i->string,j->string)) valid=false;
-
-    if(!valid) { cJSON_Delete(o); httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Ungueltiges JSON."); return NULL; }
-
-    return o;
 
 }
 
@@ -2033,12 +2128,27 @@ static const field_t fields[]={
     FIELD(zero_feed_enabled,'b'),FIELD(house_meter_type,'s'),FIELD(house_meter_host,'s'),FIELD(zero_reserve_w,'f'),FIELD(xemex_coils,'u'),FIELD(wallbox_meter_type,'s'),FIELD(meter_baud,'i'),FIELD(meter_format,'u'),FIELD(house_power_path,'s'),FIELD(mqtt_state_json,'b'),FIELD(battery_protect,'b'),FIELD(battery_reserve_soc,'f'),FIELD(battery_cloud_limit_w,'f'),FIELD(battery_assist_limit_w,'f'),FIELD(phase_switch_enabled,'b'),FIELD(phase_feedback_enabled,'b'),FIELD(phase_feedback_closed_is_single,'b'),
     FIELD(expert_mode,'b'),FIELD(basic_mode,'b'),FIELD(pv_allocation_enabled,'b'),FIELD(pv_priority,'u'),FIELD(pv_house_priority_w,'f'),FIELD(pv_car_priority_w,'f'),FIELD(control_status_visible,'b'),FIELD(vehicle_soc_enabled,'b'),FIELD(external_mode_input_enabled,'b'),FIELD(evu_input_enabled,'b'),
     FIELD(evu_limit_a,'f'),FIELD(grid_guard_enabled,'b'),
+    FIELD(xemex_tx_pin,'i'),FIELD(xemex_rx_pin,'i'),FIELD(house_tx_pin,'i'),FIELD(house_rx_pin,'i'),
+    FIELD(external_mode_input_pin,'i'),FIELD(evu_input_pin,'i'),FIELD(relay1_pin,'i'),
+    FIELD(phase_feedback_pin,'i'),FIELD(phase_feedback_second_pin,'i'),FIELD(status_led_pin,'i'),
     FIELD(house_address,'u'),FIELD(house_meter_baud,'i'),FIELD(house_meter_format,'u'),
     FIELD(relay_board_enabled,'b'),FIELD(relay_active_low,'b'),
     FIELD(relay1_mode,'u'),
     FIELD(mqtt_enabled,'b'),FIELD(homeassistant_enabled,'b'),FIELD(pv_display_enabled,'b'),FIELD(mqtt_input_source,'u'),
+    FIELD(phase_actuator_type,'u'),FIELD(phase_shelly_host,'s'),FIELD(phase_shelly_password,'p'),
+    FIELD(phase_feedback_count,'u'),FIELD(phase_shelly_model,'u'),FIELD(phase_shelly_pulse,'b'),FIELD(phase_shelly_true_three_phase,'b'),
     FIELD(wallbox_meter_host,'s'),FIELD(charge_plan_enabled,'b'),FIELD(huawei_enabled,'b'),FIELD(huawei_host,'s'),FIELD(huawei_unit_id,'u'),FIELD(huawei_battery,'b'),FIELD(huawei_pv,'b'),FIELD(opendtu_prefix,'s'),FIELD(opendtu_pv_topic,'s'),FIELD(opendtu_pv_valid_topic,'s'),FIELD(opendtu_current_positive_discharge,'b')};
 
+/* Read-only status metadata must not turn a settings backup into an invalid
+   restore request or bypass the separate phase-output authorization. */
+static void config_remove_readonly(cJSON *config) {
+    for(cJSON *item=config->child,*next;item;item=next){
+        next=item->next;bool editable=false;
+        for(size_t f=0;f<sizeof(fields)/sizeof(fields[0]);f++)
+            if(!strcmp(item->string,fields[f].name)){editable=true;break;}
+        if(!editable)cJSON_Delete(cJSON_DetachItemViaPointer(config,item));
+    }
+}
 static cJSON *config_json(bool secrets) {
 
     cJSON *o=cJSON_CreateObject(); if(!o) return NULL; LOCK();
@@ -2062,19 +2172,55 @@ static cJSON *config_json(bool secrets) {
     cJSON_AddBoolToObject(o,"wifi_password_set",saved_settings.wifi_password[0]!=0);
 
     cJSON_AddBoolToObject(o,"mqtt_password_set",saved_settings.mqtt_password[0]!=0);
+    cJSON_AddBoolToObject(o,"phase_shelly_password_set",saved_settings.phase_shelly_password[0]!=0);
+    cJSON_AddStringToObject(o,"phase_mqtt_topic",saved_settings.phase_mqtt_topic);
+    cJSON_AddBoolToObject(o,"phase_mqtt_output_enabled",saved_settings.phase_mqtt_output_enabled);
+    cJSON_AddBoolToObject(o,"phase_mqtt_true_three_phase",saved_settings.phase_mqtt_true_three_phase);
+    cJSON_AddNumberToObject(o,"phase_output_transport",saved_settings.phase_output_transport);
+    cJSON_AddNumberToObject(o,"phase_output_switch_id",saved_settings.phase_output_switch_id);
+    cJSON_AddStringToObject(o,"phase_output_host",saved_settings.phase_output_host);
+    cJSON_AddBoolToObject(o,"phase_output_password_set",saved_settings.phase_output_password[0]!=0);
+
 
     UNLOCK(); return o;
 
 }
 
 static esp_err_t config_apply(httpd_req_t *req,cJSON *o,bool restore) {
-    LOCK();bool maintenance=ota_in_progress||restarting||evcc_configuring||(evcc_control.configured&&evcc_control.enabled);UNLOCK();
+    if(!cJSON_IsObject(o)){
+        cJSON_Delete(o);
+        return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Fehlerhafte Einstellungsdaten. Seite neu laden und erneut speichern.");
+    }
+    if(cJSON_HasObjectItem(o,"phase_mqtt_output_enabled")||cJSON_HasObjectItem(o,"phase_mqtt_topic")||
+       cJSON_HasObjectItem(o,"phase_mqtt_true_three_phase")||cJSON_HasObjectItem(o,"phase_output_transport")||
+       cJSON_HasObjectItem(o,"phase_output_host")||cJSON_HasObjectItem(o,"phase_output_switch_id")||
+       cJSON_HasObjectItem(o,"phase_output_password")){
+        cJSON_Delete(o);return httpd_resp_send_err(req,HTTPD_403_FORBIDDEN,"Ohne Rueckmeldung im Expertenmodus gesondert freigeben.");
+    }
+    for(unsigned role=2;role<EMS_GPIO_ROLES&&!restore;role++){
+        cJSON *pin=cJSON_GetObjectItemCaseSensitive(o,gpio_roles[role].id);
+        if(pin&&(!cJSON_IsNumber(pin)||pin->valuedouble!=settings_gpio_value(&saved_settings,role))){
+            cJSON_Delete(o);return httpd_resp_send_err(req,HTTPD_403_FORBIDDEN,"GPIO-Belegung im Expertenmodus aendern.");
+        }
+    }
+    cJSON *mqtt_profile=cJSON_GetObjectItemCaseSensitive(o,"phase_actuator_type");
+    if(cJSON_IsNumber(mqtt_profile)&&mqtt_profile->valuedouble==2&&saved_settings.phase_actuator_type!=2){
+        cJSON_Delete(o);return httpd_resp_send_err(req,HTTPD_403_FORBIDDEN,"MQTT-Schuetzsteuerung erfordert Warnbestaetigungen und erneutes Experten-Passwort.");
+    }
+    LOCK();bool maintenance=phase_test_active||boot_validation_pending||ota_in_progress||restarting||evcc_configuring||(evcc_control.configured&&evcc_control.enabled);UNLOCK();
     if(maintenance){cJSON_Delete(o);httpd_resp_set_status(req,"409 Conflict");return httpd_resp_sendstr(req,"Sicherung oder Update laeuft. Danach erneut versuchen.");}
 
 
     settings_t next; LOCK(); next=saved_settings; UNLOCK(); bool valid=true;
+    char invalid_field[64]={0};
 
     for(cJSON *i=o->child;i && valid;i=i->next) {
+        snprintf(invalid_field,sizeof(invalid_field),"%s",i->string?i->string:"unbekannt");
+        if(!i->string){valid=false;break;}
+        /* Reject ambiguous duplicate fields before applying their values. */
+        for(cJSON *previous=o->child;previous!=i;previous=previous->next)
+            if(previous->string&&!strcmp(previous->string,i->string)){valid=false;break;}
+        if(!valid)break;
 
         const field_t *d=NULL;
 
@@ -2109,6 +2255,13 @@ static esp_err_t config_apply(httpd_req_t *req,cJSON *o,bool restore) {
     }
 
     cJSON_Delete(o);
+    /* A partial request must never be validated as if it were a complete
+       configuration: later host/coils may not have been parsed at all. */
+    if(!valid){
+        char message[192];
+        snprintf(message,sizeof(message),"Fehlerhafte Einstellungsdaten (%s). Seite neu laden und erneut speichern.",invalid_field);
+        return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,message);
+    }
     /* These legacy values are intentionally no longer configurable. */
     next.wallbox_rts_pin=-1;
     next.xemex_rts_pin=-1;
@@ -2130,6 +2283,12 @@ static esp_err_t config_apply(httpd_req_t *req,cJSON *o,bool restore) {
     if(!next.mqtt_enabled){next.vehicle_soc_enabled=false;
         if(!(next.huawei_enabled && next.huawei_pv))next.pv_display_enabled=false;
         if(!(next.huawei_enabled && next.huawei_battery))next.battery_protect=false;}
+    if(next.phase_actuator_type!=2)next.phase_feedback_enabled=true;
+    next.relay1_mode=next.phase_switch_enabled?3:0;
+    if(next.phase_actuator_type==2)next.phase_feedback_enabled=false;
+    if(next.phase_actuator_type!=2||!next.phase_switch_enabled||!next.relay_board_enabled||
+       (next.phase_output_transport==0&&!next.mqtt_enabled))
+        next.phase_mqtt_output_enabled=false;
     next.enabled=false; next.mode=MODE_OFF; next.pv_surplus_a=0;
     if(restore)next.control_verified=false;
     /* Clear the retired Solis experiment while retaining its settings-byte slot. */
@@ -2153,23 +2312,37 @@ static esp_err_t config_apply(httpd_req_t *req,cJSON *o,bool restore) {
 
     next.manual_current_a=fminf(next.manual_current_a,next.max_charge_a);
 
-    LOCK(); bool phase_change_allowed=phase_option_change_allowed(
+    LOCK(); bool phase_change_allowed=phase_setup_change_allowed(
         saved_settings.phase_switch_enabled,next.phase_switch_enabled,
-        settings.charge_phases,phase_state==PHASE_READY,
+        settings.charge_phases,phase_config_quiescent_locked(),
+        settings.enabled||(evcc_control.configured&&evcc_control.enabled&&!evcc_control.inhibited),
+        actual_at>0||meter_at>0,
         fresh(now_ms(),actual_at,wallbox_meter_ttl()),actual_a); UNLOCK();
-    LOCK();bool fixed_change_allowed=next.fixed_charge_phases==saved_settings.fixed_charge_phases ||
-        (!settings.enabled && fresh(now_ms(),actual_at,wallbox_meter_ttl()) &&
-         actual_a[0]<1 && actual_a[1]<1 && actual_a[2]<1 && phase_state==PHASE_READY);UNLOCK();
-    LOCK();bool feedback_change_allowed=(next.phase_feedback_enabled==saved_settings.phase_feedback_enabled &&
-        next.phase_feedback_closed_is_single==saved_settings.phase_feedback_closed_is_single) ||
-        (!settings.enabled && fresh(now_ms(),actual_at,wallbox_meter_ttl()) &&
-         actual_a[0]<1 && actual_a[1]<1 && actual_a[2]<1 && phase_state==PHASE_READY);UNLOCK();
-    if(!feedback_change_allowed)return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,
-        "Rueckmeldung nur bei gestoppter Ladung und frischem Messwert unter 1 A aendern.");
-    if(!fixed_change_allowed)return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,
-        "Festen Anschluss nur bei gestoppter Wallbox und frischen Messwerten unter 1 A aendern.");
-    if(!phase_change_allowed) return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,
-        "Phasenoption nur mit frischem Messwert unter 1 A aendern; Aktivierung nur bei 3 Phasen ohne Fehler.");
+    LOCK();bool fixed_change_allowed=fixed_wiring_change_allowed(
+        saved_settings.fixed_charge_phases,next.fixed_charge_phases,
+        settings.enabled||(evcc_control.configured&&evcc_control.enabled&&!evcc_control.inhibited),
+        phase_config_quiescent_locked(),actual_at>0||meter_at>0,
+        fresh(now_ms(),actual_at,wallbox_meter_ttl()),actual_a);UNLOCK();
+    LOCK();bool actuator_change=next.phase_actuator_type!=saved_settings.phase_actuator_type ||
+        strcmp(next.phase_shelly_host,saved_settings.phase_shelly_host) ||
+        next.phase_shelly_model!=saved_settings.phase_shelly_model||next.phase_shelly_pulse!=saved_settings.phase_shelly_pulse||
+        next.phase_shelly_true_three_phase!=saved_settings.phase_shelly_true_three_phase||
+        strcmp(next.phase_shelly_password,saved_settings.phase_shelly_password);
+    config_gate_t hardware_gate=phase_config_gate_locked(now_ms());
+    bool hardware_change_allowed=hardware_gate==CONFIG_GATE_OK;
+    bool actuator_change_allowed=!actuator_change||hardware_change_allowed;UNLOCK();
+    if(!actuator_change_allowed)return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,phase_config_gate_message(hardware_gate));
+    LOCK();bool feedback_changed=next.phase_feedback_enabled!=saved_settings.phase_feedback_enabled ||
+        next.phase_feedback_count!=saved_settings.phase_feedback_count||
+        next.phase_feedback_closed_is_single!=saved_settings.phase_feedback_closed_is_single;
+    bool feedback_change_allowed=!feedback_changed||hardware_change_allowed;
+    bool phase_configuration_changed=actuator_change||feedback_changed||
+        next.phase_switch_enabled!=saved_settings.phase_switch_enabled||
+        next.fixed_charge_phases!=saved_settings.fixed_charge_phases;
+    UNLOCK();
+    if(!feedback_change_allowed)return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,phase_config_gate_message(hardware_gate));
+    if(!fixed_change_allowed)return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,phase_config_gate_message(hardware_gate));
+    if(!phase_change_allowed)return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,phase_config_gate_message(hardware_gate));
     char house_url[256];
 
     bool next_tasmota_house=!strcmp(next.house_meter_type,"tasmota");
@@ -2182,16 +2355,35 @@ static esp_err_t config_apply(httpd_req_t *req,cJSON *o,bool restore) {
             "Hausakku benoetigt eine Datenquelle, einen PV-Hauszaehler und ein Netzziel von hoechstens 0 W.");
     if(next.phase_switch_enabled && (!next.relay_board_enabled || next.relay1_mode!=3))
         return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,
-            "Phasenumschaltung benoetigt das Relaisboard mit Relais 1 als Phasenschuetz.");
+            "Phasenumschaltung ist nicht vollstaendig eingerichtet. Verbindung und Schuetzoption pruefen.");
+    if((next.phase_actuator_type==1||next.phase_actuator_type==3)&&next.phase_switch_enabled){
+        if(!next.phase_shelly_host[0])
+            return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Shelly-Adresse fehlt. Unter Shelly-Schaltgeraet eintragen.");
+        if(!phase_switch_meter_supported(&next)){
+            char message[224];
+            if(!strcmp(next.wallbox_meter_type,"xemex"))
+                snprintf(message,sizeof(message),"Wallbox-Zaehler: Xemex mit %u Messspule(n) eingestellt. Fuer die Shelly-Phasenumschaltung mindestens L1 und L2 messen.",(unsigned)next.xemex_coils);
+            else
+                snprintf(message,sizeof(message),"Wallbox-Zaehlerprofil '%s' erfasst nicht mindestens L1 und L2. Fuer die Shelly-Phasenumschaltung ein passendes Profil waehlen.",next.wallbox_meter_type);
+            return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,message);
+        }
+    }
     if(next.grid_guard_enabled && !next_three_phase_house)
         return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,
             "Hausanschlussschutz benoetigt einen Zaehler mit drei gemessenen Phasenstroemen.");
-    if(!valid || !settings_valid(&next) || (next.zero_feed_enabled && next_tasmota_house &&
+    if(!settings_valid(&next) || (next.zero_feed_enabled && next_tasmota_house &&
        !house_query_url(next.house_meter_type,next.house_meter_host,next.house_power_path,house_url,sizeof(house_url))))
         return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Einstellungen ungueltig. Pins, Zaehler, Ladegrenzen und WLAN-Passwort pruefen.");
 
-    if(save_config(&next)!=ESP_OK)
+    /* Recheck under lock and reserve the controller before flash I/O. A
+       worker may have started since validation; never race its command. */
+    LOCK();hardware_gate=phase_config_gate_locked(now_ms());
+    if(phase_configuration_changed&&hardware_gate!=CONFIG_GATE_OK){UNLOCK();return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,phase_config_gate_message(hardware_gate));}
+    phase_config_saving=phase_configuration_changed;UNLOCK();
+    if(save_config(&next)!=ESP_OK){
+        LOCK();phase_config_saving=false;UNLOCK();
         return httpd_resp_send_err(req,HTTPD_500_INTERNAL_SERVER_ERROR,"Speichern fehlgeschlagen.");
+    }
     if(meter_changed) {
         nvs_handle_t nvs;if(nvs_open("wallbox_ems",NVS_READWRITE,&nvs)==ESP_OK){
             nvs_erase_key(nvs,"auto_offset");nvs_commit(nvs);nvs_close(nvs);
@@ -2241,6 +2433,7 @@ static esp_err_t config_apply(httpd_req_t *req,cJSON *o,bool restore) {
     /* Prices take effect even when another changed field needs a restart. */
     settings.price_kwh=next.price_kwh;settings.solar_price_kwh=next.solar_price_kwh;
     if(meter_changed){memset(&current_calibration,0,sizeof(current_calibration));calibration_dirty=false;}
+    if(settings.phase_actuator_type==2&&!next.phase_mqtt_output_enabled){phase_mqtt_allowed=false;phase_mqtt_cancel_locked(true);}
     saved_settings=next;
     settings.charge_plan_enabled=next.charge_plan_enabled;
     if(!next.charge_plan_enabled && charge_plan.active){
@@ -2270,6 +2463,7 @@ static esp_err_t config_apply(httpd_req_t *req,cJSON *o,bool restore) {
     }
     if(!applied) { reboot_required=true; settings.enabled=false; }
     bool needs_reboot=restart_pending();
+    phase_config_saving=false;
     UNLOCK();
     if(mqtt_client && previous_homeassistant && !next.homeassistant_enabled)
         homeassistant_discovery(false);
@@ -2285,6 +2479,7 @@ static esp_err_t config_apply(httpd_req_t *req,cJSON *o,bool restore) {
 }
 
 #include "expert_http.inc"
+#include "phase_test_http.inc"
 #include "feature_http.inc"
 
 static esp_err_t time_handler(httpd_req_t *req) {
@@ -2335,7 +2530,7 @@ static esp_err_t reboot_handler(httpd_req_t *req) {
     if(!authorized(req)) return ESP_OK;
 
     LOCK();bool allowed=!ota_in_progress&&!backup_in_progress&&!evcc_configuring;
-    if(allowed){settings.enabled=false;restarting=true;}UNLOCK();
+    if(allowed){settings.enabled=false;evcc_local_stop(&evcc_control);phase_test_end_locked();restarting=true;}UNLOCK();
     if(!allowed){httpd_resp_set_status(req,"409 Conflict");return httpd_resp_sendstr(req,"Wartung zuerst abschliessen. Neustart noch nicht ausgefuehrt.");}
     return ok_json(req);
 
@@ -2346,7 +2541,7 @@ static esp_err_t factory_handler(httpd_req_t *req) {
     if(!authorized(req)) return ESP_OK;
 
     LOCK();bool allowed=!ota_in_progress&&!backup_in_progress&&!evcc_configuring;
-    if(allowed){settings.enabled=false;restarting=true;factory_reset_requested=true;}UNLOCK();
+    if(allowed){settings.enabled=false;evcc_local_stop(&evcc_control);phase_test_end_locked();restarting=true;factory_reset_requested=true;}UNLOCK();
     if(!allowed){httpd_resp_set_status(req,"409 Conflict");return httpd_resp_sendstr(req,"Wartung zuerst abschliessen. Werksreset noch nicht ausgefuehrt.");}
 
     return ok_json(req);
@@ -2503,26 +2698,27 @@ static void session_day_emit(cJSON *rows,const session_day_t *day,unsigned offse
     cJSON_AddBoolToObject(item,"active",day->active);cJSON_AddNumberToObject(item,"flags",day->flags);
     cJSON_AddItemToArray(rows,item);(*shown)++;
 }
+#include "session_snapshot.inc"
+
 static esp_err_t sessions_handler(httpd_req_t *req){
     session_filter_t filter;unsigned offset;char label[32];
     if(!session_query(req,&filter,&offset,label))return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Zeitraum pruefen.");
-    session_store_t *copy=malloc(sizeof(*copy));if(!copy)return send_json(req,NULL);
-    LOCK();*copy=sessions.store;UNLOCK();
+    session_snapshot_t *copy=session_snapshot_create(&filter,0);if(!copy)return send_json(req,NULL);
     cJSON *o=cJSON_CreateObject();if(!o){free(copy);return send_json(req,NULL);}
     cJSON *rows=cJSON_AddArrayToObject(o,"days");unsigned count=0,shown=0;double grid=0,solar=0,cost=0,grid_cost=0,solar_cost=0;
     session_day_t day={0};
     for(unsigned i=0;i<copy->count;i++){
-        const charge_session_t *r=sessions_recent(copy,i);if(!session_filter_matches(r,&filter))continue;
+        const charge_session_t *r=session_snapshot_recent(copy,i);if(!session_filter_matches(r,&filter))continue;
         grid+=r->grid_wh+r->unknown_wh;solar+=r->solar_wh;cost+=r->cost_eur;
         grid_cost+=r->grid_cost_eur;solar_cost+=r->solar_cost_eur;
         if(day.sessions&&day.date!=r->start_date){session_day_emit(rows,&day,offset,&count,&shown);day=(session_day_t){0};}
-        session_day_add(&day,r,copy->active_slot&&r==&copy->records[copy->active_slot-1]);
+        session_day_add(&day,r,copy->active_id&&r->id==copy->active_id);
     }
     if(day.sessions)session_day_emit(rows,&day,offset,&count,&shown);
-    cJSON_AddStringToObject(o,"period",label);cJSON_AddNumberToObject(o,"count",count);cJSON_AddNumberToObject(o,"offset",offset);cJSON_AddNumberToObject(o,"retained",copy->count);
+    cJSON_AddStringToObject(o,"period",label);cJSON_AddNumberToObject(o,"count",count);cJSON_AddNumberToObject(o,"offset",offset);cJSON_AddNumberToObject(o,"retained",copy->retained);
     cJSON_AddNumberToObject(o,"grid_kwh",grid/1000);cJSON_AddNumberToObject(o,"solar_kwh",solar/1000);cJSON_AddNumberToObject(o,"unknown_kwh",0);cJSON_AddNumberToObject(o,"cost_eur",cost);
     cJSON_AddNumberToObject(o,"grid_cost_eur",grid_cost);cJSON_AddNumberToObject(o,"solar_cost_eur",solar_cost);
-    cJSON_AddNumberToObject(o,"oldest_date",copy->count?sessions_recent(copy,copy->count-1)->start_date:0);
+    cJSON_AddNumberToObject(o,"oldest_date",copy->oldest_date);
     free(copy);return send_json(req,o);
 }
 static esp_err_t session_day_handler(httpd_req_t *req){
@@ -2540,12 +2736,11 @@ static esp_err_t session_day_handler(httpd_req_t *req){
             return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Ungueltiger Offset.");
         offset=(unsigned)value;
     }
-    session_store_t *copy=malloc(sizeof(*copy));if(!copy)return send_json(req,NULL);
-    LOCK();*copy=sessions.store;UNLOCK();
+    session_snapshot_t *copy=session_snapshot_create(NULL,date);if(!copy)return send_json(req,NULL);
     cJSON *o=cJSON_CreateObject();if(!o){free(copy);return send_json(req,NULL);}
     cJSON *rows=cJSON_AddArrayToObject(o,"sessions");unsigned count=0,shown=0;
     for(unsigned i=0;i<copy->count;i++){
-        const charge_session_t *r=sessions_recent(copy,i);if(r->start_date!=date)continue;
+        const charge_session_t *r=session_snapshot_recent(copy,i);if(r->start_date!=date)continue;
         if(count++<offset||shown>=20)continue;
         cJSON *item=cJSON_CreateObject();if(!item)continue;
         cJSON_AddNumberToObject(item,"id",r->id);
@@ -2556,7 +2751,7 @@ static esp_err_t session_day_handler(httpd_req_t *req){
         cJSON_AddNumberToObject(item,"unknown_kwh",0);cJSON_AddNumberToObject(item,"cost_eur",r->cost_eur);
         cJSON_AddNumberToObject(item,"grid_cost_eur",r->grid_cost_eur);cJSON_AddNumberToObject(item,"solar_cost_eur",r->solar_cost_eur);
         cJSON_AddNumberToObject(item,"flags",r->flags);
-        cJSON_AddBoolToObject(item,"active",copy->active_slot&&r==&copy->records[copy->active_slot-1]);
+        cJSON_AddBoolToObject(item,"active",copy->active_id&&r->id==copy->active_id);
         cJSON_AddItemToArray(rows,item);shown++;
     }
     cJSON_AddNumberToObject(o,"date",date);cJSON_AddNumberToObject(o,"count",count);cJSON_AddNumberToObject(o,"offset",offset);
@@ -2568,20 +2763,19 @@ static void session_time(uint32_t stamp,char out[24]){
 static esp_err_t csv_handler(httpd_req_t *req) {
     session_filter_t filter;unsigned offset;char label[32];
     if(!session_query(req,&filter,&offset,label))return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Zeitraum pruefen.");
-    session_store_t *copy=malloc(sizeof(*copy));if(!copy)return send_json(req,NULL);
-    LOCK();*copy=sessions.store;UNLOCK();
+    session_snapshot_t *copy=session_snapshot_create(&filter,0);if(!copy)return send_json(req,NULL);
     char attachment[96];snprintf(attachment,sizeof(attachment),"attachment; filename=TeeNet-Ladesitzungen-%s.csv",label);
     httpd_resp_set_type(req,"text/csv; charset=utf-8");httpd_resp_set_hdr(req,"Content-Disposition",attachment);
     esp_err_t err=httpd_resp_sendstr_chunk(req,"\xEF\xBB\xBF" "Sitzung;Beginn;Letzte_Ladung;Ladezeit_Minuten;Energie_kWh;Netz_kWh;Netz_Kosten_EUR;Netz_Prozent;Solar_Akku_kWh;Solar_Akku_Kosten_EUR;Solar_Akku_Prozent;Kosten_EUR;Status\r\n");
     char line[384],start[24],end[24];double grid=0,solar=0,cost=0,grid_cost=0,solar_cost=0;
     for(unsigned i=copy->count;i>0&&err==ESP_OK;i--){
-        const charge_session_t *r=sessions_recent(copy,i-1);if(!session_filter_matches(r,&filter))continue;
+        const charge_session_t *r=session_snapshot_recent(copy,i-1);if(!session_filter_matches(r,&filter))continue;
         double total=(double)r->grid_wh+r->solar_wh+r->unknown_wh;
         double session_grid=r->grid_wh+r->unknown_wh,session_cost=r->cost_eur;
         grid+=session_grid;solar+=r->solar_wh;cost+=session_cost;
         grid_cost+=r->grid_cost_eur;solar_cost+=r->solar_cost_eur;
         session_time(r->start_epoch,start);session_time(r->end_epoch,end);
-        const char *status=copy->active_slot&&r==&copy->records[copy->active_slot-1]?"Aktiv":"Abgeschlossen";
+        const char *status=copy->active_id&&r->id==copy->active_id?"Aktiv":"Abgeschlossen";
         snprintf(line,sizeof(line),"%lu;%s;%s;%.1f;%.6f;%.6f;%.4f;%.2f;%.6f;%.4f;%.2f;%.4f;%s\r\n",(unsigned long)r->id,start,end,r->charging_ms/60000.0,total/1000,session_grid/1000,r->grid_cost_eur,total?session_grid*100/total:0,r->solar_wh/1000,r->solar_cost_eur,total?r->solar_wh*100/total:0,session_cost,status);
         for(char *p=line;*p;p++)if(*p=='.')*p=',';
         err=httpd_resp_sendstr_chunk(req,line);
@@ -2590,55 +2784,46 @@ static esp_err_t csv_handler(httpd_req_t *req) {
     free(copy);if(err==ESP_OK)err=httpd_resp_send_chunk(req,NULL,0);return err;
 }
 
-extern const uint8_t html_start[] asm("_binary_dashboard_html_start"),html_end[] asm("_binary_dashboard_html_end");
 
-extern const uint8_t css_start[] asm("_binary_dashboard_css_start"),css_end[] asm("_binary_dashboard_css_end");
 
-extern const uint8_t js_start[] asm("_binary_dashboard_js_start"),js_end[] asm("_binary_dashboard_js_end");
-extern const uint8_t qr_start[] asm("_binary_qrcode_js_start"),qr_end[] asm("_binary_qrcode_js_end");
 
 extern const uint8_t logo_start[] asm("_binary_teennet_logo_png_start"),logo_end[] asm("_binary_teennet_logo_png_end");
 
 extern const uint8_t hardware_start[] asm("_binary_hardware_plan_svg_start"),hardware_end[] asm("_binary_hardware_plan_svg_end");
 extern const uint8_t wiring_start[] asm("_binary_wiring_plan_jpg_start"),wiring_end[] asm("_binary_wiring_plan_jpg_end");
 
-extern const uint8_t guide_start[] asm("_binary_guide_html_start"),guide_end[] asm("_binary_guide_html_end");
 extern const uint8_t html_gz_start[] asm("_binary_dashboard_html_gz_start"),html_gz_end[] asm("_binary_dashboard_html_gz_end");
 extern const uint8_t css_gz_start[] asm("_binary_dashboard_css_gz_start"),css_gz_end[] asm("_binary_dashboard_css_gz_end");
 extern const uint8_t js_gz_start[] asm("_binary_dashboard_js_gz_start"),js_gz_end[] asm("_binary_dashboard_js_gz_end");
 extern const uint8_t qr_gz_start[] asm("_binary_qrcode_js_gz_start"),qr_gz_end[] asm("_binary_qrcode_js_gz_end");
 extern const uint8_t guide_gz_start[] asm("_binary_guide_html_gz_start"),guide_gz_end[] asm("_binary_guide_html_gz_end");
-extern const uint8_t guide_js_start[] asm("_binary_guide_js_start"),guide_js_end[] asm("_binary_guide_js_end");
 extern const uint8_t guide_js_gz_start[] asm("_binary_guide_js_gz_start"),guide_js_gz_end[] asm("_binary_guide_js_gz_end");
 
 
-extern const uint8_t features_start[] asm("_binary_features_js_start"),features_end[] asm("_binary_features_js_end");
 extern const uint8_t features_gz_start[] asm("_binary_features_js_gz_start"),features_gz_end[] asm("_binary_features_js_gz_end");
 
-extern const uint8_t health_start[] asm("_binary_health_js_start"),health_end[] asm("_binary_health_js_end");
 extern const uint8_t health_gz_start[] asm("_binary_health_js_gz_start"),health_gz_end[] asm("_binary_health_js_gz_end");
 
-extern const uint8_t terms_js_start[] asm("_binary_terms_js_start"),terms_js_end[] asm("_binary_terms_js_end");
 extern const uint8_t terms_js_gz_start[] asm("_binary_terms_js_gz_start"),terms_js_gz_end[] asm("_binary_terms_js_gz_end");
-extern const uint8_t evcc_js_start[] asm("_binary_evcc_test_js_start"),evcc_js_end[] asm("_binary_evcc_test_js_end");
 extern const uint8_t evcc_js_gz_start[] asm("_binary_evcc_test_js_gz_start"),evcc_js_gz_end[] asm("_binary_evcc_test_js_gz_end");
-extern const uint8_t firmware_start[] asm("_binary_firmware_js_start"),firmware_end[] asm("_binary_firmware_js_end");
 extern const uint8_t firmware_gz_start[] asm("_binary_firmware_js_gz_start"),firmware_gz_end[] asm("_binary_firmware_js_gz_end");
+extern const uint8_t expert_schema_gz_start[] asm("_binary_expert_schema_json_gz_start"),expert_schema_gz_end[] asm("_binary_expert_schema_json_gz_end");
 
 static esp_err_t asset_send(httpd_req_t *req) {
 
-    const uint8_t *start=html_start,*end=html_end; const char *type="text/html; charset=utf-8";
+    const uint8_t *start=html_gz_start,*end=html_gz_end; const char *type="text/html; charset=utf-8";
 
-    if(!strcmp(req->uri,"/dashboard.css")) start=css_start,end=css_end,type="text/css; charset=utf-8";
+    if(!strcmp(req->uri,"/dashboard.css")) start=css_gz_start,end=css_gz_end,type="text/css; charset=utf-8";
 
-    if(!strcmp(req->uri,"/dashboard.js")) start=js_start,end=js_end,type="application/javascript; charset=utf-8";
-    if(!strcmp(req->uri,"/health.js")) start=health_start,end=health_end,type="application/javascript; charset=utf-8";
-    if(!strcmp(req->uri,"/firmware.js")) start=firmware_start,end=firmware_end,type="application/javascript; charset=utf-8";
-    if(!strcmp(req->uri,"/terms.js")) start=terms_js_start,end=terms_js_end,type="application/javascript; charset=utf-8";
-    else if(!strcmp(req->uri,"/evcc-test.js")) start=evcc_js_start,end=evcc_js_end,type="application/javascript; charset=utf-8";
-    if(!strcmp(req->uri,"/features.js")) start=features_start,end=features_end,type="application/javascript; charset=utf-8";
-    if(!strcmp(req->uri,"/qrcode.js")) start=qr_start,end=qr_end,type="application/javascript; charset=utf-8";
-    if(!strcmp(req->uri,"/guide.js")) start=guide_js_start,end=guide_js_end,type="application/javascript; charset=utf-8";
+    if(!strcmp(req->uri,"/dashboard.js")) start=js_gz_start,end=js_gz_end,type="application/javascript; charset=utf-8";
+    if(!strcmp(req->uri,"/health.js")) start=health_gz_start,end=health_gz_end,type="application/javascript; charset=utf-8";
+    if(!strcmp(req->uri,"/firmware.js")) start=firmware_gz_start,end=firmware_gz_end,type="application/javascript; charset=utf-8";
+    if(!strcmp(req->uri,"/terms.js")) start=terms_js_gz_start,end=terms_js_gz_end,type="application/javascript; charset=utf-8";
+    else if(!strcmp(req->uri,"/evcc-test.js")) start=evcc_js_gz_start,end=evcc_js_gz_end,type="application/javascript; charset=utf-8";
+    if(!strcmp(req->uri,"/features.js")) start=features_gz_start,end=features_gz_end,type="application/javascript; charset=utf-8";
+    if(!strcmp(req->uri,"/qrcode.js")) start=qr_gz_start,end=qr_gz_end,type="application/javascript; charset=utf-8";
+    if(!strcmp(req->uri,"/guide.js")) start=guide_js_gz_start,end=guide_js_gz_end,type="application/javascript; charset=utf-8";
+    if(!strcmp(req->uri,"/expert-schema.json")) start=expert_schema_gz_start,end=expert_schema_gz_end,type="application/json; charset=utf-8";
 
     if(!strcmp(req->uri,"/teennet-logo.png")) start=logo_start,end=logo_end,type="image/png";
 
@@ -2646,27 +2831,19 @@ static esp_err_t asset_send(httpd_req_t *req) {
     if(!strcmp(req->uri,"/wiring-plan.jpg")) start=wiring_start,end=wiring_end,type="image/jpeg";
 
 
-    if(!strcmp(req->uri,"/guide")) start=guide_start,end=guide_end,type="text/html; charset=utf-8";
+    if(!strcmp(req->uri,"/guide")) start=guide_gz_start,end=guide_gz_end,type="text/html; charset=utf-8";
 
-    size_t length=end-start-1;
-    char encoding[192];
-    bool gzip=httpd_req_get_hdr_value_str(req,"Accept-Encoding",encoding,sizeof(encoding))==ESP_OK && strstr(encoding,"gzip") && !strstr(encoding,"q=0");
-    if(gzip) {
-        if(start==html_start) start=html_gz_start,end=html_gz_end;
-        else if(start==css_start) start=css_gz_start,end=css_gz_end;
-        else if(start==js_start) start=js_gz_start,end=js_gz_end;
-        else if(start==health_start) start=health_gz_start,end=health_gz_end;
-        else if(start==firmware_start) start=firmware_gz_start,end=firmware_gz_end;
-        else if(start==terms_js_start)start=terms_js_gz_start,end=terms_js_gz_end;
-        else if(start==evcc_js_start) start=evcc_js_gz_start,end=evcc_js_gz_end;
-        else if(start==features_start) start=features_gz_start,end=features_gz_end;
-        else if(start==qr_start) start=qr_gz_start,end=qr_gz_end;
-        else if(start==guide_start) start=guide_gz_start,end=guide_gz_end;
-        else if(start==guide_js_start) start=guide_js_gz_start,end=guide_js_gz_end;
-        else gzip=false;
-        if(gzip) { length=end-start; httpd_resp_set_hdr(req,"Content-Encoding","gzip"); }
+    bool gzip=start!=logo_start&&start!=hardware_start&&start!=wiring_start;
+    size_t length=(size_t)(end-start)-(gzip?0:1);
+    if(gzip){
+        char encoding[256];esp_err_t header=httpd_req_get_hdr_value_str(req,"Accept-Encoding",encoding,sizeof(encoding));
+        if((header!=ESP_OK&&header!=ESP_ERR_NOT_FOUND)||!http_accepts_gzip(header==ESP_OK?encoding:NULL)){
+            httpd_resp_set_hdr(req,"Vary","Accept-Encoding");httpd_resp_set_status(req,"406 Not Acceptable");
+            return httpd_resp_sendstr(req,"Diese Oberflaeche benoetigt einen Browser mit GZIP-Unterstuetzung. Die JSON-API bleibt verfuegbar.");
+        }
+        httpd_resp_set_hdr(req,"Content-Encoding","gzip");
+        httpd_resp_set_hdr(req,"Vary","Accept-Encoding");
     }
-    httpd_resp_set_hdr(req,"Vary","Accept-Encoding");
 
     char etag[128],previous_etag[128];
     snprintf(etag,sizeof(etag),"\"%s:%.80s:%s\"",EMS_BUILD_ID,req->uri,gzip?"gzip":"plain");
@@ -2747,6 +2924,8 @@ static bool meter_port_open_wait(uint32_t ip,uint16_t port,unsigned timeout_ms) 
     close(sock);return ok;
 }
 static bool meter_port_open(uint32_t ip,uint16_t port){return meter_port_open_wait(ip,port,300);}
+#include "phase_shelly_network.inc"
+#include "phase_output_network.inc"
 static int shelly_discovery_get(const char *host,const char *path,char *body,size_t capacity) {
     char url[100];snprintf(url,sizeof(url),"http://%s%s",host,path);
     return http_get_body(url,body,capacity,1500);
@@ -2763,9 +2942,9 @@ static void shelly_found_add(const char *host,const char *type,float watts,bool 
 }
 static void shelly_scan_task(void *arg) {
     (void)arg;esp_netif_ip_info_t info;esp_netif_t *station=esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
-    char *body=scan_tasmota?malloc(8192):NULL;
+    char *body=(scan_tasmota||scan_phase_shelly)?malloc(8192):NULL;
     bool complete=false;
-    if((!scan_tasmota || body) && station && esp_netif_get_ip_info(station,&info)==ESP_OK && info.ip.addr){
+    if(((!scan_tasmota&&!scan_phase_shelly) || body) && station && esp_netif_get_ip_info(station,&info)==ESP_OK && info.ip.addr){
         uint32_t local=ntohl(info.ip.addr),mask=ntohl(info.netmask.addr);
         /* Bound larger home networks to the ESP's local /24; honor smaller subnets. */
         if(mask<0xffffff00U)mask=0xffffff00U;
@@ -2774,10 +2953,27 @@ static void shelly_scan_task(void *arg) {
         for(uint32_t candidate=first;candidate<last;candidate++){
             LOCK();bool stop=!wifi_online || restarting || ota_in_progress || now_ms()>deadline;UNLOCK();
             if(stop)break;
-            if(candidate!=local && meter_port_open(candidate,scan_tasmota?80:502)){
+            if(candidate!=local && meter_port_open(candidate,(scan_tasmota||scan_phase_shelly)?80:502)){
                 char host[16],type[20];snprintf(host,sizeof(host),"%u.%u.%u.%u",(unsigned)(candidate>>24),
                     (unsigned)((candidate>>16)&255),(unsigned)((candidate>>8)&255),(unsigned)(candidate&255));
-                if(scan_tasmota){
+                if(scan_phase_shelly){
+                    shelly_phase_identity_t identity;
+                    int code=shelly_discovery_get(host,"/rpc/Shelly.GetDeviceInfo",body,8192);
+                    if(code==200&&shelly_phase_identity(body,&identity)){
+                        bool checked=false;shelly_phase_feedback_t feedback;
+                        if(identity.profile!=255&&!identity.protected_device)
+                            checked=shelly_discovery_get(host,"/rpc/Shelly.GetStatus",body,8192)==200&&
+                                shelly_phase_feedback_for(body,&feedback,identity.inputs,false);
+                        LOCK();
+                        if(phase_shelly_found_count<12){
+                            unsigned index=phase_shelly_found_count++;
+                            strcpy(phase_shelly_found[index].host,host);
+                            phase_shelly_found[index].identity=identity;
+                            phase_shelly_found[index].contacts_checked=checked;
+                        }
+                        UNLOCK();
+                    }
+                }else if(scan_tasmota){
                     int code=shelly_discovery_get(host,"/cm?cmnd=Status%2010",body,8192);float watts;
                     if(code==401 || code==403){LOCK();shelly_locked_count++;UNLOCK();}
                     else if(code==200 && house_power_parse(body,"tasmota","",&watts))shelly_found_add(host,"tasmota",watts,false);
@@ -2801,7 +2997,22 @@ static esp_err_t shelly_scan_get(httpd_req_t *req) {
     cJSON *o=cJSON_CreateObject();if(!o)return send_json(req,NULL);
     cJSON *items=cJSON_AddArrayToObject(o,"meters");LOCK();
     cJSON_AddBoolToObject(o,"running",shelly_scan_running);cJSON_AddBoolToObject(o,"partial",shelly_scan_partial);
-    cJSON_AddStringToObject(o,"family",scan_tasmota?"tasmota":"shelly");
+    cJSON_AddStringToObject(o,"family",scan_phase_shelly?"shelly_switch":scan_tasmota?"tasmota":"shelly");
+    cJSON *devices=cJSON_AddArrayToObject(o,"devices");
+    for(unsigned i=0;scan_phase_shelly&&i<phase_shelly_found_count;i++){
+        cJSON *device=cJSON_CreateObject();if(!device)break;
+        const shelly_phase_identity_t *identity=&phase_shelly_found[i].identity;
+        cJSON_AddStringToObject(device,"host",phase_shelly_found[i].host);
+        cJSON_AddStringToObject(device,"name",identity->name);cJSON_AddStringToObject(device,"id",identity->id);
+        cJSON_AddStringToObject(device,"model",identity->model);
+        cJSON_AddBoolToObject(device,"protected",identity->protected_device);
+        cJSON_AddBoolToObject(device,"compatible",identity->profile!=255);
+        cJSON_AddNumberToObject(device,"profile",identity->profile);
+        cJSON_AddNumberToObject(device,"inputs",identity->inputs);
+        cJSON_AddBoolToObject(device,"modbus",identity->profile==4);
+        cJSON_AddBoolToObject(device,"contacts_checked",phase_shelly_found[i].contacts_checked);
+        cJSON_AddItemToArray(devices,device);
+    }
     cJSON_AddNumberToObject(o,"progress",shelly_scan_progress);cJSON_AddNumberToObject(o,"locked",shelly_locked_count);
     for(unsigned i=0;i<shelly_found_count;i++){
         cJSON *item=cJSON_CreateObject();if(!item)break;
@@ -2815,13 +3026,13 @@ static esp_err_t shelly_scan_post(httpd_req_t *req) {
     if(!authorized(req))return ESP_OK;
     cJSON *o=read_json(req);if(!o)return ESP_OK;
     cJSON *family=cJSON_GetObjectItemCaseSensitive(o,"family");
-    bool valid=cJSON_IsString(family) && (!strcmp(family->valuestring,"tasmota") || !strcmp(family->valuestring,"shelly"));
-    bool tasmota=valid && !strcmp(family->valuestring,"tasmota");cJSON_Delete(o);
+    bool valid=cJSON_IsString(family) && (!strcmp(family->valuestring,"tasmota") || !strcmp(family->valuestring,"shelly") || !strcmp(family->valuestring,"shelly_switch"));
+    bool tasmota=valid && !strcmp(family->valuestring,"tasmota"),actuator=valid&&!strcmp(family->valuestring,"shelly_switch");cJSON_Delete(o);
     if(!valid)return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Zaehlerfamilie auswaehlen.");
     LOCK();bool available=wifi_online && !wifi_ap_forced && !restarting && !ota_in_progress;
     bool running=shell_scan_running || shelly_scan_running || meter_preview.running || huawei_scan_running || huawei_preview_running;
     bool recent=shelly_scan_started && now_ms()-shelly_scan_started<60000;
-    if(available && !running && !recent){scan_tasmota=tasmota;shelly_scan_running=true;shelly_scan_started=now_ms();shelly_scan_progress=shelly_found_count=shelly_locked_count=0;shelly_scan_partial=false;}
+    if(available && !running && !recent){scan_tasmota=tasmota;scan_phase_shelly=actuator;phase_shelly_found_count=0;shelly_scan_running=true;shelly_scan_started=now_ms();shelly_scan_progress=shelly_found_count=shelly_locked_count=0;shelly_scan_partial=false;}
     UNLOCK();
     if(!available)return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Zuerst mit dem Heimnetz verbinden.");
     if(running || recent)return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Suche laeuft oder wurde gerade beendet. Bitte kurz warten.");
@@ -2905,12 +3116,13 @@ static esp_err_t meter_preview_post(httpd_req_t *req) {
 
 static void start_web(void) {
 
-    httpd_config_t cfg=HTTPD_DEFAULT_CONFIG(); cfg.stack_size=8192; cfg.max_uri_handlers=72; cfg.max_open_sockets=10; cfg.lru_purge_enable=true; cfg.recv_wait_timeout=8; cfg.send_wait_timeout=8;
+    /* Reserve sockets for meters, MQTT and the phase actuator (16 total). */
+    httpd_config_t cfg=HTTPD_DEFAULT_CONFIG(); cfg.stack_size=8192; cfg.max_uri_handlers=72; cfg.max_open_sockets=5; cfg.lru_purge_enable=true; cfg.recv_wait_timeout=2; cfg.send_wait_timeout=4;
     cfg.open_fn=web_socket_open;
     image_slots=xSemaphoreCreateCounting(2,2);
     if(!image_slots) abort();
 
-    httpd_handle_t server; ESP_ERROR_CHECK(httpd_start(&server,&cfg));
+    httpd_handle_t server; ESP_ERROR_CHECK(httpd_start(&server,&cfg));web_started=true;
 
     const httpd_uri_t routes[]={
         {.uri="/api/terms",.method=HTTP_POST,.handler=terms_post},
@@ -2935,6 +3147,7 @@ static void start_web(void) {
         {.uri="/hardware-plan.svg",.method=HTTP_GET,.handler=asset_handler},
         {.uri="/wiring-plan.jpg",.method=HTTP_GET,.handler=asset_handler},{.uri="/guide",.method=HTTP_GET,.handler=asset_handler},
         {.uri="/guide.js",.method=HTTP_GET,.handler=asset_handler},
+        {.uri="/expert-schema.json",.method=HTTP_GET,.handler=asset_handler},
 
 
         {.uri="/api/status",.method=HTTP_GET,.handler=status_handler},
@@ -2961,6 +3174,7 @@ static void start_web(void) {
 
         {.uri="/api/control",.method=HTTP_POST,.handler=control_handler},{.uri="/api/time",.method=HTTP_POST,.handler=time_handler},{.uri="/api/energy/reset",.method=HTTP_POST,.handler=energy_reset_handler},{.uri="/api/sessions/reset",.method=HTTP_POST,.handler=sessions_reset_handler},
 
+        {.uri="/api/phase-test",.method=HTTP_POST,.handler=phase_test_handler},
         {.uri="/api/reboot",.method=HTTP_POST,.handler=reboot_handler},{.uri="/api/factory-reset",.method=HTTP_POST,.handler=factory_handler},
 
         {.uri="/api/wifi/ap",.method=HTTP_POST,.handler=ap_handler},{.uri="/api/wifi/scan",.method=HTTP_GET,.handler=wifi_scan_handler},{.uri="/api/ota",.method=HTTP_POST,.handler=ota_handler}};
@@ -3099,13 +3313,8 @@ static void maintain_wifi(int64_t now) {
 
 static void relay_signals_locked(int64_t now) {
     if(!settings.relay_board_enabled || !relay_ready) return;
-    bool charging=settings.enabled && !restarting && !ota_in_progress && !restart_pending() &&
-        fresh(now,actual_at,wallbox_meter_ttl()) && target_locked(now)>0 &&
-        fmaxf(actual_a[0],fmaxf(actual_a[1],actual_a[2]))>=1;
-    bool fault=!fresh(now,actual_at,wallbox_meter_ttl()) || !wallbox_ready || !feedback_ready(now) ||
-        charge_guard.latched || (settings.phase_switch_enabled && phase_state==PHASE_FAULT);
-    if(settings.relay1_mode==3 && settings.phase_switch_enabled) return;
-    relay_set(0,settings.relay1_mode==1?charging:settings.relay1_mode==2?fault:false);
+    (void)now;
+    if(!settings.phase_switch_enabled)relay_set(0,false);
 }
 
 static void status_task(void *arg) {
@@ -3113,6 +3322,7 @@ static void status_task(void *arg) {
     int64_t checkpoint=now_ms(),publish=0,reconnect=0,console=0; double saved_total[2]={energy.store.total_wh[0],energy.store.total_wh[1]};
 
     while(true) {
+        boot_task_seen[0]=(uint32_t)now_ms();
 
         int64_t now=now_ms(),epoch,midnight; uint32_t date=calendar(&epoch,&midnight); LOCK();
         restore_control_memory_locked(now,date?epoch:0,false);
@@ -3126,7 +3336,8 @@ static void status_task(void *arg) {
             settings.enabled=false;settings.mode=MODE_OFF;
         }
         contacts_step_locked(now);
-        phase_step_locked(now);
+        phase_test_tick_locked(now);
+        if(!boot_validation_pending&&!boot_validation_failed)phase_step_locked(now);
         relay_signals_locked(now);
         if(settings.mode==MODE_PV && settings.zero_feed_enabled && fresh(now,house_power_at,house_meter_ttl()) && fresh(now,actual_at,wallbox_meter_ttl())) {
             settings.pv_surplus_a=pv_available_current_locked(now,house_power_w);pv_at=now;
@@ -3179,7 +3390,13 @@ static void status_task(void *arg) {
         if(event_log.sequence!=previous_event_sequence&&diagnostic_store_add(&fault_log,ems_event_recent(&event_log,0))){fault_dirty=true;fault_revision++;}
         /* A reboot releases GPIO12. Let the phase controller confirm zero
            current and park the contactor first, also under evcc ownership. */
-        bool reboot=restarting && (!settings.phase_switch_enabled || !relay_on[0]),online=wifi_online,session_checkpoint=sessions.checkpoint,changed=energy.store.total_wh[0]!=saved_total[0] || energy.store.total_wh[1]!=saved_total[1]; UNLOCK();
+        bool remote_restart_ready=phase_shelly_remote()&&phase_state==PHASE_READY&&phase_shelly_restart_prepared&&
+            phase_shelly_observed_locked(now)!=0&&fresh(now,actual_at,wallbox_meter_ttl())&&
+            actual_a[0]>=0&&actual_a[0]<1&&actual_a[1]>=0&&actual_a[1]<1&&actual_a[2]>=0&&actual_a[2]<1;
+        bool mqtt_restart_ready=!phase_mqtt_inflight&&fresh(now,actual_at,wallbox_meter_ttl())&&
+            actual_a[0]>=0&&actual_a[0]<1&&actual_a[1]>=0&&actual_a[1]<1&&actual_a[2]>=0&&actual_a[2]<1&&
+            (!phase_mqtt_allowed||(phase_state==PHASE_READY&&phase_mqtt_known&&phase_mqtt_assumed==3));
+        bool reboot=restarting && (phase_fault_restart_safe_locked(now) || !settings.phase_switch_enabled || (phase_mqtt_remote()?mqtt_restart_ready:phase_shelly_remote()?remote_restart_ready:!relay_on[0])),online=wifi_online,session_checkpoint=sessions.checkpoint,changed=energy.store.total_wh[0]!=saved_total[0] || energy.store.total_wh[1]!=saved_total[1]; UNLOCK();
         bool flash_finished=false;
         if(xSemaphoreTake(maintenance_flash_lock,0)==pdTRUE){
         LOCK();bool persist_calibration=calibration_dirty && (reboot || now-calibration_saved_at>=1800000);
@@ -3242,14 +3459,18 @@ static void status_task(void *arg) {
 
 }
 
+#include "boot_check.inc"
+
 void app_main(void) {
+    esp_ota_img_states_t image_state=ESP_OTA_IMG_UNDEFINED;
+    boot_rollback_armed=esp_ota_get_state_partition(esp_ota_get_running_partition(),&image_state)==ESP_OK&&image_state==ESP_OTA_IMG_PENDING_VERIFY;
 
     uint8_t mac[6];
     if(esp_read_mac(mac,ESP_MAC_WIFI_STA)==ESP_OK)
         snprintf(mqtt_device_id,sizeof(mqtt_device_id),"teenet_%02x%02x%02x%02x%02x%02x",
             mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
 
-    state_lock=xSemaphoreCreateMutex(); wifi_action_lock=xSemaphoreCreateMutex(); plan_save_lock=xSemaphoreCreateMutex();maintenance_flash_lock=xSemaphoreCreateMutex(); if(!state_lock || !wifi_action_lock || !plan_save_lock||!maintenance_flash_lock) abort();
+    state_lock=xSemaphoreCreateMutex(); wifi_action_lock=xSemaphoreCreateMutex(); plan_save_lock=xSemaphoreCreateMutex();maintenance_flash_lock=xSemaphoreCreateMutex();phase_mqtt_send_lock=xSemaphoreCreateMutex(); if(!phase_mqtt_send_lock||!state_lock || !wifi_action_lock || !plan_save_lock||!maintenance_flash_lock) abort();
 
     /* Never erase settings or accumulated energy automatically on storage errors. */
 
@@ -3297,6 +3518,10 @@ void app_main(void) {
     if(meter_ready && xTaskCreate(meter_task,"meter",4096,NULL,9,NULL)!=pdPASS) meter_ready=false;
 
 
+    if(phase_mqtt_remote()&&settings.phase_switch_enabled&&
+       xTaskCreate(phase_mqtt_task,"phase_output",settings.phase_output_transport?6144:4096,NULL,6,NULL)!=pdPASS){phase_state=PHASE_FAULT;phase_gpio_ready=false;}
+    if(phase_shelly_remote()&&settings.phase_switch_enabled &&
+       xTaskCreate(phase_shelly_task,"phase_shelly",6144,NULL,6,NULL)!=pdPASS){phase_state=PHASE_FAULT;phase_gpio_ready=false;}
     huawei_io=xSemaphoreCreateMutex();
     if(xTaskCreate(shell_limits_task,"shell_limits",6144,NULL,4,NULL)!=pdPASS)ESP_LOGE(TAG,"Shell limits task failed");
     if(huawei_io)xTaskCreate(huawei_task,"huawei",4096,NULL,6,NULL);
@@ -3305,6 +3530,7 @@ void app_main(void) {
     reset_clear_at=now_ms()+15000;
 
     if(xTaskCreate(status_task,"status",6144,NULL,5,NULL)!=pdPASS) abort();
+    if(xTaskCreate(boot_check_task,"boot_check",3072,NULL,4,NULL)!=pdPASS)abort();
 
     ESP_LOGI(TAG,"Ready; setup AP %s is available when no home network is configured or after 5 minutes offline",SETUP_SSID);
 

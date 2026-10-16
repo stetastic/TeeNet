@@ -22,14 +22,14 @@
 <text class="small" x="441" y="405">TX → Moduleingang</text><text class="small" x="441" y="430">Modulausgang → RX</text>
 <path class="wire" d="M340 384H420 M340 420H420"/>
 <rect class="box" x="845" y="345" width="310" height="105" rx="14"/>
-<text class="heading" x="867" y="385">Wallbox-Zähler</text><text x="867" y="417">RS485: Xemex/Eastron · WLAN/LAN: Shelly</text>
+<text class="heading" x="867" y="385">Wallbox-Zähler</text><text class="small" x="867" y="417">Hier: Xemex / Eastron</text>
 <path class="wire" d="M730 397H845"/><text class="small" x="755" y="380">A / B</text>
 <rect class="note" x="420" y="125" width="735" height="65" rx="12"/>
 <text class="small" x="439" y="151">Beide Module: VCC an 3,3 V, GND an ESP-GND. Automatische Umschaltung.</text>
 <text class="small" x="439" y="176">Signalrichtung prüfen: TXD/RXD-Beschriftungen unterscheiden sich je nach Modul.</text>
 <rect class="box" x="420" y="490" width="735" height="105" rx="14"/>
 <text class="heading" x="441" y="529">Hauszähler über Netzwerk</text>
-<text x="441" y="562">Wattwächter / Tasmota oder Shelly · Netzbezug und Einspeisung</text>
+<text x="441" y="562">Wattwächter / Tasmota, Shelly oder EM24 · Bezug / Einspeisung</text>
 <path class="wire" stroke-dasharray="7 6" d="M340 535H420"/>
 <text class="small" x="420" y="630">Die Stromzangen gehören an den passenden externen Zähler, nicht an den ESP.</text>
 <rect class="optional" x="45" y="675" width="1110" height="235" rx="18"/>
@@ -41,8 +41,8 @@
 <text class="small" x="70" y="863">GPIO6 gegen GND: Manuell / PV-Überschuss · GPIO7 gegen GND: EVU · nur potentialfrei.</text>
 <text class="small" x="70" y="891">Netz- und Spulenkreis nach Gerätehandbuch; Netzspannung nie an ESP oder ESP-GND.</text>
 <rect class="box" x="45" y="940" width="1110" height="120" rx="18"/>
-<text class="heading" x="70" y="979">Dreiphasiger Hausanschlussschutz</text>
-<text x="70" y="1013">Benötigt echte Phasenströme: Xemex mit drei Coils oder SDM630 / SDM630MCT.</text>
+<text class="heading" x="70" y="979">Überlastungsschutz Hausanschluss</text>
+<text x="70" y="1013">Drei echte Phasenströme: z. B. Xemex, SDM630, Shelly Pro 3EM oder EM24.</text>
 <text class="small" x="70" y="1042">Dritter separater RS485-Bus bei Bedarf: TX GPIO43 · RX GPIO44 · automatisches Modul.</text>
-<text class="small" x="45" y="1082">A/B, Busabschluss und Zähleranschlüsse nach Gerätehandbuch. Relais-Kontaktseite: siehe TeeNet-Anleitung.</text>
+<text class="small" x="45" y="1082">Standard-GPIOs · Änderungen im Expertenmodus beachten. A/B und Busabschluss nach Gerätehandbuch.</text>
 </svg>

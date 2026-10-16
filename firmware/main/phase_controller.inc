@@ -1,8 +1,22 @@
 static void phase_step_locked(int64_t now) {
+    if(phase_config_saving||(reboot_required&&!restarting&&!ota_in_progress))return;
+    phase_mqtt_guard_locked();
+    phase_shelly_guard_locked(now);
     if(!settings.phase_switch_enabled) return;
+    if(phase_test_active&&phase_state==PHASE_FAULT)phase_test_end_locked();
     if(!phase_gpio_ready) { phase_state=PHASE_FAULT; return; }
     uint8_t observed=phase_observed();
     if(phase_state==PHASE_FAULT) return;
+    /* Network components cannot be ready before Wi-Fi. During boot stay
+       blocked without a command; never reuse the short mechanical timeout. */
+    if(phase_startup&&phase_shelly_remote()&&phase_state==PHASE_MOVING&&!observed){
+        if(now-phase_move_at>ems_param_ms(EP_PHASE_STOP_MAX))phase_state=PHASE_FAULT;
+        return;
+    }
+    if(phase_startup&&phase_mqtt_remote()&&phase_state==PHASE_STOPPING&&!phase_output_link_locked()){
+        if(now-phase_stop_at>ems_param_ms(EP_PHASE_STOP_MAX))phase_state=PHASE_FAULT;
+        return;
+    }
     if(phase_state==PHASE_READY && !phase_feedback_matches(settings.phase_feedback_enabled,observed,settings.charge_phases)) { phase_state=PHASE_FAULT; return; }
     if(phase_state==PHASE_READY && settings.charge_phases==1 &&
        fresh(now,actual_at,wallbox_meter_ttl())) {
@@ -27,24 +41,33 @@ static void phase_step_locked(int64_t now) {
         phase_no_load_since=0;
     }
     if(phase_state==PHASE_STOPPING) {
-        if(phase_goal==1 && (restarting || ota_in_progress ||
-           (evcc_control.configured && evcc_desired_phases(&evcc_control,settings.charge_phases)==3)))phase_goal=3;
+        if(phase_goal==1 && (((restarting || ota_in_progress)&&!phase_shelly_remote()) ||
+           (!phase_test_active && evcc_control.configured && evcc_desired_phases(&evcc_control,settings.charge_phases)==3)))phase_goal=3;
         bool fresh_meter=fresh(now,actual_at,wallbox_meter_ttl());
         float peak=fmaxf(actual_a[0],fmaxf(actual_a[1],actual_a[2]));
-        bool zero=fresh_meter && actual_at>phase_stop_at && peak<ems_param(EP_PHASE_ZERO_A) && last_sent_current_at>phase_stop_at && fresh(now,wallbox_at,ems_param_ms(EP_SHELL_TTL));
+        float zero_limit=phase_test_active?fminf(1,ems_param(EP_PHASE_ZERO_A)):ems_param(EP_PHASE_ZERO_A);
+        /* An explicit stopped hardware test needs live current proof, not a
+           working Shell data bus. Automatic switching still requires its stop telegram. */
+        bool test_stopped=phase_test_active&&!settings.enabled&&!evcc_control.enabled;
+        bool zero=fresh_meter && actual_at>phase_stop_at && peak<zero_limit &&
+            isfinite(actual_a[0])&&actual_a[0]>=0&&isfinite(actual_a[1])&&actual_a[1]>=0&&isfinite(actual_a[2])&&actual_a[2]>=0&&
+            (test_stopped||(last_sent_current_at>phase_stop_at&&fresh(now,wallbox_at,ems_param_ms(EP_SHELL_TTL))));
+        if(settings.phase_actuator_type!=0)zero=zero&&phase_measured_zero(&settings,actual_a,zero_limit);
         if(!zero) phase_zero_at=0;
         else if(!phase_zero_at) phase_zero_at=actual_at;
         /* Network samples may remain valid longer than the zero hold. A new
            post-stop measurement must confirm its end; one cached zero is not
            evidence of continuous current-free operation. */
         if(phase_zero_at && actual_at-phase_zero_at>=ems_param_ms(EP_PHASE_ZERO)) {
-            relay_set(0,phase_goal==1);
+            if(!phase_actuator_begin_locked(phase_goal,now)){phase_state=PHASE_FAULT;return;}
             phase_move_at=now; phase_state=PHASE_MOVING;
         } else if(now-phase_stop_at>ems_param_ms(EP_PHASE_STOP_MAX)) phase_state=PHASE_FAULT;
         return;
     }
     if(phase_state==PHASE_MOVING) {
-        if(phase_motion_complete(settings.phase_feedback_enabled,observed,phase_goal,now-phase_move_at)) {
+        if(phase_mqtt_remote()?phase_mqtt_motion_complete_locked(phase_goal,now):
+           phase_shelly_remote()?phase_shelly_motion_complete_locked(phase_goal,now):
+           phase_motion_complete(settings.phase_feedback_enabled,observed,phase_goal,now-phase_move_at)) {
             settings.charge_phases=phase_goal;
             phase_move_at=now; phase_state=PHASE_SETTLING;
             phase_attempt_at=phase_no_load_since=0;
@@ -55,7 +78,8 @@ static void phase_step_locked(int64_t now) {
     }
     if(phase_state==PHASE_SETTLING) {
         if(!phase_feedback_matches(settings.phase_feedback_enabled,observed,phase_goal)) { phase_state=PHASE_FAULT; return; }
-        if(now-phase_move_at>=ems_param_ms(EP_PHASE_SETTLE) && meter_at>phase_move_at && wallbox_at>phase_move_at) {
+        if(now-phase_move_at>=ems_param_ms(EP_PHASE_SETTLE) && meter_at>phase_move_at && (wallbox_at>phase_move_at||
+           (phase_test_active&&!settings.enabled&&!evcc_control.enabled&&fresh(now,actual_at,wallbox_meter_ttl())&&actual_at>phase_move_at))) {
             phase_state=PHASE_READY;
             /* Bootstrap and a completed explicit Stop are not PV oscillations.
                The dwell protects ongoing automatic changes, not an idle start. */
@@ -66,8 +90,8 @@ static void phase_step_locked(int64_t now) {
         } else if(now-phase_move_at>ems_param_ms(EP_PHASE_DATA_MAX)) phase_state=PHASE_FAULT;
         return;
     }
-    uint8_t desired=3;
-    if(restarting || ota_in_progress)desired=3;
+    uint8_t desired=phase_shelly_remote()?settings.charge_phases:3;
+    if(restarting || ota_in_progress)desired=phase_shelly_remote()?settings.charge_phases:3;
     else if(evcc_control.configured)desired=(uint8_t)evcc_desired_phases(&evcc_control,settings.charge_phases);
     else if(settings.enabled && settings.mode==MODE_MANUAL) desired=settings.manual_phases;
     else if(settings.enabled && settings.mode==MODE_PV && settings.zero_feed_enabled) {
@@ -86,6 +110,7 @@ static void phase_step_locked(int64_t now) {
             else desired=settings.charge_phases;
         } else desired=settings.charge_phases;
     }
+    if(phase_test_active)desired=phase_test_goal;
     if(phase_idle_inhibit && desired==1) desired=3;
     /* Anti-cycling waits apply to active PV operation. Explicit Stop must
        return to the deenergized contactor after the current-zero interlock. */

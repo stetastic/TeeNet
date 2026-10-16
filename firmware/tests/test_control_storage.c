@@ -30,7 +30,7 @@ static void nvs_close(nvs_handle_t h){(void)h;}
 #include "control_storage.inc"
 static const int64_t saved_utc=1791720000000LL;
 static void fixture(void){
-    settings_defaults(&settings);settings.battery_protect=settings.zero_feed_enabled=true;
+    settings_defaults(&settings);settings.basic_mode=false;settings.battery_protect=settings.zero_feed_enabled=true;
     memset(&stored_control_memory,0,sizeof(stored_control_memory));memset(&battery_buffer,0,sizeof(battery_buffer));memset(&pv_control,0,sizeof(pv_control));
     control_storage_ok=true;control_memory_pending=battery_use=battery_start_use=false;uptime=1000;utc=0;writes=commits=write_error=0;
     battery_buffer_t b={.started=true,.started_at=1000};pv_control_t pv={.initialized=true,.stopped=true,.stopped_at=100000,.last_at=101000};

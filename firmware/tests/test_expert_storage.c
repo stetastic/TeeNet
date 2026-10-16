@@ -1,4 +1,5 @@
 #include "ems_core.h"
+static bool phase_test_active;
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
@@ -14,6 +15,7 @@ typedef int nvs_handle_t;
 #define pdTRUE 1
 #define ticks(x) (x)
 static settings_t settings;
+static bool boot_validation_pending;
 static expert_values_t expert_saved,flash_values;
 static bool ota_in_progress,restarting,backup_in_progress,evcc_configuring,expert_reboot_pending,config_storage_ok=true;
 static struct {bool configured,enabled;} evcc_control;

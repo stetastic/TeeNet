@@ -86,19 +86,20 @@ static bool huawei_read(const char *host,uint8_t unit,bool grid,bool pv,bool bat
 static void huawei_task(void *arg){
     (void)arg;unsigned failures=0;
     while(true){
-        int64_t started=now_ms();settings_t selected;
-        LOCK();selected=settings;
+        int64_t started=now_ms();char host[64];uint8_t unit;bool grid,pv,battery,zero_feed,grid_guard;
+        LOCK();strcpy(host,settings.huawei_host);unit=settings.huawei_unit_id;
+        zero_feed=settings.zero_feed_enabled;grid_guard=settings.grid_guard_enabled;
+        grid=settings.huawei_enabled&&!strcmp(settings.house_meter_type,"huawei")&&(zero_feed||grid_guard);
+        pv=settings.huawei_enabled&&settings.huawei_pv&&settings.pv_display_enabled;
+        battery=settings.huawei_enabled&&settings.huawei_battery&&settings.battery_protect;
         bool ready=wifi_online&&!restarting&&!ota_in_progress&&!huawei_scan_running&&!huawei_preview_running;
         UNLOCK();
-        bool grid=selected.huawei_enabled&&!strcmp(selected.house_meter_type,"huawei")&&(selected.zero_feed_enabled||selected.grid_guard_enabled);
-        bool pv=selected.huawei_enabled&&selected.huawei_pv&&selected.pv_display_enabled;
-        bool battery=selected.huawei_enabled&&selected.huawei_battery&&selected.battery_protect;
         uint32_t interval=5000;
         if(ready&&(grid||pv||battery)){
-            huawei_reading_t r;huawei_read(selected.huawei_host,selected.huawei_unit_id,grid,pv,battery,&r);
+            huawei_reading_t r;huawei_read(host,unit,grid,pv,battery,&r);
             LOCK();
             /* A save/OTA during the read must not publish an old source. */
-            bool same=settings.huawei_enabled&&settings.huawei_unit_id==selected.huawei_unit_id&&!strcmp(settings.huawei_host,selected.huawei_host)&&wifi_online&&!restarting&&!ota_in_progress;
+            bool same=settings.huawei_enabled&&settings.huawei_unit_id==unit&&!strcmp(settings.huawei_host,host)&&wifi_online&&!restarting&&!ota_in_progress;
             if(same&&r.connected){strcpy(huawei_model,r.model);huawei_at=now_ms();}
             if(same&&grid&&!strcmp(settings.house_meter_type,"huawei")&&r.grid_ok){
                 house_power_w=r.grid_w;house_power_at=r.grid_at;
@@ -118,8 +119,8 @@ static void huawei_task(void *arg){
             }
             UNLOCK();
             /* A missing optional battery must not age out a working grid meter. */
-            bool ok=r.connected&&((grid&&((selected.zero_feed_enabled&&r.grid_ok)||
-                (selected.grid_guard_enabled&&r.current_ok)))||(pv&&r.pv_ok)||(battery&&r.battery_ok));
+            bool ok=r.connected&&((grid&&((zero_feed&&r.grid_ok)||
+                (grid_guard&&r.current_ok)))||(pv&&r.pv_ok)||(battery&&r.battery_ok));
             if(ok)failures=0;else if(failures<10)failures++;
             interval=failures>=5?30000:failures>=3?15000:5000;
         }else if(!(grid||pv||battery))failures=0;

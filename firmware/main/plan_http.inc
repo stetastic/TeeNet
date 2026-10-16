@@ -10,7 +10,7 @@ static esp_err_t plan_handler(httpd_req_t *req) {
     LOCK();charge_plan_t next=charge_plan;bool restart_blocked=activate&&restart_pending();
     if(activate) {
         valid=valid && settings.charge_plan_enabled && clock_ok && settings.control_verified && settings.zero_feed_enabled && !settings.external_mode_input_enabled &&
-            !restart_pending()&&!restarting&&!ota_in_progress;
+            !restart_pending()&&!restarting&&!ota_in_progress&&!phase_mqtt_saving;
         if(resuming)valid=valid && next.active && next.deadline_s>epoch/1000;
         else valid=valid && cJSON_IsNumber(kwh)&&cJSON_IsNumber(deadline)&&isfinite(deadline->valuedouble)&&
             deadline->valuedouble>=1704067200&&deadline->valuedouble<=4102444800LL&&floor(deadline->valuedouble)==deadline->valuedouble&&

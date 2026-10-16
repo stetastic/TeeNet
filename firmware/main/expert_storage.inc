@@ -1,5 +1,5 @@
 static bool expert_stopped_locked(void) {
-    return !settings.enabled && !ota_in_progress && !restarting && !backup_in_progress &&
+    return !phase_test_active && !boot_validation_pending && !settings.enabled && !ota_in_progress && !restarting && !backup_in_progress &&
         !evcc_configuring && !(evcc_control.configured&&evcc_control.enabled) && phase_state==PHASE_READY &&
         fresh(now_ms(),actual_at,wallbox_meter_ttl()) && actual_a[0]<1 && actual_a[1]<1 && actual_a[2]<1;
 }

@@ -9,7 +9,7 @@ static esp_err_t backup_handler(httpd_req_t *req) {
     char query[32];bool secrets=httpd_req_get_url_query_str(req,query,sizeof(query))==ESP_OK&&!strcmp(query,"secrets=1");
     cJSON *root=cJSON_CreateObject(),*config=config_json(secrets);
     if(!root||!config){cJSON_Delete(root);cJSON_Delete(config);return send_json(req,NULL);}
-    cJSON_DeleteItemFromObject(config,"wifi_password_set");cJSON_DeleteItemFromObject(config,"mqtt_password_set");
+    config_remove_readonly(config);
     cJSON_AddStringToObject(root,"format","TeeNet-settings");cJSON_AddNumberToObject(root,"schema",1);
     cJSON_AddStringToObject(root,"build_id",EMS_BUILD_ID);cJSON_AddBoolToObject(root,"includes_passwords",secrets);
     cJSON_AddItemToObject(root,"settings",config);

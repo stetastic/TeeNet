@@ -12,7 +12,7 @@ static void confirmed_stop(charge_guard_t *g,int64_t at) {
 }
 int main(void) {
     settings_t saved,runtime,next;
-    settings_defaults(&saved); saved.grid_limit_a=32;
+    settings_defaults(&saved); saved.basic_mode=false;saved.grid_limit_a=32;
     near(estimated_charge_power(&saved,idle),0);
     near(estimated_charge_power(&saved,(float[]){8,8,8}),5520);
     assert(isnan(estimated_charge_power(&saved,(float[]){0,NAN,0})));
@@ -33,7 +33,7 @@ int main(void) {
         next=saved; next.current_offset_a=.5f; assert(!settings_apply_live(&runtime,&saved,&next));
     }
     /* Changing the discharge depth must not turn an active charge off. */
-    settings_defaults(&saved); saved.grid_limit_a=32;
+    settings_defaults(&saved); saved.basic_mode=false;saved.grid_limit_a=32;
     runtime=saved; runtime.mode=MODE_PV; runtime.enabled=true;
     next=saved; next.battery_reserve_soc=25;
     assert(settings_apply_live(&runtime,&saved,&next));
@@ -84,8 +84,8 @@ int main(void) {
     settings_t pinned;saved.control_verified=true;pinned=saved;
     pinned.xemex_tx_pin=8;pinned.relay2_pin=9;
     settings_fixed_pins(&pinned);
-    assert(pinned.xemex_tx_pin==4 && pinned.xemex_rx_pin==5 && pinned.wallbox_tx_pin==17 && pinned.wallbox_rx_pin==18);
-    assert(pinned.house_tx_pin==43 && pinned.house_rx_pin==44 && pinned.relay2_pin==14 && !pinned.control_verified);
+    assert(pinned.xemex_tx_pin==8 && pinned.xemex_rx_pin==5 && pinned.wallbox_tx_pin==17 && pinned.wallbox_rx_pin==18);
+    assert(pinned.house_tx_pin==43 && pinned.house_rx_pin==44 && pinned.relay2_pin==14 && pinned.control_verified);
     charge_guard_t g={0};
     /* No car: even a long-lived start request must not create a stop/restart loop. */
     for(int64_t t=1000;t<600000;t+=1000) charge_guard_step(&g,true,true,idle,8,t);

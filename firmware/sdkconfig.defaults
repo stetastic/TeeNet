@@ -12,3 +12,11 @@ CONFIG_HTTPD_MAX_REQ_HDR_LEN=2048
 
 # Release firmware must fit the existing 2-MB OTA slots.
 CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+
+# Shelly Gen2+ password support requires Digest (SHA-256).
+CONFIG_ESP_HTTP_CLIENT_ENABLE_DIGEST_AUTH=y
+# Settings migration and initial network setup need bounded startup headroom.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=4096
+
+# Preserve the two OTA slots and validate new application startup.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y

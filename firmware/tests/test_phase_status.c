@@ -4,6 +4,10 @@
 #include <string.h>
 enum {PHASE_READY,PHASE_STOPPING,PHASE_MOVING,PHASE_SETTLING,PHASE_FAULT};
 static settings_t settings;
+static bool phase_startup,phase_link;
+static bool phase_shelly_remote(void){return settings.phase_actuator_type==1||settings.phase_actuator_type==3;}
+static bool phase_mqtt_remote(void){return settings.phase_actuator_type==2;}
+static bool phase_output_link_locked(void){return phase_link;}
 static unsigned phase_state,phase_candidate=1;
 static int64_t phase_zero_at,phase_stop_at=1000,phase_move_at=2000,phase_hold_until,phase_candidate_at=3000;
 #include "phase_status.inc"
@@ -24,5 +28,8 @@ int main(void){
     check(4000,"candidate",48000);phase_candidate=3;check(4000,"candidate",183000);
     phase_hold_until=10000;check(4000,"hold",10000);check(10000,"candidate",183000);
     settings.enabled=false;check(4000,"none",0);settings.enabled=true;phase_state=PHASE_FAULT;check(4000,"none",0);
-    puts("PASS: phase countdowns match active expert parameters, switching states, hold/candidate deadlines and disabled/fault states");
+    phase_startup=true;settings.phase_actuator_type=1;phase_state=PHASE_MOVING;check(4000,"connection",92000);
+    settings.phase_actuator_type=2;phase_state=PHASE_STOPPING;phase_link=false;check(4000,"connection",91000);
+    phase_link=true;check(4000,"current_zero",91000);
+    puts("PASS: phase countdowns match active parameters and bounded network startup");
 }

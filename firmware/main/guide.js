@@ -15,8 +15,10 @@ const imageViewer=document.getElementById('image-viewer');
 if(imageViewer){
   const full=document.getElementById('image-full');
   for(const button of document.querySelectorAll('[data-image]'))button.addEventListener('click',()=>{
-    const source=button.querySelector('img');
-    full.src=source.src;full.alt=source.alt;
+    const source=button.querySelector('img'),vector=button.querySelector('svg');
+    if(!source&&!vector)return;
+    if(source){full.src=source.src;full.alt=source.alt;}
+    else{full.src='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(new XMLSerializer().serializeToString(vector));full.alt=vector.querySelector('desc')?.textContent||button.dataset.image;}
     document.getElementById('image-caption').textContent=button.dataset.image;
     imageViewer.showModal();
   });

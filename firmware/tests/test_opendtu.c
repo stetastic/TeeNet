@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 int main(void){
-    settings_t cfg;settings_defaults(&cfg);cfg.mqtt_input_source=2;cfg.battery_protect=true;cfg.zero_feed_enabled=true;
+    settings_t cfg;settings_defaults(&cfg);cfg.basic_mode=false;cfg.pv_display_enabled=true;cfg.mqtt_input_source=2;cfg.battery_protect=true;cfg.zero_feed_enabled=true;
     strcpy(cfg.opendtu_pv_topic,"opendtu/victron/123/PPV");assert(settings_valid(&cfg));
     opendtu_state_t s={0};float charge,discharge;
     assert(opendtu_receive(&s,&cfg,"opendtu/battery/stateOfCharge","72",false,1000));

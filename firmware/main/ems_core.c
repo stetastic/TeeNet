@@ -1,5 +1,7 @@
+#include <stdio.h>
 #include "ems_core.h"
 #include "hardware_profile.h"
+#include "shelly_phase.h"
 #include <math.h>
 #include <string.h>
 #include <stdlib.h>
@@ -23,17 +25,21 @@ void settings_defaults(settings_t *s) {
     strcpy(s->wallbox_meter_type,"xemex"); s->meter_baud=9600; s->meter_format=1;
     s->charge_phases=3; s->manual_phases=3; s->fixed_charge_phases=3;
     s->phase_feedback_enabled=true;
-    s->phase_feedback_closed_is_single=true;
+    s->phase_feedback_count=1;
+    s->phase_feedback_closed_is_single=false;
     s->control_status_visible=true;
-    s->vehicle_soc_enabled=true;
-    s->mqtt_enabled=true; s->pv_display_enabled=true;
-    s->relay1_pin=12; s->relay2_pin=14;
+    s->basic_mode=true;
+    s->mqtt_enabled=true;
+    s->relay1_pin=EMS_DEFAULT_RELAY_PIN; s->relay2_pin=14;
+    s->phase_feedback_pin=EMS_DEFAULT_FEEDBACK_PIN;
+    s->phase_feedback_second_pin=EMS_DEFAULT_FEEDBACK_SECOND_PIN;
+    s->status_led_pin=EMS_DEFAULT_LED_PIN;
     s->battery_cloud_limit_w=4000; s->battery_assist_limit_w=4000;
     s->pv_house_priority_w=4000; s->pv_car_priority_w=6000;
     strcpy(s->opendtu_prefix,"opendtu");
 
     s->external_mode_input_pin=EMS_DEFAULT_MODE_INPUT_PIN; s->evu_input_pin=7; s->evu_limit_a=0;
-    s->house_tx_pin=43; s->house_rx_pin=44; s->house_rts_pin=-1;
+    s->house_tx_pin=EMS_DEFAULT_HOUSE_TX_PIN; s->house_rx_pin=EMS_DEFAULT_HOUSE_RX_PIN; s->house_rts_pin=-1;
     s->house_address=1; s->house_meter_baud=9600; s->house_meter_format=0; s->house_xemex_coils=3;
     s->ads_sda_pin=8; s->ads_scl_pin=9; s->ads_wallbox_address=0x48; s->ads_house_address=0x49;
     s->ads_coil_rating_a=50; s->ads_full_scale_v=0.333f;
@@ -55,16 +61,15 @@ void settings_basic_mode(settings_t *s) {
     if(s->mode!=MODE_OFF && s->mode!=MODE_MANUAL){s->mode=MODE_OFF;s->enabled=false;}
 }
 void settings_fixed_pins(settings_t *s) {
-    if(s->xemex_tx_pin!=EMS_DEFAULT_METER_TX_PIN || s->xemex_rx_pin!=EMS_DEFAULT_METER_RX_PIN ||
-       s->house_tx_pin!=43 || s->house_rx_pin!=44 || s->external_mode_input_pin!=EMS_DEFAULT_MODE_INPUT_PIN ||
-       s->evu_input_pin!=7 || s->relay1_pin!=12) s->control_verified=false;
-    s->xemex_tx_pin=EMS_DEFAULT_METER_TX_PIN;s->xemex_rx_pin=EMS_DEFAULT_METER_RX_PIN;
-    s->house_tx_pin=43;s->house_rx_pin=44;s->external_mode_input_pin=EMS_DEFAULT_MODE_INPUT_PIN;s->evu_input_pin=7;
-    s->relay1_pin=12;s->relay2_pin=14; /* Legacy storage only; GPIO14 is unused. */
+    /* Retired fields remain normalized; expert pin assignments are preserved. */
+    s->relay2_pin=14;
     s->relay2_mode=0;s->nominal_v=230;
+    s->relay_active_low=false; /* GPIO contactor output is always active High. */
+    if(s->phase_feedback_count==2)s->phase_feedback_closed_is_single=false; /* Two complementary contacts use fixed roles. */
     s->wallbox_rts_pin=s->xemex_rts_pin=s->house_rts_pin=-1;
 }
-static bool pin_valid(int pin) { return pin==1 || pin==2 || (pin>=4 && pin<=18) || pin==21 || (pin>=38 && pin<=44) || pin==47; }
+#include "gpio_map.inc"
+static bool pin_valid(int pin) { return !settings_gpio_reason(pin,false)[0]; }
 bool settings_shell_pin_available(const settings_t *s,int pin,bool tx) {
     if(s->shell_rs485_interface==1)return true; /* UART pins are unused. */
     bool wallbox_serial=s->meter_rs485_interface==0 && strcmp(s->wallbox_meter_type,"shelly_gen2") && strcmp(s->wallbox_meter_type,"shelly_em1") && strcmp(s->wallbox_meter_type,"em24_tcp");
@@ -74,8 +79,10 @@ bool settings_shell_pin_available(const settings_t *s,int pin,bool tx) {
     return !(serial && (pin==s->house_tx_pin || pin==s->house_rx_pin)) &&
         !(s->external_mode_input_enabled && pin==s->external_mode_input_pin) &&
         !(s->evu_input_enabled && pin==s->evu_input_pin) &&
-        !(s->relay_board_enabled && pin==s->relay1_pin) &&
-        !(s->phase_switch_enabled && s->phase_feedback_enabled && pin==13);
+        !(s->relay_board_enabled && s->phase_actuator_type==0 && pin==s->relay1_pin) &&
+        !(s->phase_switch_enabled && s->phase_feedback_enabled && s->phase_actuator_type==0 &&
+          (pin==s->phase_feedback_pin||(s->phase_feedback_count==2&&pin==s->phase_feedback_second_pin)))&&
+        pin!=s->status_led_pin;
 }
 static bool rs485_endpoint_parts(const char *text,size_t capacity,uint32_t *address,unsigned *port) {
     if(!text || !memchr(text,0,capacity) || !text[0])return false;
@@ -108,7 +115,67 @@ static bool mqtt_topic_valid(const char *text,size_t size,bool required) {
     for(const unsigned char *p=(const unsigned char *)text;*p;p++)if(*p<32||*p==127||*p=='#'||*p=='+')return false;
     return true;
 }
+bool phase_three_phase_meter(const settings_t *s) {
+    if(!memchr(s->wallbox_meter_type,0,sizeof(s->wallbox_meter_type)))return false;
+    return !strcmp(s->wallbox_meter_type,"sdm630")||!strcmp(s->wallbox_meter_type,"sdm630mct")||
+        !strcmp(s->wallbox_meter_type,"em24_tcp")||!strcmp(s->wallbox_meter_type,"shelly_gen2")||
+        (!strcmp(s->wallbox_meter_type,"xemex")&&s->xemex_coils==3);
+}
+unsigned phase_measured_currents(const settings_t *s){
+    if(!memchr(s->wallbox_meter_type,0,sizeof(s->wallbox_meter_type)))return 0;
+    if(!strcmp(s->wallbox_meter_type,"xemex"))return s->xemex_coils>=1&&s->xemex_coils<=3?s->xemex_coils:0;
+    return phase_three_phase_meter(s)?3:1;
+}
+bool phase_switch_meter_supported(const settings_t *s){return phase_measured_currents(s)>=2;}
+bool phase_measured_zero(const settings_t *s,const float actual[3],float limit){
+    unsigned count=phase_measured_currents(s);if(count<2||count>3||!isfinite(limit)||limit<=0)return false;
+    for(unsigned p=0;p<count;p++)if(!isfinite(actual[p])||actual[p]<0||actual[p]>=limit)return false;
+    return true;
+}
+bool phase_mqtt_output_value(const settings_t *s,unsigned phases) {
+    return s->phase_mqtt_true_three_phase?phases==3:phases==1;
+}
+bool phase_output_settings_supported(const settings_t *s) {
+    if(!phase_switch_meter_supported(s)||s->phase_output_transport>3)return false;
+    if(s->phase_output_transport==0){char topic[128];return s->mqtt_enabled&&phase_mqtt_output_topic(s,topic,sizeof(topic));}
+    return shelly_phase_endpoint_valid(s->phase_output_host,sizeof(s->phase_output_host))&&
+        (s->phase_output_transport!=3||s->phase_output_password[0])&&
+        (s->phase_output_switch_id==0||s->phase_output_switch_id==100);
+}
+bool phase_mqtt_output_topic(const settings_t *s,char *out,size_t capacity) {
+    if(!mqtt_topic_valid(s->phase_mqtt_topic,sizeof(s->phase_mqtt_topic),false)||
+       !mqtt_topic_valid(s->mqtt_prefix,sizeof(s->mqtt_prefix),true))return false;
+    int length=s->phase_mqtt_topic[0]?snprintf(out,capacity,"%s",s->phase_mqtt_topic):
+        snprintf(out,capacity,"%s/output/single_phase",s->mqtt_prefix);
+    if(length<=0||(size_t)length>=capacity||out[0]=='$')return false;
+    size_t prefix=strlen(s->mqtt_prefix);
+    if(!strncmp(out,s->mqtt_prefix,prefix)&&out[prefix]=='/') {
+        const char *tail=out+prefix+1;
+        if(!strncmp(tail,"command/",8)||!strncmp(tail,"input/",6)||!strncmp(tail,"sensor/",7)||
+           !strcmp(tail,"state")||!strcmp(tail,"availability"))return false;
+    }
+    return true;
+}
 bool settings_valid(const settings_t *s) {
+    if(s->phase_actuator_type>3 || s->phase_feedback_count<1||s->phase_feedback_count>2 ||
+       s->phase_shelly_model>4 || !memchr(s->phase_output_password,0,sizeof(s->phase_output_password)) ||
+       !memchr(s->phase_shelly_host,0,sizeof(s->phase_shelly_host)) ||
+       !memchr(s->phase_shelly_password,0,sizeof(s->phase_shelly_password)) ||
+       !memchr(s->wallbox_meter_type,0,sizeof(s->wallbox_meter_type)))return false;
+    if(!memchr(s->phase_mqtt_topic,0,sizeof(s->phase_mqtt_topic)))return false;
+    if(s->phase_output_transport>3||!memchr(s->phase_output_host,0,sizeof(s->phase_output_host))||
+       (s->phase_output_switch_id!=0&&s->phase_output_switch_id!=100))return false;
+    if(s->phase_output_host[0]&&!shelly_phase_endpoint_valid(s->phase_output_host,sizeof(s->phase_output_host)))return false;
+    if(s->phase_actuator_type==2&&s->phase_switch_enabled&&
+       (s->phase_feedback_enabled||!phase_output_settings_supported(s)))return false;
+    if(s->phase_shelly_host[0]&&!shelly_phase_endpoint_valid(s->phase_shelly_host,sizeof(s->phase_shelly_host)))return false;
+    if(s->phase_switch_enabled&&s->phase_actuator_type!=2&&!s->phase_feedback_enabled)return false;
+    if((s->phase_actuator_type==1||s->phase_actuator_type==3) && s->phase_switch_enabled &&
+       (!s->phase_feedback_enabled || !s->phase_shelly_host[0] ||
+        (s->phase_feedback_count==2&&s->phase_shelly_model>1) ||
+        (s->phase_shelly_pulse&&(s->phase_feedback_count!=2||s->phase_actuator_type==3)) ||
+        (s->phase_actuator_type==3&&s->phase_shelly_model!=4) ||
+        !phase_switch_meter_supported(s)))return false;
     if(s->shell_rs485_interface>1 || s->meter_rs485_interface>1 || s->house_rs485_interface>1 ||
        !memchr(s->shell_rs485_host,0,sizeof(s->shell_rs485_host)) ||
        !memchr(s->meter_rs485_host,0,sizeof(s->meter_rs485_host)) ||
@@ -136,15 +203,18 @@ bool settings_valid(const settings_t *s) {
     bool house_serial=s->house_rs485_interface==0 && (!strcmp(s->house_meter_type,"xemex") || sdm_profile(s->house_meter_type)!=NULL);
     bool wallbox_serial=s->meter_rs485_interface==0 && serial_meter;
     if(!strcmp(s->house_meter_type,"sdm230") || !strcmp(s->house_meter_type,"sdm120") ||
-       (!strcmp(s->house_meter_type,"xemex") && s->house_xemex_coils!=3) || s->xemex_coils==2)return false;
+       (!strcmp(s->house_meter_type,"xemex") && s->house_xemex_coils!=3))return false;
+    if(!settings_gpio_valid(s))return false;
     const int pins[]={s->wallbox_tx_pin,s->wallbox_rx_pin,s->wallbox_rts_pin,
         s->xemex_tx_pin,s->xemex_rx_pin,s->xemex_rts_pin,s->house_tx_pin,s->house_rx_pin,s->house_rts_pin,
-        s->external_mode_input_pin,s->evu_input_pin,s->relay1_pin,s->relay2_pin,13};
+        s->external_mode_input_pin,s->evu_input_pin,s->relay1_pin,s->relay2_pin,s->phase_feedback_pin,s->phase_feedback_second_pin};
     const bool used[]={s->shell_rs485_interface==0,s->shell_rs485_interface==0,s->shell_rs485_interface==0 && s->wallbox_rts_pin!=-1,
         wallbox_serial,wallbox_serial,wallbox_serial && s->xemex_rts_pin!=-1,
         house_serial,house_serial,house_serial && s->house_rts_pin!=-1,
         s->external_mode_input_enabled,s->evu_input_enabled,
-        s->relay_board_enabled,false,s->phase_switch_enabled && s->phase_feedback_enabled};
+        s->relay_board_enabled && s->phase_actuator_type==0,false,
+        s->phase_switch_enabled && s->phase_feedback_enabled && s->phase_actuator_type==0,
+        s->phase_switch_enabled && s->phase_feedback_count==2 && s->phase_actuator_type==0};
     for(unsigned i=0;i<sizeof(pins)/sizeof(pins[0]);i++) if(used[i]) {
         if(!pin_valid(pins[i])) return false;
         for(unsigned j=0;j<i;j++) if(used[j] && pins[i]==pins[j]) return false;
@@ -204,7 +274,7 @@ bool settings_valid(const settings_t *s) {
         (s->fixed_charge_phases!=1 || s->max_charge_a<=16) &&
         (s->charge_phases==1 || s->charge_phases==3) && (s->manual_phases==1 || s->manual_phases==3) &&
         (!network_wallbox || s->wallbox_meter_host[0]) &&
-        (!s->phase_switch_enabled || (s->max_charge_a<=16 && (strcmp(s->wallbox_meter_type,"xemex") || s->xemex_coils==1))) &&
+        (!s->phase_switch_enabled || s->max_charge_a<=16) &&
         (!s->evu_input_enabled || s->evu_limit_a==0 || range(s->evu_limit_a,s->min_charge_a,s->max_charge_a)) &&
         s->house_address>=1 && s->house_address<=247 &&
         (s->house_meter_baud==1200 || s->house_meter_baud==2400 || s->house_meter_baud==4800 || s->house_meter_baud==9600 || s->house_meter_baud==19200 || s->house_meter_baud==38400) &&
@@ -244,15 +314,41 @@ bool settings_decode(const void *blob,size_t length,settings_t *out) {
         case 24: prefix=offsetof(settings_t,basic_mode); break;
         case 25: prefix=offsetof(settings_t,opendtu_prefix); break;
         case 26: prefix=offsetof(settings_t,shell_rs485_interface); break;
+        case 27: prefix=offsetof(settings_t,phase_actuator_type); break;
+        case 28: prefix=offsetof(settings_t,phase_mqtt_output_enabled); break;
+        case 29: prefix=offsetof(settings_t,phase_mqtt_true_three_phase); break;
+        case 30: prefix=offsetof(settings_t,phase_output_transport); break;
+        case 31: prefix=offsetof(settings_t,phase_feedback_count); break;
+        case 32: prefix=offsetof(settings_t,phase_feedback_pin); break;
         case EMS_SETTINGS_VERSION: prefix=sizeof(settings_t); break;
         default: return false;
     }
     /* Old structs include trailing alignment padding; never copy it over new defaults. */
     if(length!=((prefix+3)&~(size_t)3)) return false;
     settings_t next; settings_defaults(&next); memcpy(&next,blob,prefix);
+    /* New-install defaults must not disable extras in older saved setups. */
+    if(version<25)next.basic_mode=false;
+    if(version<10)next.vehicle_soc_enabled=true;
+    if(version<11)next.pv_display_enabled=true;
     /* Keep the selected mode and setpoints visible after a restart, but never
        resume charging automatically. The user must enable it explicitly. */
     next.version=EMS_SETTINGS_VERSION; next.enabled=false;
+    if(version<33){
+        next.phase_feedback_closed_is_single=false; /* Previously fixed, including ignored legacy values. */
+        /* These roles were fixed by older firmware, even if legacy blobs
+           contained other values. Preserve the already-configurable Shell pins. */
+        next.xemex_tx_pin=EMS_DEFAULT_METER_TX_PIN;next.xemex_rx_pin=EMS_DEFAULT_METER_RX_PIN;
+        next.house_tx_pin=EMS_DEFAULT_HOUSE_TX_PIN;next.house_rx_pin=EMS_DEFAULT_HOUSE_RX_PIN;
+        next.external_mode_input_pin=EMS_DEFAULT_MODE_INPUT_PIN;next.evu_input_pin=7;
+        next.relay1_pin=EMS_DEFAULT_RELAY_PIN;
+    }
+    if(version<32){
+        next.phase_feedback_count=next.phase_actuator_type==1?2:1;
+        next.phase_shelly_pulse=next.phase_actuator_type==1;
+        if(next.phase_actuator_type==1)next.phase_feedback_closed_is_single=false;
+        if(next.phase_actuator_type!=2)next.phase_feedback_enabled=true;
+        next.relay1_mode=next.phase_switch_enabled?3:0;
+    }
     next.charge_phases=next.phase_switch_enabled?3:next.fixed_charge_phases; next.manual_phases=next.charge_phases;
     if(version<8){next.price_kwh=.25f;next.solar_price_kwh=.08f;}
     if(version<7) {
@@ -297,7 +393,7 @@ bool settings_decode(const void *blob,size_t length,settings_t *out) {
         next.grid_guard_enabled=false;next.battery_protect=false;next.control_verified=false;
     }
     if(next.house_xemex_coils!=3) { next.house_xemex_coils=3;if(!strcmp(next.house_meter_type,"xemex"))next.control_verified=false; }
-    if(next.xemex_coils==2) { next.xemex_coils=1;next.control_verified=false; }
+    if(version<32&&next.xemex_coils==2) { next.xemex_coils=1;next.control_verified=false; }
     /* Shelly Gen1 has no Modbus-TCP server. Existing selections move to the
        current 3-phase profile and fail safely until a compatible meter is selected. */
     if(!strcmp(next.house_meter_type,"shelly_gen1")) {
@@ -336,7 +432,13 @@ bool settings_apply_live(settings_t *runtime,const settings_t *before,const sett
     SAME(xemex_coils); SAME(meter_baud); SAME(meter_format); SAME(mqtt_state_json);
     SAME(current_offset_a);
     SAME(phase_switch_enabled); SAME(phase_feedback_enabled); SAME(fixed_charge_phases);
-    SAME(phase_feedback_closed_is_single);
+    SAME(phase_feedback_closed_is_single); SAME(phase_actuator_type);
+    SAME(phase_feedback_count); SAME(phase_shelly_model); SAME(phase_shelly_pulse); SAME(phase_shelly_true_three_phase);
+    SAME(phase_feedback_pin); SAME(phase_feedback_second_pin); SAME(status_led_pin);
+    TEXT_SAME(phase_shelly_host); TEXT_SAME(phase_shelly_password);
+    TEXT_SAME(phase_output_password);
+    TEXT_SAME(phase_mqtt_topic);
+    SAME(phase_output_transport); SAME(phase_output_switch_id); TEXT_SAME(phase_output_host);
     SAME(external_mode_input_enabled); SAME(evu_input_enabled);
     SAME(external_mode_input_pin); SAME(evu_input_pin);
     SAME(house_tx_pin); SAME(house_rx_pin); SAME(house_rts_pin);
@@ -384,6 +486,9 @@ bool settings_apply_live(settings_t *runtime,const settings_t *before,const sett
     runtime->homeassistant_enabled=after->homeassistant_enabled;
     runtime->mqtt_input_source=after->mqtt_input_source;
     runtime->charge_plan_enabled=after->charge_plan_enabled;
+    /* Only the expert output API can change these, stopped and serialized. */
+    runtime->phase_mqtt_output_enabled=after->phase_mqtt_output_enabled;
+    runtime->phase_mqtt_true_three_phase=after->phase_mqtt_true_three_phase;
     strcpy(runtime->wallbox_meter_host,after->wallbox_meter_host);
     settings_basic_mode(runtime);
     return true;
@@ -435,7 +540,7 @@ bool reconstruct_currents(float values[3],unsigned coils) {
     if(coils<1 || coils>3) return false;
     float sum=0;
     for(unsigned i=0;i<coils;i++) { if(!range(values[i],0,999)) return false; sum+=values[i]; }
-    for(unsigned i=coils;i<3;i++) values[i]=sum/coils;
+    for(unsigned i=coils;i<3;i++) values[i]=coils==2?values[1]:sum/coils;
     return true;
 }
 bool wallbox_inactive_phase_current(const settings_t *s,const float actual[3]) {
@@ -443,8 +548,9 @@ bool wallbox_inactive_phase_current(const settings_t *s,const float actual[3]) {
     bool measured_three=(!strcmp(s->wallbox_meter_type,"xemex")&&s->xemex_coils==3) ||
         (profile&&profile->phases==3) || !strcmp(s->wallbox_meter_type,"shelly_gen2") ||
         !strcmp(s->wallbox_meter_type,"em24_tcp");
-    /* Reconstructed L2/L3 from one coil are not independent measurements. */
-    return s->charge_phases==1 && measured_three && (actual[1]>=1 || actual[2]>=1);
+    bool measured_two=!strcmp(s->wallbox_meter_type,"xemex")&&s->xemex_coils==2;
+    /* With two coils L2 is real, L3 follows L2 only for the energy estimate. */
+    return s->charge_phases==1 && ((measured_three&&(actual[1]>=1||actual[2]>=1))||(measured_two&&actual[1]>=1));
 }
 float estimated_charge_power(const settings_t *s,const float currents[3]) {
     float sum=0,peak=0;
@@ -739,6 +845,30 @@ bool parse_mode(const char *text, control_mode_t *out) {
     return false;
 }
 bool fresh(int64_t now,int64_t last,int64_t ttl) { return last>0 && now>=last && now-last<=ttl; }
+config_gate_t hardware_config_gate(bool charging,bool quiescent,bool has_measurements,
+                                  bool meter_fresh,const float actual[3]) {
+    if(charging)return CONFIG_GATE_CHARGING;
+    if(!quiescent)return CONFIG_GATE_MOVING;
+    /* Initial configuration is possible before any meter has been connected.
+       This only stores the wiring; it neither switches a contactor nor permits
+       charging without feedback. Once measured, require fresh zero current. */
+    if(!has_measurements)return CONFIG_GATE_OK;
+    if(!meter_fresh)return CONFIG_GATE_STALE;
+    if(!actual)return CONFIG_GATE_INVALID;
+    for(unsigned p=0;p<3;p++)if(!isfinite(actual[p])||actual[p]<0)return CONFIG_GATE_INVALID;
+    for(unsigned p=0;p<3;p++)if(actual[p]>=1)return CONFIG_GATE_CURRENT;
+    return CONFIG_GATE_OK;
+}
+bool hardware_config_change_allowed(bool charging,bool quiescent,bool has_measurements,
+                                    bool meter_fresh,const float actual[3]) {
+    return hardware_config_gate(charging,quiescent,has_measurements,meter_fresh,actual)==CONFIG_GATE_OK;
+}
+bool fixed_wiring_change_allowed(unsigned before,unsigned after,bool charging,
+                                 bool phase_ready,bool has_measurements,
+                                 bool meter_fresh,const float actual[3]) {
+    if(after!=1&&after!=3)return false;
+    return before==after||hardware_config_change_allowed(charging,phase_ready,has_measurements,meter_fresh,actual);
+}
 bool phase_option_change_allowed(bool was_enabled,bool requested_enabled,
                                  unsigned active_phases,bool phase_ready,
                                  bool meter_fresh,const float actual[3]) {
@@ -749,6 +879,21 @@ bool phase_option_change_allowed(bool was_enabled,bool requested_enabled,
        from switching the experimental option off. Enabling still requires the
        normal three-phase position and a healthy state machine. */
     return !requested_enabled || (active_phases==3 && phase_ready);
+}
+bool phase_setup_change_allowed(bool was_enabled,bool requested_enabled,
+                                unsigned active_phases,bool phase_ready,bool charging,
+                                bool has_measurements,bool meter_fresh,const float actual[3]) {
+    if(was_enabled==requested_enabled)return true;
+    if(charging)return false;
+    /* Preparing a previously disabled contactor on a new installation does
+       not authorize switching: the rebooted controller still needs current
+       measurements and a confirmed contact position before charging. */
+    (void)active_phases;
+    /* Store wiring only. The active driver changes after reboot and must
+       confirm its position before charging; a setup fault is not a veto. */
+    if(requested_enabled)return hardware_config_change_allowed(false,phase_ready,has_measurements,meter_fresh,actual);
+    if(!has_measurements)return true;
+    return phase_option_change_allowed(was_enabled,false,active_phases,phase_ready,meter_fresh,actual);
 }
 ems_wifi_mode_t wifi_recovery_mode(bool configured,bool online,bool forced_ap,int64_t now,int64_t lost_at) {
     if(!configured || forced_ap) return EMS_WIFI_AP;
@@ -794,6 +939,10 @@ bool phase_feedback_matches(bool required,unsigned observed,unsigned expected) {
 }
 unsigned phase_feedback_position(bool contact_closed,bool closed_is_single) {
     return contact_closed==closed_is_single?1:3;
+}
+unsigned phase_feedback_contacts(bool first,bool second,unsigned count,bool closed_is_single){
+    if(count<1||count>2||(count==2&&first==second))return 0;
+    return phase_feedback_position(first,closed_is_single);
 }
 bool phase_motion_complete(bool required,unsigned observed,unsigned expected,int64_t elapsed_ms) {
     return phase_feedback_matches(required,observed,expected) && elapsed_ms>=0 && (required || elapsed_ms>=2000);

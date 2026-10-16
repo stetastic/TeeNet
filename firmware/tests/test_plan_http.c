@@ -1,4 +1,5 @@
 #include "ems_core.h"
+static bool phase_mqtt_saving;
 #include "ems_features.h"
 #include "cJSON.h"
 #include <assert.h>

@@ -7,55 +7,59 @@ static void expert_load(void) {
         expert_values_t blob;size_t size=sizeof(blob);
         if(nvs_get_blob(nvs,"values",&blob,&size)==ESP_OK &&
            !expert_decode(&blob,size,&expert_saved))ESP_LOGW(TAG,"Expert values rejected; defaults loaded");
+        /* Retired GPIO-input permission is intentionally not migrated. */
         nvs_close(nvs);
     }
     if(expert_saved.values[EP_MIN_CURRENT]>settings.max_charge_a){
         expert_saved.values[EP_MIN_CURRENT]=expert_meta[EP_MIN_CURRENT].standard;
         ESP_LOGW(TAG,"Expert minimum exceeds charger maximum; standard restored");
     }
+    phase_mqtt_allowed=settings.phase_mqtt_output_enabled;
     expert_activate(&expert_saved);
     settings.min_charge_a=ems_param(EP_MIN_CURRENT);saved_settings.min_charge_a=settings.min_charge_a;
 }
-static cJSON *expert_snapshot(void){
+#include "gpio_http.inc"
+/* Keep the authenticated response deliberately small.  Labels, help text and
+   limits are served as a compressed static asset, so the ESP never has to
+   allocate the complete expert screen as one large cJSON tree. */
+static cJSON *expert_values_snapshot(void){
     cJSON *root=cJSON_CreateObject();if(!root)return NULL;
-    cJSON *array=cJSON_AddArrayToObject(root,"parameters");
-    if(!array){cJSON_Delete(root);return NULL;}
+    cJSON *values=cJSON_AddArrayToObject(root,"values"),*active=cJSON_AddArrayToObject(root,"active");
+    if(!values||!active){cJSON_Delete(root);return NULL;}
     for(unsigned p=0;p<EP_COUNT;p++){
-        const expert_meta_t *m=&expert_meta[p];cJSON *row=cJSON_CreateObject();
-        cJSON_AddStringToObject(row,"id",m->id);cJSON_AddStringToObject(row,"group",m->group);
-        cJSON_AddStringToObject(row,"label",m->label);cJSON_AddStringToObject(row,"help",m->help);
-        cJSON_AddStringToObject(row,"unit",m->unit);
-        cJSON_AddNumberToObject(row,"default",m->standard);cJSON_AddNumberToObject(row,"min",m->minimum);
-        cJSON_AddNumberToObject(row,"max",m->maximum);cJSON_AddNumberToObject(row,"step",m->step);
-        cJSON_AddNumberToObject(row,"value",expert_saved.values[p]);
-        cJSON_AddNumberToObject(row,"active",ems_param(p));cJSON_AddItemToArray(array,row);
+        cJSON_AddItemToArray(values,cJSON_CreateNumber(expert_saved.values[p]));
+        cJSON_AddItemToArray(active,cJSON_CreateNumber(ems_param(p)));
     }
-    settings_t defaults;settings_defaults(&defaults);
-    cJSON *config=cJSON_AddObjectToObject(root,"defaults");
-    for(unsigned f=0;f<sizeof(fields)/sizeof(fields[0]);f++){
-        const field_t *d=&fields[f];const void *ptr=(const char *)&defaults+d->offset;
-        if(d->type=='p')continue;
-        if(d->type=='s')cJSON_AddStringToObject(config,d->name,ptr);
-        else if(d->type=='b')cJSON_AddBoolToObject(config,d->name,*(const bool *)ptr);
-        else cJSON_AddNumberToObject(config,d->name,d->type=='f'?*(const float *)ptr:d->type=='i'?*(const int *)ptr:*(const uint8_t *)ptr);
-    }
-    cJSON_AddItemToObject(root,"settings",config_json(false));
     bool pending=false;for(unsigned p=0;p<EP_COUNT;p++)pending|=fabsf(expert_saved.values[p]-ems_param(p))>.00001f;
     cJSON_AddBoolToObject(root,"pending",pending);
     return root;
 }
 #include "expert_storage.inc"
+#include "phase_mqtt_storage.inc"
+#include "phase_mqtt_http.inc"
 static esp_err_t expert_post(httpd_req_t *req){
     if(!authorized(req))return ESP_OK;
-    if(now_ms()<expert_wrong_until){httpd_resp_set_status(req,"429 Too Many Requests");return httpd_resp_sendstr(req,"Kurz warten und erneut versuchen.");}
     cJSON *o=read_json(req);if(!o)return ESP_OK;
     cJSON *pin=cJSON_GetObjectItemCaseSensitive(o,"pin"),*action=cJSON_GetObjectItemCaseSensitive(o,"action");
+    /* Authenticated local users may always revoke; enabling still needs both
+       password checks and warnings. A duplicate enabled field is rejected by
+       phase_mqtt_post before any permission is changed. */
+    if(cJSON_IsString(action)&&!strcmp(action->valuestring,"mqtt_phase_output")&&
+       cJSON_IsFalse(cJSON_GetObjectItemCaseSensitive(o,"enabled")))return phase_mqtt_post(req,o);
+    if(now_ms()<expert_wrong_until){cJSON_Delete(o);httpd_resp_set_status(req,"429 Too Many Requests");return httpd_resp_sendstr(req,"Kurz warten und erneut versuchen.");}
     if(!cJSON_IsString(pin)||!expert_pin_valid(pin->valuestring)){
         expert_wrong_until=now_ms()+2000;cJSON_Delete(o);
         return httpd_resp_send_err(req,HTTPD_403_FORBIDDEN,"Experten-Passwort falsch.");
     }
     if(!cJSON_IsString(action)){cJSON_Delete(o);return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Aktion fehlt.");}
-    if(!strcmp(action->valuestring,"read")){cJSON_Delete(o);return send_json(req,expert_snapshot());}
+    /* The protected phase setup only needs to verify the repeated PIN.  Do
+       not allocate the large parameter/GPIO snapshot a second time. */
+    if(!strcmp(action->valuestring,"authorize")){cJSON_Delete(o);return ok_json(req);}
+    if(!strcmp(action->valuestring,"read")){cJSON_Delete(o);return send_json(req,expert_values_snapshot());}
+    if(!strcmp(action->valuestring,"read_gpio")){cJSON_Delete(o);return send_json(req,gpio_snapshot());}
+    if(boot_validation_pending){cJSON_Delete(o);httpd_resp_set_status(req,"409 Conflict");return httpd_resp_sendstr(req,"Firmware wird geprueft. Danach erneut versuchen.");}
+    if(!strcmp(action->valuestring,"mqtt_phase_output"))return phase_mqtt_post(req,o);
+    if(!strcmp(action->valuestring,"gpio"))return gpio_post(req,o);
     LOCK();bool stopped=expert_stopped_locked();UNLOCK();
     if(!stopped){cJSON_Delete(o);httpd_resp_set_status(req,"409 Conflict");return httpd_resp_sendstr(req,"Ladung zuerst stoppen; frische Messwerte unter 1 A erforderlich.");}
     if(!strcmp(action->valuestring,"config")){

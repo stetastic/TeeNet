@@ -10,7 +10,7 @@ static float car_budget(settings_t *s,float ev,float grid,float charge,float dis
     return ev-adjusted-discharge+s->zero_reserve_w;
 }
 int main(void){
-    settings_t s;settings_defaults(&s);s.battery_protect=s.zero_feed_enabled=s.pv_allocation_enabled=true;
+    settings_t s;settings_defaults(&s);s.basic_mode=false;s.battery_protect=s.zero_feed_enabled=s.pv_allocation_enabled=true;
     assert(settings_valid(&s));
     /* User's example: 8.5 kW PV, 1.28 kW house, 4.83 kW house battery,
        2.39 kW car. Only 7.22 kW belongs to the two charging loads. */
@@ -49,7 +49,7 @@ int main(void){
     pv_control_step(&c,false,12,8,16,11000);assert(c.target_a==0); /* phase/fault interlock wins */
     /* Idle EV, 3.4 kW exported and 5.1 kW entering the house battery:
        a 6 kW vehicle ceiling must not wait forever for a 6.7 kW start. */
-    settings_defaults(&s);s.battery_protect=s.zero_feed_enabled=s.pv_allocation_enabled=true;s.battery_reserve_soc=5;
+    settings_defaults(&s);s.basic_mode=false;s.battery_protect=s.zero_feed_enabled=s.pv_allocation_enabled=true;s.battery_reserve_soc=5;
     s.pv_priority=1;s.pv_car_priority_w=6000;
     float adjusted=pv_allocation_grid(&s,idle,-3400,5100,0,18,true);
     float available=battery_solar_current(&s,idle,adjusted,18,true,0,true);

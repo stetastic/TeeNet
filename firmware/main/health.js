@@ -18,6 +18,7 @@ window.TeeNetHealth=(()=>{
     const valid={wallbox:s.feedback_ok,house:s.house_meter_ok,battery:s.battery_soc_ok??s.battery_ok,pv:Number.isFinite(s.pv_generation_w)};
     return {value:sample.value,fresh:!!online&&!!valid[name],age:Math.max(0,Math.floor((now-sample.at)/1000))};
   }
+  function uptimeText(seconds){if(!Number.isFinite(seconds)||seconds<0)return '—';const s=Math.floor(seconds),days=Math.floor(s/86400),clock=[Math.floor(s/3600)%24,Math.floor(s/60)%60,s%60].map(n=>String(n).padStart(2,'0')).join(':');return `${days?days+' d · ':''}${clock}`;}
   function ageText(age){return age===null?'kein Messwert':age<60?`${age} s alt`:age<3600?`${Math.floor(age/60)} min alt`:`${Math.floor(age/3600)} h alt`;}
   function setupChecks(s,c){
     const rows=[['Heimnetz',s.wifi_ok,'WLAN auswählen und speichern.'],['Shell-Wallbox',s.wallbox_ok,'Versorgung und RS485-Anschluss prüfen.'],['Wallbox-Zähler',s.feedback_ok,'Zählermodell und Verbindung prüfen.'],['Uhrzeit',s.clock_ok,'Internetverbindung prüfen.']];
@@ -34,5 +35,5 @@ window.TeeNetHealth=(()=>{
     const privateKey=/pass|token|ssid|username|hostname|_host$|_uri$|_prefix$|station_ip|rx_tail|power_path|setup_host|^energy$/i;
     return Object.fromEntries(Object.entries(value).filter(([key])=>!privateKey.test(key)).map(([key,v])=>[key,sanitize(v)]));
   }
-  return {observe,reading,ageText,setupChecks,sanitize};
+  return {observe,reading,ageText,uptimeText,setupChecks,sanitize};
 })();

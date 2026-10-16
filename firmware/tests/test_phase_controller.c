@@ -6,6 +6,10 @@
 enum {PHASE_READY,PHASE_STOPPING,PHASE_MOVING,PHASE_SETTLING,PHASE_FAULT};
 static settings_t settings;
 static bool phase_gpio_ready=true,phase_idle_inhibit,phase_startup,restarting,ota_in_progress;
+static void phase_mqtt_guard_locked(void){}
+static bool phase_mqtt_remote(void){return false;}
+static bool phase_output_link_locked(void){return false;}
+static bool phase_mqtt_motion_complete_locked(uint8_t goal,int64_t now){(void)goal;(void)now;return false;}
 static unsigned phase_state,observed=3;
 static uint8_t phase_goal=3,phase_candidate=3;
 static int64_t phase_candidate_at,phase_stop_at,phase_zero_at,phase_move_at,phase_hold_until,phase_attempt_at,phase_no_load_since;
@@ -25,6 +29,12 @@ static void relay_set(unsigned index,bool on){
     assert(phase_zero_at>0 && sample_at-phase_zero_at>=ems_param_ms(EP_PHASE_ZERO));
     relay_on[0]=on;observed=on?1:3;relay_changed_at=sample_at;
 }
+static void phase_shelly_guard_locked(int64_t now){(void)now;}
+static bool phase_shelly_remote(void){return false;}
+static bool phase_shelly_motion_complete_locked(unsigned goal,int64_t now){(void)goal;(void)now;return false;}
+static bool phase_actuator_begin_locked(uint8_t goal,int64_t now){(void)now;relay_set(0,goal==1);return true;}
+static bool phase_test_active;static bool phase_config_saving,reboot_required;static uint8_t phase_test_goal;
+static void phase_test_end_locked(void){phase_test_active=false;}
 #include "phase_controller.inc"
 static void fixture(unsigned phases){
     settings_defaults(&settings);settings.phase_switch_enabled=settings.relay_board_enabled=settings.phase_feedback_enabled=true;

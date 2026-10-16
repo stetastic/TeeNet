@@ -1,5 +1,6 @@
 /* One background worker: Shell configuration and optional vehicle status.
    chargingRate is never used as current or power feedback. */
+#include "shell_search_schedule.h"
 static int shell_read_snapshot(const char *host,float *grid,float *maximum,evcc_shell_t *sample) {
     char url[112];int n=snprintf(url,sizeof(url),"http://%s:12800/user/status",host);
     if(n<=0 || (size_t)n>=sizeof(url))return 0;
@@ -62,7 +63,7 @@ static esp_err_t shell_scan_post(httpd_req_t *req) {
     return shell_scan_get(req);
 }
 static void shell_limits_task(void *arg) {
-    (void)arg;int64_t next_read=0,next_car=0,next_search=0;unsigned failures=0,car_failures=0;
+    (void)arg;int64_t next_read=0,next_car=0,next_search=0;unsigned failures=0,car_failures=0,search_attempts=0;
     uint32_t generation=UINT32_MAX;
     bool previous_limits=false;char previous_host[64]="";
     while(true) {
@@ -76,7 +77,7 @@ static void shell_limits_task(void *arg) {
         UNLOCK();
         if(turn!=generation){generation=turn;next_car=0;car_failures=0;}
         if(limits!=previous_limits || strcmp(configured_host,previous_host)){
-            previous_limits=limits;strcpy(previous_host,configured_host);next_read=next_search=0;failures=0;
+            previous_limits=limits;strcpy(previous_host,configured_host);next_read=next_search=0;failures=search_attempts=0;
         }
         int64_t now=now_ms();
         bool limits_due=limits && now>=next_read,car_due=car && now>=next_car;
@@ -98,14 +99,14 @@ static void shell_limits_task(void *arg) {
                 settings.grid_limit_a=grid;settings.max_charge_a=capped;
                 settings.manual_current_a=fminf(settings.manual_current_a,capped);
                 if(changed){memset(&manual_filter,0,sizeof(manual_filter));memset(&current_calibration,0,sizeof(current_calibration));}
-                strcpy(shell_active_host,host);shell_grid_a=grid;shell_max_a=capped;shell_limits_at=now_ms();failures=0;
+                strcpy(shell_active_host,host);shell_grid_a=grid;shell_max_a=capped;shell_limits_at=now_ms();failures=search_attempts=0;next_search=0;
             }else if(limits_due && same_limits)failures++;
             UNLOCK();
             if(limits_due)next_read=now_ms()+(valid?300000:30000);
             if(car)next_car=now_ms()+(car_failures>=3?15000:5000);
         }
         if(available && limits && !car && (!host[0] || failures>=3) && now>=next_search) {
-            if(shell_scan_start())next_search=now+300000;
+            if(shell_scan_start()){next_search=now+shell_search_pause(search_attempts);if(search_attempts<2)search_attempts++;}
             LOCK();if(shell_found_count==1 && strcmp(shell_found_host[0],host)){strcpy(shell_active_host,shell_found_host[0]);next_read=0;}UNLOCK();
         }
         vTaskDelay(ticks(1000));

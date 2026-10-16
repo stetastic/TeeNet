@@ -39,7 +39,7 @@ int main(void) {
     s.phase_switch_enabled=true;assert(!settings_valid(&s));s.relay1_mode=3;assert(settings_valid(&s));
     s.relay1_pin=13;assert(!settings_valid(&s));s.relay1_pin=12;
     s.evu_input_enabled=true;s.evu_input_pin=12;assert(!settings_valid(&s));s.evu_input_pin=7;
-    s.mqtt_enabled=false;assert(!settings_valid(&s));s.vehicle_soc_enabled=s.pv_display_enabled=false;assert(settings_valid(&s));
+    s.vehicle_soc_enabled=s.pv_display_enabled=true;s.mqtt_enabled=false;assert(!settings_valid(&s));s.vehicle_soc_enabled=s.pv_display_enabled=false;assert(settings_valid(&s));
     assert(relay_output_level(true,false)==1 && relay_output_level(true,true)==0);
     assert(relay_output_level(false,false)==0 && relay_output_level(false,true)==1);
 
@@ -84,7 +84,7 @@ int main(void) {
     assert(settings_decode(blob,length,&out));assert(out.phase_feedback_enabled);
     old.version=22;prefix=offsetof(settings_t,phase_feedback_closed_is_single);length=(prefix+3)&~(size_t)3;
     memcpy(blob,&old,sizeof(old));memset(blob+prefix,0xff,length-prefix);
-    assert(settings_decode(blob,length,&out));assert(out.phase_feedback_closed_is_single);
+    assert(settings_decode(blob,length,&out));assert(!out.phase_feedback_closed_is_single);
     old.version=23;old.phase_feedback_closed_is_single=false;prefix=offsetof(settings_t,control_status_visible);length=(prefix+3)&~(size_t)3;
     memcpy(blob,&old,sizeof(old));memset(blob+prefix,0xff,length-prefix);
     assert(settings_decode(blob,length,&out));assert(out.control_status_visible && !out.phase_feedback_closed_is_single);

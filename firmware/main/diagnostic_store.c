@@ -10,7 +10,7 @@ void diagnostic_store_init(diagnostic_store_t *s){memset(s,0,sizeof(*s));s->magi
 bool diagnostic_store_add(diagnostic_store_t *s,const ems_event_t *event) {
     static const char *faults[]={"boot","boot_watchdog","boot_brownout","meter","feedback","house_meter","battery_stale","wallbox","phase_fault","charge_ended","uart","plan_storage","storage"};
     if(!event||!memchr(event->reason,0,sizeof(event->reason)))return false;
-    bool wanted=false;for(unsigned i=0;i<sizeof(faults)/sizeof(faults[0]);i++)if(!strcmp(event->reason,faults[i]))wanted=true;
+    bool wanted=!strcmp(event->reason,"firmware_check_failed");for(unsigned i=0;i<sizeof(faults)/sizeof(faults[0]);i++)if(!strcmp(event->reason,faults[i]))wanted=true;
     if(!wanted)return false;
     /* State observation already suppresses repeated messages. Boot events stay distinct. */
     s->entries[s->next]=*event;s->next=(s->next+1)%EMS_FAULT_CAPACITY;

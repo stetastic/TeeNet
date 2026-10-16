@@ -104,7 +104,7 @@ loadpoints:
     byId('mqtt-evcc-note').hidden=!active;
     byId('evcc-owner-banner').hidden=!active;
     byId('evcc-owner-banner').closest('.control-panel').classList.toggle('evcc-controlled',active);
-    if(active)byId('apply-control').textContent=s.evcc_local_stop?'evcc freigeben':'Lokal stoppen';
+    if(active)byId('apply-control').textContent=s.phase_test_active?'Schütztest · Stoppen':s.evcc_local_stop?'evcc freigeben':'Lokal stoppen';
     document.querySelector('.mode-picker').hidden=active||!!s.basic_mode;
     document.querySelectorAll('[data-mode]').forEach(el=>{el.disabled=active||!online;});
     byId('current').disabled=active||!online||busy;
@@ -130,7 +130,7 @@ loadpoints:
   }
   byId('evcc-active').addEventListener('change',()=>{edited=true;});
   byId('control-form').addEventListener('submit',event=>{
-    if(!state?.evcc_test_enabled)return;
+    if(!state?.evcc_test_enabled||state.phase_test_active)return;
     event.preventDefault();event.stopImmediatePropagation();
     if(busy||!online)return;
     action(async()=>{

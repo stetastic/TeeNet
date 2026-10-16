@@ -16,7 +16,7 @@ int main(void) {
     s.power_factor=NAN; assert(!settings_valid(&s)); settings_defaults(&s);
     s.min_charge_a=17; assert(!settings_valid(&s)); settings_defaults(&s);
     strcpy(s.mqtt_uri,"mqtt://user:secret@host"); assert(!settings_valid(&s)); settings_defaults(&s);
-    s.mqtt_input_source=2; assert(!settings_valid(&s)); settings_defaults(&s);
+    s.pv_display_enabled=true;s.mqtt_input_source=2; assert(!settings_valid(&s)); settings_defaults(&s);
     memset(s.house_meter_password,'x',sizeof(s.house_meter_password));assert(!settings_valid(&s));settings_defaults(&s);
     memset(s.wallbox_meter_password,'x',sizeof(s.wallbox_meter_password));assert(!settings_valid(&s));settings_defaults(&s);
     double number; assert(!parse_number("nan",0,63,&number)); assert(!parse_number("inf",0,63,&number));
@@ -66,7 +66,7 @@ int main(void) {
     control_report(&s,charging,7,0,false,out); near(out[0],49);
     control_report(&s,charging,0,0,false,out); near(out[0],49);
     /* A confirmed one-phase position counts L1 once. */
-    s.phase_switch_enabled=true; s.relay_board_enabled=true; s.relay1_mode=3; s.charge_phases=1; s.manual_phases=1;
+    s.basic_mode=false;s.phase_switch_enabled=true; s.relay_board_enabled=true; s.relay1_mode=3; s.charge_phases=1; s.manual_phases=1;
     s.manual_current_a=6; s.current_offset_a=.8f;
     assert(settings_valid(&s));
     near(control_target(&s,true,true,true),0);s.manual_current_a=8;

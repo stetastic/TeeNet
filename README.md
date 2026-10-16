@@ -11,7 +11,7 @@ Lokale ESP32-S3-Steuerung für die **Shell Recharge Advanced 3.0**.
 - Optional evcc für die Ladesteuerung verwenden.
 - PV- und Akkudaten von OpenDTU-OnBattery per MQTT nutzen.
 - Hausakku einbeziehen und PV-Leistung zwischen Hausakku und Auto aufteilen.
-- Optional Ladeplan, Wolkenpuffer und automatische Phasenumschaltung nutzen.
+- Optional Ladeplan, Wolkenpuffer und automatische Phasenumschaltung über GPIO oder Shelly nutzen.
 - Verbrauch, Ladesitzungen und Netz-/Solarkosten anzeigen und als CSV exportieren.
 
 Einrichtung und Bedienung erfolgen im Browser. Die Online-Demo lässt sich ohne Hardware ausprobieren.
@@ -33,3 +33,4 @@ Am Referenzaufbau erprobt: dreiphasig 6–11 kW, einphasig 2,0–3,5 kW. Der nut
 ## Hinweis
 
 **Privates, kostenloses Bastelprojekt. Nutzung auf eigene Gefahr.** Netzanschlüsse nur durch Elektrofachkräfte. Eingriffe in die Wallbox können Garantieansprüche beeinträchtigen. Vor Installation und Betrieb [Nutzung, Sicherheit und Haftung](DISCLAIMER.md) lesen.
+

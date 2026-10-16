@@ -2,7 +2,7 @@
 /* Optional UI features share the normal command validation and never poll hardware. */
 (() => {
   const planNames={off:'Kein Ladeplan aktiv.',pv:'PV hat Vorrang',grid:'Netz ergänzt das Ladeziel',complete:'Ladeziel erreicht',expired:'Endzeit erreicht · Ladeziel nicht vollständig erreicht',paused:'Pausiert · zum Fortsetzen bestätigen',clock:'Warte auf Internetzeit'};
-  const eventNames={boot:'Controller gestartet',boot_watchdog:'Neustart nach Zeitüberschreitung',boot_brownout:'Neustart nach Spannungseinbruch',plan_started:'Ladeplan gestartet',plan_cancelled:'Ladeplan beendet',plan_grid:'Ladeplan ergänzt mit Netzstrom',plan_complete:'Ladeziel erreicht',plan_expired:'Endzeit des Ladeplans erreicht',control_changed:'Ladevorgabe geändert',user_stop:'Stopp angefordert',settings_saved:'Einstellungen gespeichert',settings_restored:'Einstellungen wiederhergestellt'};
+  const eventNames={firmware_verified:'Firmware-Selbsttest bestanden',firmware_check_failed:'Firmware-Selbsttest fehlgeschlagen',gpio_saved:'GPIO-Belegung gespeichert',boot:'Controller gestartet',boot_watchdog:'Neustart nach Zeitüberschreitung',boot_brownout:'Neustart nach Spannungseinbruch',plan_started:'Ladeplan gestartet',plan_cancelled:'Ladeplan beendet',plan_grid:'Ladeplan ergänzt mit Netzstrom',plan_complete:'Ladeziel erreicht',plan_expired:'Endzeit des Ladeplans erreicht',control_changed:'Ladevorgabe geändert',user_stop:'Stopp angefordert',settings_saved:'Einstellungen gespeichert',settings_restored:'Einstellungen wiederhergestellt'};
   reasons.plan_clock='Ladeplan wartet auf eine gültige Internetzeit.';
   let eventsBusy=false,eventRows=[],persistedRows=[],planWasActive=false,huaweiSearching=false,huaweiChecking=false,huaweiDevices=[];
   async function huaweiScanStatus(){

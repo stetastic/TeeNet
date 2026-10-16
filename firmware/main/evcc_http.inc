@@ -32,7 +32,7 @@ static void evcc_load(void) {
 static bool evcc_ready_locked(int64_t now) {
     return terms_accepted && evcc_shell_fresh(&evcc_shell,evcc_shell_at,now) && evcc_shell.state!='F' &&
         feedback_ready(now) && fresh(now,meter_at,wallbox_meter_ttl()) && fresh(now,actual_at,wallbox_meter_ttl()) &&
-        wallbox_ready && fresh(now,wallbox_at,ems_param_ms(EP_SHELL_TTL)) && !restart_pending() && !restarting && !ota_in_progress &&
+        wallbox_ready && fresh(now,wallbox_at,ems_param_ms(EP_SHELL_TTL)) && !phase_config_saving && !phase_test_active && !restart_pending() && !restarting && !ota_in_progress && !phase_mqtt_saving &&
         !charge_guard_blocked(&charge_guard,now) && (!settings.phase_switch_enabled || (phase_gpio_ready && phase_state!=PHASE_FAULT && !phase_idle_inhibit));
 }
 

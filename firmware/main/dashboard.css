@@ -369,6 +369,7 @@ html[data-theme="dark"] .terms-dialog{background:#152a38;color:#dce8ef;border-co
 #settings .save-row{justify-content:flex-start}#settings .save-actions{justify-content:flex-start;margin-left:0}
 
 .unsaved-banner{position:fixed;z-index:40;left:50%;right:auto;bottom:20px;transform:translateX(-50%);width:min(570px,calc(100vw - 48px));display:flex;align-items:center;gap:12px;margin:0;padding:13px 16px;border:1px solid #b9d6e2;border-radius:14px;background:#f7fcff;color:#244a62;box-shadow:0 8px 26px #17394f24}.unsaved-banner[hidden]{display:none}.unsaved-banner>div:not(.notice-restart-actions){flex:1;min-width:0}.unsaved-banner strong,.unsaved-banner span:not(.unsaved-symbol){display:block}.unsaved-banner strong{font-size:.95rem;margin-bottom:2px}.unsaved-banner span:not(.unsaved-symbol){font-size:.8rem;color:var(--muted)}.unsaved-symbol{display:grid;place-items:center;flex:0 0 36px;width:36px;height:36px;font-size:1.3rem;border-radius:10px;background:#e1f1f8;color:#087da0}.unsaved-banner .button{margin-left:auto;white-space:nowrap;min-height:40px}.notice-restart-actions{display:flex;align-items:center;gap:8px;margin-left:auto}.notice-restart-actions .button{margin-left:0}.unsaved-banner[data-kind="restart"]{flex-wrap:wrap}.unsaved-banner[data-kind="restart"] .notice-restart-actions{width:100%;justify-content:flex-end}.notice-restart-actions #settings-notice-later{white-space:normal;color:inherit;border-color:#b9d6e2;background:transparent}#config-form:has(.unsaved-banner:not([hidden])){padding-bottom:130px}html[data-theme="dark"] .unsaved-banner{background:var(--surface);color:var(--ink);border-color:#456579}html[data-theme="dark"] .unsaved-symbol{background:#203e50;color:#74d7ed}@media(max-width:600px){.unsaved-banner{bottom:12px;width:calc(100vw - 24px);gap:10px;padding:12px}.unsaved-banner strong{font-size:.88rem}.unsaved-banner span:not(.unsaved-symbol){font-size:.75rem}.unsaved-banner .button{font-size:.8rem;padding:9px 12px}.notice-restart-actions .button{flex:1}}
+#expert-unsaved{z-index:41}
 
 /* Keep status and navigation together; match the settings column width. */
 .app-header{display:contents}
@@ -424,3 +425,35 @@ html[data-theme="dark"] :is(.panel a:not(.button),.risk-notice a,.footnote a){co
 .expert-warning{margin:18px 0;padding:16px 18px;border:1px solid #d7a13a;border-left:4px solid #d7a13a;border-radius:12px;background:#fff5d9;color:#614511}.expert-warning strong{font-size:16px}.expert-warning p{margin:6px 0 0;line-height:1.5}[data-theme="dark"] .expert-warning{background:#3a301b;border-color:#c59b44;color:#ffe2a3}
 
 summary.parameter-summary-modified{color:#946000!important}summary.parameter-summary-modified::after{content:" · angepasst";font-size:.85em;font-weight:500}[data-theme="dark"] summary.parameter-summary-modified{color:#ffd277!important}
+
+/* Expert contactor warnings have a distinct danger color in both themes. */
+.phase-danger{border:1px solid #d64b51;border-left:4px solid #c52836;background:#fff0f1;color:#8d1424;border-radius:10px;padding:12px 14px}.phase-danger b{color:inherit}html[data-theme="dark"] .phase-danger{background:#431c25;border-color:#ec7985;color:#ffd5da}#phase-mqtt-confirm-dialog .notice{border-color:#d64b51;background:#fff0f1;color:#8d1424}html[data-theme="dark"] #phase-mqtt-confirm-dialog .notice{background:#431c25;color:#ffd5da}
+
+/* Leave room below choices; keep feedback separate from Shelly setup. */
+#relay-settings label:has(>select){margin-top:24px;margin-bottom:8px}
+#phase-settings{padding:0;border:0;background:transparent!important}
+#phase-feedback-count-label{margin-top:0!important}
+#phase-feedback-pin-note{margin:18px 0;line-height:1.65}
+.phase-output-settings{margin-top:24px;padding-top:20px;border-top:1px solid var(--line)}
+.phase-output-settings>h4{margin:0 0 16px;font-size:15px;color:var(--ink)}
+#phase-no-feedback-unlock-open{margin:0 0 14px}
+#phase-no-feedback-unlock-dialog .phase-danger{line-height:1.6}
+#phase-shelly-settings{margin-top:0;padding-top:0}
+#phase-shelly-settings>h4{margin:0 0 18px;font-size:13px;line-height:1.5;color:var(--ink);font-weight:700}
+#phase-shelly-settings>h4+label{margin-top:0}
+#phase-shelly-scan{margin-top:20px}
+.unsaved-banner[data-error="true"]{border-color:#cf5c61;background:#fff0f1;color:#8d1424}
+.unsaved-banner[data-error="true"] #settings-notice-text{color:inherit}
+html[data-theme="dark"] .unsaved-banner[data-error="true"]{background:#431c25;border-color:#ec7985;color:#ffd5da}
+
+.gpio-inventory{display:grid;gap:6px;margin-top:12px}.gpio-pin-line{display:grid;grid-template-columns:90px 1fr;gap:12px;padding:8px 12px;border:1px solid var(--line);border-radius:8px}.gpio-pin-line.is-modified{color:#996400;border-color:#dca736;background:#fff6d8}.expert-row.gpio-conflict{border-color:#d04545;outline:2px solid #d04545}.expert-row.gpio-conflict small{color:#c33}[data-theme="dark"] .gpio-pin-line.is-modified{color:#ffd078;background:#3b321c;border-color:#b68a2d}
+
+#relay-settings .phase-component{margin:16px 0;padding:16px;border:1px solid var(--line);border-radius:11px;background:var(--raised,#f8fafb)}
+#relay-settings .phase-component h4,.phase-feedback-title{font-size:13px;margin:0 0 12px;font-weight:700;color:var(--ink)}
+#relay-settings .phase-component>p:first-of-type{margin:0 0 16px}
+#phase-shelly-settings .phase-component:first-child{margin-top:0}
+#phase-feedback-pin-note{white-space:pre-line}
+#expert-phase-output-message:empty,#phase-setup-message:empty{display:none}
+#expert-phase-output-message{margin:12px 0}
+#phase-hardware-test .actions .button{flex:1;min-width:150px}
+#phase-test-block{font-weight:600}

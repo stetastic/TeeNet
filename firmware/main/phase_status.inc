@@ -2,6 +2,11 @@
 static void phase_wait_status_locked(int64_t now,const char **kind,int64_t *deadline) {
     *kind="none";*deadline=0;
     if(!settings.phase_switch_enabled)return;
+    if(phase_startup&&((phase_shelly_remote()&&phase_state==PHASE_MOVING)||
+       (phase_mqtt_remote()&&phase_state==PHASE_STOPPING&&!phase_output_link_locked()))){
+        *kind="connection";*deadline=(phase_state==PHASE_MOVING?phase_move_at:phase_stop_at)+ems_param_ms(EP_PHASE_STOP_MAX);
+        return;
+    }
     if(phase_state==PHASE_STOPPING){
         bool confirming=phase_zero_at && now<phase_zero_at+ems_param_ms(EP_PHASE_ZERO);
         *kind=confirming?"zero_hold":phase_zero_at?"fresh_data":"current_zero";

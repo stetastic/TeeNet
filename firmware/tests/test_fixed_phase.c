@@ -58,6 +58,40 @@ int main(void){
  settings_t before=s;before.fixed_charge_phases=3;assert(!settings_apply_live(&s,&before,&s));
  s.phase_switch_enabled=true;s.relay_board_enabled=true;s.relay1_mode=3;assert(!settings_valid(&s));
  s.phase_switch_enabled=false;s.fixed_charge_phases=2;assert(!settings_valid(&s));
+ /* A new bench setup has no meter yet. Merely storing its fixed wiring must
+    work; this does not permit charging or any physical phase switch. */
+ assert(fixed_wiring_change_allowed(3,1,false,true,false,false,NULL));
+ assert(!fixed_wiring_change_allowed(3,1,true,true,false,false,NULL));
+ assert(!fixed_wiring_change_allowed(3,1,false,false,false,false,NULL));
+ assert(!fixed_wiring_change_allowed(3,2,false,true,false,false,NULL));
+ float zero[]={0,0,0};
+ assert(fixed_wiring_change_allowed(3,1,false,true,true,true,zero));
+ assert(!fixed_wiring_change_allowed(3,1,false,true,true,false,zero));
+ zero[1]=1;assert(!fixed_wiring_change_allowed(3,1,false,true,true,true,zero));
+ zero[1]=-1;assert(!fixed_wiring_change_allowed(3,1,false,true,true,true,zero));
+ zero[1]=NAN;assert(!fixed_wiring_change_allowed(3,1,false,true,true,true,zero));
+ assert(fixed_wiring_change_allowed(1,1,true,false,true,false,NULL));
+ /* A feedback fault must be repairable at proven zero current; a switch in
+    progress, stale/current/invalid samples and external charging stay locked. */
+ zero[1]=0;
+ assert(hardware_config_change_allowed(false,true,true,true,zero));
+ assert(hardware_config_change_allowed(false,true,false,false,NULL));
+ assert(!hardware_config_change_allowed(true,true,true,true,zero));
+ assert(!hardware_config_change_allowed(false,false,true,true,zero));
+ assert(!hardware_config_change_allowed(false,true,true,false,zero));
+ assert(phase_setup_change_allowed(false,true,3,true,false,false,false,NULL));
+ assert(!phase_setup_change_allowed(false,true,3,true,true,false,false,NULL));
+ assert(phase_setup_change_allowed(false,true,1,true,false,false,false,NULL));
+ assert(!phase_setup_change_allowed(false,true,3,false,false,false,false,NULL));
+ assert(!phase_setup_change_allowed(false,true,3,true,false,true,false,zero));
+ assert(phase_setup_change_allowed(false,true,3,true,false,true,true,zero));
+ assert(phase_setup_change_allowed(true,false,3,false,false,true,true,zero));
+ assert(phase_setup_change_allowed(true,false,3,false,false,false,false,NULL));
+ zero[2]=1;assert(!hardware_config_change_allowed(false,true,true,true,zero));
+ zero[2]=-1;assert(!hardware_config_change_allowed(false,true,true,true,zero));
+ zero[2]=NAN;assert(!hardware_config_change_allowed(false,true,true,true,zero));
+ settings_defaults(&s);s.fixed_charge_phases=1;
+ assert(control_target(&s,false,false,false)==0);
  puts("PASS: fixed single-phase power, PV and plan ceilings, restart, legacy migration and relay conflict");
  return 0;
 }

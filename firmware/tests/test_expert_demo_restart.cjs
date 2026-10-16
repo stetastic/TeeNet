@@ -24,7 +24,7 @@ function demo(store){
  d=demo(store);
  assert.equal((await d.read('/api/status')).reboot_required,false,'active expert values survive page reload');
  const info=await d.post('/api/expert',{pin:'4040',action:'read'});
- assert.equal(info.parameters.find(p=>p.id==='PV_START').active,20);
+ assert.equal(info.active[schema.parameters.findIndex(p=>p.id==='PV_START')],20);
  await d.post('/api/control',{enabled:false});
  assert.equal((await d.post('/api/expert',{pin:'4040',action:'save',values:{PV_START:25}})).reboot_required,true);
  assert.equal((await d.post('/api/expert',{pin:'4040',action:'save',values:{PV_START:20}})).reboot_required,false,'reverting to active removes pending restart');

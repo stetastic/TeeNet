@@ -1,28 +1,29 @@
 # TeeNet 1.19 · Prüfung
 
-Geprüfter Stand vom 11. Oktober 2026.
+Geprüfter Stand vom 16. Oktober 2026.
 
-## Korrekturen
+## Änderungen
 
-- Wolkenpuffer und Hausakku-Unterstützung bei wechselndem PV-Überschuss, Akku-Laden und zusätzlichen Hauslasten verbessert.
-- Timer und Einstellungen nach Neustarts wiederhergestellt; unterbrochene PV-Erholung verlängert das Pufferbudget nicht.
-- Phasenumschaltung verlangt neue Strommessungen nach dem Ladestopp und am Ende der Stillstandsprüfung.
-- Ladeplan, evcc und MQTT berücksichtigen ausstehende Neustarts und das Speichern von Regelparametern.
-- Vor OTA oder Neustart wird die Phasenumschaltung bei laufendem Stromfluss zurückgestellt.
+- Phasenumschaltung über GPIO-Relais, Shelly HTTP oder Shelly Modbus TCP; die Rückmeldung kommt bei Shelly über dessen Eingänge.
+- Ein oder zwei Rückmeldekontakte werden unterstützt. Betrieb ohne Rückmeldung und der manuelle Schütztest liegen geschützt im Expertenmodus.
+- Frei wählbare GPIO-Belegung mit Prüfung auf reservierte und doppelt belegte Pins.
+- Einrichtung der Phasenumschaltung ist ohne vorhandene Messwerte möglich. Geschaltet wird weiterhin nur bei gestoppter Ladung und bestätigtem Stromstillstand.
+- Xemex-Wallbox-Zähler unterstützt eine oder zwei Messspulen zusätzlich zur dreiphasigen Messung.
+- Startprüfung und vorbereitetes OTA-Rollback; bestehende Installationen benötigen dafür einmalig den neuen Bootloader per USB.
+- Weboberfläche nur noch komprimiert eingebettet. Dadurch bleibt deutlich mehr Platz im OTA-Bereich.
+- Anleitung nur an den geänderten Stellen zu Schütz, Shelly, Rückmeldung und Expertenfunktionen aktualisiert.
 
 ## Ergebnis
 
-Alle C- und JavaScript-Testreihen bestanden. Zusätzlich: 31 geschlossene Energieprofile, acht vollständige simulierte Tage und 27 ioBroker-Adaptertests.
+Die vollständigen C- und JavaScript-Prüfungen bestanden, darunter Phasenlogik, Rückmeldekontakte, Shelly HTTP/Modbus, MQTT-Abgrenzung, GPIO-Zuordnung, Einstellungen, Speichergrenzen und beide Hardwareprofile. Zusätzlich bestanden 31 geschlossene Energieprofile mit acht simulierten Tagen sowie 27 ioBroker-Adaptertests.
 
-| Profil | Build | Firmwaregröße |
-| --- | --- | ---: |
-| ESP32-S3 N16R8 | `277d15efb407` | 1.985.552 Bytes |
-| Andreas Testboard | `32b4defcc1fe` | 1.985.584 Bytes |
+| Profil | Build | Firmwaregröße | frei im OTA-Bereich |
+| --- | --- | ---: | ---: |
+| ESP32-S3 N16R8 | `fd454a1e8488` | 1.699.680 Bytes | 397.472 Bytes |
+| Andreas Testboard | `5589cc5586d3` | 1.699.760 Bytes | 397.392 Bytes |
 
-Beide Builds ohne Compilerwarnungen oder -fehler. Die Downloadpakete enthalten den zugehörigen Quellcode und die Prüfsummen.
-
-Am N16R8 wurden OTA, einphasiger Ladestart und anschließender Neustart praktisch geprüft. Vor dem Rückschalten wurden 9,86 Sekunden durchgehender Stromstillstand beobachtet; eingestellt waren mindestens acht Sekunden. Nach 22,08 Sekunden war der ESP wieder mit aktuellen Messwerten bereit. Einstellungen, Ladesitzungen und historische Kosten blieben erhalten.
+Beide Firmwareprofile wurden mit ESP-IDF 5.3.2 vollständig gebaut. Firmware, USB-Pakete, Factory-Images, Quellcode und Prüfsummen wurden gegeneinander geprüft.
 
 ## Grenzen
 
-Die Ergebnisse gelten für die geprüften Fälle und den vorhandenen Aufbau. Das Andreas Testboard, andere Fahrzeuge, Shelly-/EM24-Hardware und transparente Netzwerk-Gateways benötigen eigene praktische Tests. Der frühere reale 15-Minuten-Wolkenpuffertest wurde bei diesem Build nicht wiederholt; die aktuelle Pufferprüfung erfolgte in Simulationen.
+Die neue Shelly-Schützanbindung ist softwareseitig geprüft, jedoch noch nicht an realer Shelly- und Schützhardware erprobt. Das Andreas Testboard bleibt ebenfalls ein Hardwaretestprofil. Vor dem Einsatz der Phasenumschaltung müssen Schütz, Rückmeldekontakte und sichere Ruhestellung am eigenen Aufbau geprüft werden.

@@ -16,7 +16,7 @@
 #define EMS_CHARGE_STOP_CONFIRM_MS (ems_param_ms(EP_STOP_CONFIRM))
 #define EMS_CHARGE_STOP_LIMIT 5
 #define EMS_CHARGE_STOP_WINDOW_MS (ems_param_ms(EP_STOP_WINDOW))
-#define EMS_SETTINGS_VERSION 27
+#define EMS_SETTINGS_VERSION 33
 #define EMS_MIN_CHARGE_A 6.0f
 #define EMS_BATTERY_CAPACITY_KWH 20.0f
 #define EMS_BATTERY_DISCHARGE_MAX_W 4000.0f
@@ -127,7 +127,39 @@ typedef struct {
     char shell_rs485_host[64], meter_rs485_host[64], house_rs485_host[64];
     bool evcc_feature_enabled;
 
+    /* Version 28: ABB E290/E299 via Shelly Pro 1; default keeps GPIO hardware. */
+    uint8_t phase_actuator_type; /* 0 GPIO, 1 Shelly RPC, 2 expert output, 3 Shelly Modbus */
+    char phase_shelly_host[64],phase_shelly_password[65];
+    /* Version 29: outgoing absolute boolean command; expert opt-in only. */
+    bool phase_mqtt_output_enabled;
+    char phase_mqtt_topic[128]; /* empty selects <prefix>/output/single_phase */
+    /* Version 30: NO contactor true = three phases; default NC true = single. */
+    bool phase_mqtt_true_three_phase;
+    /* Version 31: absolute output over MQTT, Shelly Modbus or unauthenticated RPC. */
+    uint8_t phase_output_transport; /* 0 MQTT, 1 Modbus TCP, 2 HTTP/RPC */
+    uint8_t phase_output_switch_id; /* 0 normal switch, 100 Pro 3EM output add-on */
+    char phase_output_host[64];
+
+    /* Version 32: mandatory normal feedback, optional complementary contact,
+       compatible Shelly profiles and explicit authenticated expert RPC. */
+    uint8_t phase_feedback_count; /* 1 contact, 2 complementary contacts */
+    uint8_t phase_shelly_model; /* 0 Pro1, 1 Pro2, 2 Plus1, 3 1Gen3, 4 1Gen4 */
+    bool phase_shelly_pulse; /* bounded bistable pulse; otherwise absolute state */
+    bool phase_shelly_true_three_phase;
+    char phase_output_password[65]; /* used only by expert transport 3 */
+
+    /* Version 33: expert GPIO assignment, applied only at boot. */
+    int phase_feedback_pin, phase_feedback_second_pin, status_led_pin;
+
 } settings_t;
+#include "gpio_map.h"
+bool phase_three_phase_meter(const settings_t *settings);
+unsigned phase_measured_currents(const settings_t *settings);
+bool phase_switch_meter_supported(const settings_t *settings);
+bool phase_measured_zero(const settings_t *settings,const float actual[3],float limit);
+bool phase_mqtt_output_topic(const settings_t *settings,char *out,size_t capacity);
+bool phase_mqtt_output_value(const settings_t *settings,unsigned phases);
+bool phase_output_settings_supported(const settings_t *settings);
 
 int relay_output_level(bool active_low, bool energized);
 void settings_fixed_pins(settings_t *settings);
@@ -236,6 +268,18 @@ bool fresh(int64_t now, int64_t last, int64_t ttl);
 bool phase_option_change_allowed(bool was_enabled, bool requested_enabled,
                                  unsigned active_phases, bool phase_ready,
                                  bool meter_fresh, const float actual[3]);
+bool phase_setup_change_allowed(bool was_enabled,bool requested_enabled,
+                                unsigned active_phases,bool phase_ready,bool charging,
+                                bool has_measurements,bool meter_fresh,const float actual[3]);
+bool fixed_wiring_change_allowed(unsigned before,unsigned after,bool charging,
+                                 bool phase_ready,bool has_measurements,
+                                 bool meter_fresh,const float actual[3]);
+bool hardware_config_change_allowed(bool charging,bool quiescent,bool has_measurements,
+                                    bool meter_fresh,const float actual[3]);
+typedef enum { CONFIG_GATE_OK, CONFIG_GATE_CHARGING, CONFIG_GATE_MOVING,
+               CONFIG_GATE_STALE, CONFIG_GATE_INVALID, CONFIG_GATE_CURRENT } config_gate_t;
+config_gate_t hardware_config_gate(bool charging,bool quiescent,bool has_measurements,
+                                  bool meter_fresh,const float actual[3]);
 typedef enum { EMS_WIFI_AP, EMS_WIFI_STA, EMS_WIFI_AP_STA } ems_wifi_mode_t;
 ems_wifi_mode_t wifi_recovery_mode(bool configured, bool online, bool forced_ap, int64_t now, int64_t lost_at);
 float control_target(const settings_t *s, bool meter_ok, bool feedback_ok, bool pv_ok);
@@ -248,6 +292,7 @@ void grid_guard_report(const settings_t *s, bool house_ready,
                        const float house[3], float reported[3]);
 bool phase_feedback_matches(bool required, unsigned observed, unsigned expected);
 unsigned phase_feedback_position(bool contact_closed, bool closed_is_single);
+unsigned phase_feedback_contacts(bool first_closed,bool second_closed,unsigned count,bool closed_is_single);
 bool phase_motion_complete(bool required, unsigned observed, unsigned expected, int64_t elapsed_ms);
 bool phase_fault_reset_allowed(bool faulted, bool gpio_ready, bool feedback_required,
                                unsigned observed, bool relay_on, bool measurement_fresh,

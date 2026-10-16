@@ -27,7 +27,7 @@ async function selectTheme(theme){
   }
 }
 
-const reasons={maintenance:'Wartung läuft · Ladung gesperrt.',reboot:'Gespeichert · Neustart erforderlich.',unsupported_meter:'Zählerprofil nicht unterstützt · Regelung gesperrt.',house_meter:'Hauszählerdaten fehlen · PV-Laden pausiert.',commissioning:'Einrichtung läuft · Regelung bis zur Prüfung an der Wallbox gesperrt.',uart:'RS485-Schnittstelle nicht bereit · Regelung gesperrt.',meter:'Wallbox-Messwert fehlt · Laden pausiert.',feedback:'Wallbox-Strommessung fehlt · Regelung gesperrt.',off:'Laderegelung ausgeschaltet.',pv_stale:'PV-Sollwert veraltet · Regelung gesperrt.',below_minimum:'Sollwert unter Mindeststrom · Stop-Anforderung aktiv.',none:'Regelung aktiv · frische Messwerte vorhanden.'};
+const reasons={firmware_check:'Firmware wird geprüft · Ladung gesperrt.',firmware_failed:'Firmware-Prüfung fehlgeschlagen · Ladung gesperrt.',maintenance:'Wartung läuft · Ladung gesperrt.',reboot:'Gespeichert · Neustart erforderlich.',unsupported_meter:'Zählerprofil nicht unterstützt · Regelung gesperrt.',house_meter:'Hauszählerdaten fehlen · PV-Laden pausiert.',commissioning:'Einrichtung läuft · Regelung bis zur Prüfung an der Wallbox gesperrt.',uart:'RS485-Schnittstelle nicht bereit · Regelung gesperrt.',meter:'Wallbox-Messwert fehlt · Laden pausiert.',feedback:'Wallbox-Strommessung fehlt · Regelung gesperrt.',off:'Laderegelung ausgeschaltet.',pv_stale:'PV-Sollwert veraltet · Regelung gesperrt.',below_minimum:'Sollwert unter Mindeststrom · Stop-Anforderung aktiv.',none:'Regelung aktiv · frische Messwerte vorhanden.'};
 Object.assign(reasons,{evu_stop:'EVU-Kontakt aktiv · Ladung gestoppt.',grid_fallback:'Haus-Phasenwerte fehlen oder sind veraltet · Laden bis 8 kW.'});
 
 Object.assign(reasons,{wallbox:'Keine aktuelle Wallbox-Abfrage · PV-Regelung gesperrt.',pv_waiting:'PV wartet auf ausreichend Überschuss.',pv_starting:'Überschuss wird vor dem Start geprüft.',pv_stopping:'PV-Schwankung überbrücken; bei weiterem Mangel stoppen.',pv_cooldown:'Pause vor erneutem PV-Start.'});
@@ -61,6 +61,7 @@ reasons.battery_power_stale='Akku-Leistung fehlt · Akkuhilfe pausiert.';
 reasons.battery_no_response='Hausakku liefert nicht genug Leistung · warte auf PV-Überschuss.';
 
 let configBaseline={};
+let configSaveError='';
 let meterScanning=false,meterResults=[];
 let scanFamily='',scanTarget='house',previewRunning=false,previewRole='house',previewTurn=0;
 const previewKeys={house:'',wallbox:''},previewTimes={house:0,wallbox:0};
@@ -70,7 +71,8 @@ function scanUi(role){return role==='wallbox'?{button:$('wallbox-meter-scan'),st
 function previewUi(role){return role==='wallbox'?{box:$('wallbox-preview'),host:$('wallbox-preview-host'),value:$('wallbox-preview-value'),state:$('wallbox-preview-state')}:{box:$('house-preview'),host:$('house-preview-host'),value:$('house-preview-value'),state:$('house-preview-state')};}
 
 reasons.manual_stop='Sollwert unter Mindeststrom · Stop angefordert.';
-reasons.phase_fault='Phasenumschaltung gestört · Ladung gesperrt. Schütz und Rückmeldung prüfen.';
+reasons.phase_fault='Phasenumschaltung nicht bereit · Ladung gesperrt. Konfiguration und Rückmeldung prüfen.';
+reasons.phase_test='Schütztest läuft · Ladung bleibt gestoppt.';
 reasons.phase_switching='Phasenwechsel läuft · Ladung wird vor dem Schalten gestoppt.';
 reasons.phase_idle='Kein Ladestrom · Schütz aus. Bei Bedarf erneut starten.';
 reasons.evcc_fault='Shell meldet einen Fehler · evcc-Ladung pausiert.';
@@ -83,7 +85,7 @@ function toast(text,error=false){$('toast').textContent=text;$('toast').classLis
 
 async function api(path,body,timeoutMs=8000,auth=false){const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),timeoutMs);try{const response=await fetch(path,{signal:controller.signal,cache:'no-store',...(auth?{headers:{'X-EMS-Token':token}}:{}),...(body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json','X-EMS-Token':token},body:JSON.stringify(body)})});if(!response.ok)throw new Error((await response.text()).slice(0,240)||`HTTP ${response.status}`);return await response.json();}finally{clearTimeout(timer);}}
 
-function writes(){const batteryInactive=$('mode').value!=='pv';document.querySelectorAll('#config-form input, #config-form select, #show-wifi-password, #show-mqtt-password').forEach(el=>el.disabled=!online||!initialized||configSaving);document.querySelectorAll('[data-write]').forEach(b=>b.disabled=!online||busy||(!initialized&&!!b.closest('#config-form'))||((b.id==='battery-toggle'||b.id==='battery-start-toggle')&&(batteryInactive||!state?.battery_protect)));$('current').disabled=!online||busy;$('battery-reserve-slider').disabled=!online||busy||batteryInactive||!state?.battery_protect;for(const role of ['house','wallbox'])scanUi(role).button.disabled=!online||busy||!initialized||meterScanning||previewRunning||!!window.teennetFeatures?.networkBusy();window.teennetFeatures?.updateWrites();if($('config-form').elements.basic_mode?.value==='true')document.querySelectorAll('#house-settings input,#house-settings select,#battery-settings input,#hardware-settings input,#relay-settings select,#huawei-settings input').forEach(el=>el.disabled=true);window.teenetEvccTest?.updateWrites(state);window.teenetTerms?.updateWrites();window.teenetExpert?.updateWrites();}
+function writes(){const batteryInactive=$('mode').value!=='pv';document.querySelectorAll('#config-form input, #config-form select, #show-wifi-password, #show-mqtt-password').forEach(el=>el.disabled=!online||!initialized||configSaving||!!state?.firmware_check_pending);document.querySelectorAll('[data-write]').forEach(b=>b.disabled=!online||busy||!!state?.firmware_check_pending||(!initialized&&!!b.closest('#config-form'))||((b.id==='battery-toggle'||b.id==='battery-start-toggle')&&(batteryInactive||!state?.battery_protect)));$('current').disabled=!online||busy||!!state?.firmware_check_pending;$('battery-reserve-slider').disabled=!online||busy||batteryInactive||!state?.battery_protect;for(const role of ['house','wallbox'])scanUi(role).button.disabled=!online||busy||!initialized||meterScanning||previewRunning||!!window.teennetFeatures?.networkBusy();window.teennetFeatures?.updateWrites();if($('config-form').elements.basic_mode?.value==='true')document.querySelectorAll('#house-settings input,#house-settings select,#battery-settings input,#hardware-settings input,#relay-settings select,#huawei-settings input').forEach(el=>el.disabled=true);window.teenetEvccTest?.updateWrites(state);window.teenetTerms?.updateWrites();window.teenetExpert?.updateWrites();window.teenetShellyPhase?.updateLive();window.teenetPhaseTest?.update();}
 
 function showConnection(ok){online=ok;writes();}
 
@@ -100,8 +102,8 @@ function controlStatus(s,valid=true){
     if(!s.evcc_status_known)return result('evcc · Fahrzeugstatus unbekannt; Ladung pausiert','waiting');
   }
   if(s.phase_state==='fehler')return result('Phasenumschaltung gestört · Ladung gesperrt','fault');
-  const phaseWait={current_zero:'Phasenwechsel · warte auf Ladestillstand',zero_hold:'Phasenwechsel · stromlose Wartezeit',contact:'Phasenwechsel · warte auf Schütz-Rückmeldung',motion:'Phasenwechsel · Schütz schaltet',settle:'Phasenwechsel · Stabilisierung',fresh_data:'Phasenwechsel · warte auf frische Messwerte'};
-  if(s.phase_switch_enabled&&s.phase_state!=='bereit')return result(wait(phaseWait[s.phase_wait_kind]||'Phasenwechsel läuft',s.phase_wait_s,['current_zero','contact','fresh_data'].includes(s.phase_wait_kind)),'waiting');
+  const phaseWait={connection:'Phasenumschaltung · Verbindung wird aufgebaut',current_zero:'Phasenwechsel · warte auf Ladestillstand',zero_hold:'Phasenwechsel · stromlose Wartezeit',contact:'Phasenwechsel · warte auf Schütz-Rückmeldung',motion:'Phasenwechsel · Schütz schaltet',settle:'Phasenwechsel · Stabilisierung',fresh_data:'Phasenwechsel · warte auf frische Messwerte'};
+  if(s.phase_switch_enabled&&s.phase_state!=='bereit')return result(wait(phaseWait[s.phase_wait_kind]||'Phasenwechsel läuft',s.phase_wait_s,['connection','current_zero','contact','fresh_data'].includes(s.phase_wait_kind)),'waiting');
   if(s.charge_stop_latched)return result('Mehrere Ladeabbrüche · Start gesperrt','fault');
   if(s.charge_retry_s>0)return result(wait('Automatischer Wiederanlauf',s.charge_retry_s),'waiting');
   const actual=s.actual_a||[],charging=s.feedback_ok&&actual.length===3&&actual.every(Number.isFinite)&&Math.max(...actual)>=1;
@@ -123,8 +125,13 @@ function controlStatus(s,valid=true){
 }
 
 function chargeButtonLabel(s,online,charging){
+  if(s?.firmware_check_pending)return "Firmware wird geprüft";
+  if(s?.firmware_check_failed)return "Firmware-Prüfung fehlgeschlagen";
   if(!online)return 'Verbindung fehlt';
+  if(s.phase_test_active)return 'Schütztest · Stoppen';
   if(s.evcc_test_enabled&&!s.enabled)return 'evcc steuert';
+  if(s.phase_state==='fehler'&&(s.enabled||s.evcc_enabled))return 'Gestört · Stoppen';
+  if(s.phase_state==='fehler'&&s.can_unlock===false)return 'Gestoppt · Einrichtung prüfen';
   if(s.charge_stop_latched||s.phase_state==='fehler')return 'Gesperrt · Entsperren';
   if(!s.enabled)return charging?'Stoppt …':'Gestoppt · Starten';
   if(s.phase_switch_enabled&&s.phase_state!=='bereit')return 'Phasenwechsel · Stoppen';
@@ -246,6 +253,9 @@ function render(){if(!state)return;const s=state,valid=online;
   const mqttSource=s.mqtt_input_source==='opendtu'?'OpenDTU':'Smart Home';
   const signal=Number.isFinite(s.wifi_rssi_dbm)?` · ${s.wifi_rssi_dbm} dBm`:'';
   const diagnostics=[diagnostic('Hardware',s.hardware||'ESP32-S3'),diagnostic('Heimnetz',s.wifi_ok?`${s.station_ip}${signal}`:'Nicht verbunden'),diagnostic('Uhrzeit',s.clock_ok?'Synchronisiert':'Warte auf Internetzeit'),diagnostic('MQTT',s.mqtt_ok?`Verbunden · ${mqttSource}`:`Nicht verbunden · ${mqttSource}`),diagnostic('Wallbox',s.wallbox_ok?'Kommunikation OK':'Keine aktuellen Abfragen'),diagnostic('Wallbox-Zähler',s.feedback_ok?'Daten aktuell':'Daten fehlen'),diagnostic('Hauszähler',s.house_meter_ok?'Daten aktuell':s.zero_feed_enabled||s.grid_guard_enabled?'Daten fehlen':'Nicht benötigt'),diagnostic('Speicherung',s.storage_ok?'Bereit':'Fehler'),...(s.huawei_enabled?[diagnostic('Huawei',s.huawei_ok?s.huawei_model:'Keine aktuellen Daten')]:[])];
+  diagnostics.push(diagnostic('Laufzeit seit Reset',window.TeeNetHealth?.uptimeText(s.uptime_s)||'—'));
+  if(typeof s.firmware_check_ok==='boolean')diagnostics.push(diagnostic('Firmware-Selbsttest',s.firmware_check_ok?'Bestanden':s.firmware_check_failed?'Fehlgeschlagen · Ladung gesperrt':'Prüfung läuft'));
+  if([s.free_heap,s.min_free_heap,s.largest_free_block].every(Number.isFinite))diagnostics.push(diagnostic('Arbeitsspeicher',`${format(s.free_heap/1024,0)} KiB frei · Minimum ${format(s.min_free_heap/1024,0)} KiB · größter Block ${format(s.largest_free_block/1024,0)} KiB`));
   if(s.external_mode_input_enabled)diagnostics.push(diagnostic('Betriebsart-Kontakt',s.external_mode_contact?'PV-Überschuss':'Manuell'));
   if(s.evu_input_enabled)diagnostics.push(diagnostic('Extern Start / Stopp / EVU-Kontakt',s.evu_active?'Aktiv':'Frei'));
   if(s.huawei_enabled&&s.house_meter_type==='huawei')diagnostics.push(diagnostic('Hausströme',s.house_current_ok&&Array.isArray(s.house_a)?s.house_a.map((a,i)=>`L${i+1} ${format(a,2)} A`).join(' · '):'Keine gültige dreiphasige Messung'));
@@ -331,21 +341,28 @@ function shellPinChoices(values,field){
   const occupied=new Map();
   const activeState=typeof state==='undefined'?null:state;
   if(Number(values.meter_rs485_interface||0)===0&&!['shelly_gen2','shelly_em1','em24_tcp'].includes(values.wallbox_meter_type)){
-    occupied.set(Number(activeState?.default_meter_tx_pin||4),'Wallbox-Zähler TX');
-    occupied.set(Number(activeState?.default_meter_rx_pin||5),'Wallbox-Zähler RX');
+    occupied.set(Number(values.xemex_tx_pin??activeState?.gpio_pins?.xemex_tx_pin??activeState?.default_meter_tx_pin??4),'Wallbox-Zähler TX');
+    occupied.set(Number(values.xemex_rx_pin??activeState?.gpio_pins?.xemex_rx_pin??activeState?.default_meter_rx_pin??5),'Wallbox-Zähler RX');
   }
-  if(Number(values.house_rs485_interface||0)===0&&['xemex','sdm630','sdm630mct'].includes(values.house_meter_type)){occupied.set(43,'Hauszähler TX');occupied.set(44,'Hauszähler RX');}
-  if(values.external_mode_input_enabled)occupied.set(Number(activeState?.external_mode_input_pin||6),'Betriebsart-Kontakt');
-  if(values.evu_input_enabled)occupied.set(7,'Extern Start / Stopp / EVU-Kontakt');
-  if(values.relay_board_enabled){occupied.set(12,'Relais 1');}
-  if(values.phase_switch_enabled&&values.phase_feedback_enabled!==false)occupied.set(13,'Schütz-Rückmeldung');
+  if(Number(values.house_rs485_interface||0)===0&&['xemex','sdm630','sdm630mct'].includes(values.house_meter_type)){occupied.set(Number(values.house_tx_pin??activeState?.gpio_pins?.house_tx_pin??43),'Hauszähler TX');occupied.set(Number(values.house_rx_pin??activeState?.gpio_pins?.house_rx_pin??44),'Hauszähler RX');}
+  if(values.external_mode_input_enabled)occupied.set(Number(values.external_mode_input_pin??activeState?.gpio_pins?.external_mode_input_pin??activeState?.external_mode_input_pin??6),'Betriebsart-Kontakt');
+  if(values.evu_input_enabled)occupied.set(Number(values.evu_input_pin??activeState?.gpio_pins?.evu_input_pin??7),'Extern Start / Stopp / EVU-Kontakt');
+  if(values.relay_board_enabled&&Number(values.phase_actuator_type||0)===0){occupied.set(Number(values.relay1_pin??activeState?.gpio_pins?.relay1_pin??12),'Phasenschütz');}
+  if(values.phase_switch_enabled&&values.phase_feedback_enabled!==false&&Number(values.phase_actuator_type||0)===0)occupied.set(Number(values.phase_feedback_pin??activeState?.gpio_pins?.phase_feedback_pin??13),'Schütz-Rückmeldung');
+  if(values.phase_switch_enabled&&Number(values.phase_feedback_count)===2&&Number(values.phase_actuator_type||0)===0)occupied.set(Number(values.phase_feedback_second_pin??activeState?.gpio_pins?.phase_feedback_second_pin??14),'Schütz-Rückmeldung 2');
   const other=field==='wallbox_tx_pin'?'wallbox_rx_pin':'wallbox_tx_pin';
   occupied.set(Number(values[other]),field==='wallbox_tx_pin'?'Shell RX':'Shell TX');
-  return [1,2,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,21,38,39,40,41,42,43,44,47].map(pin=>({pin,reason:occupied.get(pin)||''}));
+  const led=Number(values.status_led_pin??activeState?.gpio_pins?.status_led_pin??48);if(led>=0)occupied.set(led,'RGB-LED');
+  return (activeState?.hardware_id==='andreas-testboard'?[1,2,5,6,7,8,38,39]:[1,2,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,21,38,39,40,41,42,43,44,47]).map(pin=>({pin,reason:occupied.get(pin)||''}));
 }
 function updateShellPins(){
   const f=$('config-form').elements,values={house_meter_type:f.house_meter_type.value,wallbox_meter_type:f.wallbox_meter_type.value};
   for(const key of ['external_mode_input_enabled','evu_input_enabled','relay_board_enabled','phase_switch_enabled','phase_feedback_enabled'])values[key]=f[key].checked;
+  Object.assign(values,configBaseline);
+  for(const key of ['external_mode_input_enabled','evu_input_enabled','relay_board_enabled','phase_switch_enabled','phase_feedback_enabled'])values[key]=f[key].checked;
+  values.house_meter_type=f.house_meter_type.value;values.wallbox_meter_type=f.wallbox_meter_type.value;
+  values.phase_actuator_type=Number(f.phase_actuator_type?.value||0);
+  values.phase_feedback_count=Number(f.phase_feedback_count?.value||1);
   values.meter_rs485_interface=f.meter_rs485_interface.value;values.house_rs485_interface=f.house_rs485_interface.value;
   const defaultTx=Number(state?.default_shell_tx_pin||17),defaultRx=Number(state?.default_shell_rx_pin||18);
   values.wallbox_tx_pin=Number(f.wallbox_tx_pin.value||defaultTx);values.wallbox_rx_pin=Number(f.wallbox_rx_pin.value||defaultRx);
@@ -359,7 +376,8 @@ function updateShellPins(){
   }
   $('shell-pin-warning').hidden=!conflict;$('shell-pin-warning').textContent=conflict?'Pin bereits belegt. Freien Pin wählen.':'';
   $('shell-pin-default-note').textContent=`Standard für ${state?.hardware||'dieses Board'}: TX ${defaultTx} / RX ${defaultRx}. Nur freie Pins wählen; danach neu starten.`;
-  $('mode-contact-note').textContent=`GPIO${Number(state?.external_mode_input_pin||6)}: offen = Manuell · gegen GND = PV-Überschuss.`;
+  if($('evu-pin-note'))$('evu-pin-note').textContent=`GPIO${Number(configBaseline.evu_input_pin??state?.gpio_pins?.evu_input_pin??7)} gegen GND = aktiv. 0 A: geschlossen stoppt, offen hebt die Kontaktsperre auf. Höhere Werte begrenzen ab Mindestladestrom. Nur potentialfreie Kontakte.`;
+  $('mode-contact-note').textContent=`GPIO${Number(configBaseline.external_mode_input_pin??state?.gpio_pins?.external_mode_input_pin??state?.external_mode_input_pin??6)}: offen = Manuell · gegen GND = PV-Überschuss.`;
 }
 $('shell-pins-default').addEventListener('click',()=>{const f=$('config-form').elements,tx=Number(state?.default_shell_tx_pin||17),rx=Number(state?.default_shell_rx_pin||18);f.wallbox_tx_pin.value=String(tx);f.wallbox_rx_pin.value=String(rx);updateShellPins();toast(`TX ${tx} / RX ${rx} ausgewählt. Zum Übernehmen speichern.`);});
 
@@ -403,7 +421,7 @@ function updateEquipment(){const f=$('config-form').elements,checked=name=>f[nam
  $('mode-contact-settings').hidden=!checked('external_mode_input_enabled');$('evu-contact-settings').hidden=!checked('evu_input_enabled');
  $('mqtt-settings').hidden=false;$('mqtt-connection-details').hidden=!checked('mqtt_enabled');$('vehicle-settings').hidden=basic||!checked('vehicle_soc_enabled');
  $('battery-settings').hidden=basic||!checked('battery_protect');$('phase-settings').hidden=!checked('phase_switch_enabled');$('fixed-phase-setting').hidden=checked('phase_switch_enabled');if(checked('phase_switch_enabled'))f.fixed_charge_phases.value='3';
- f.phase_switch_enabled.closest('label').hidden=!checked('relay_board_enabled');
+ f.phase_switch_enabled.closest('label').hidden=true;
 
  $('house-settings').hidden=basic||!(checked('zero_feed_enabled')||checked('grid_guard_enabled'));$('maintenance').hidden=false;$('diagnostic-settings').hidden=false;
 
@@ -416,7 +434,7 @@ function updateEquipment(){const f=$('config-form').elements,checked=name=>f[nam
  $('opendtu-source-note').hidden=!huaweiOverrides;
  $('opendtu-source-note').textContent='Für die in der Huawei-Kachel aktivierten Messwerte hat Huawei Vorrang vor OpenDTU.';
  $('pv-control-settings').hidden=!checked('zero_feed_enabled');
- $('phase-feedback-type').hidden=!checked('phase_feedback_enabled');
+ window.teenetShellyPhase?.update();
  if(f.house_meter_type.value==='huawei'){$('house-host-field').hidden=true;}
  const network=['tasmota','shelly_gen2','shelly_em1','em24_tcp'].includes(f.house_meter_type.value);
  const networkWallbox=f.wallbox_meter_type.value.startsWith('shelly_')||f.wallbox_meter_type.value==='em24_tcp';
@@ -467,14 +485,17 @@ function updateUnsavedFunctions(){
   const value=el.type==='checkbox'?el.checked:el.hasAttribute('data-boolean')?el.value==='true':el.type==='number'||el.hasAttribute('data-number')?Number(el.value)*(Number(el.dataset.scale)||1):el.value;
   const baseline=configBaseline[el.name];
   return typeof value==='number'&&typeof baseline==='number'?Math.abs(value-baseline)>.0001:value!==baseline;
- })||Array.from(f).some(el=>el.hasAttribute('data-secret')&&!!el.value)||$('clear-wifi-password').checked||$('opendtu-enabled').checked!==(Number(configBaseline.mqtt_input_source)===2);
+ })||Array.from(f).some(el=>el.hasAttribute('data-secret')&&!!el.value)||$('clear-wifi-password').checked||((Number(f.phase_actuator_type.value)===1)&&($('phase-shelly-auth').value==='1')!==!!configBaseline.phase_shelly_password_set)||$('opendtu-enabled').checked!==(Number(configBaseline.mqtt_input_source)===2);
+ const saveError=changed&&typeof configSaveError==='string'?configSaveError:'';
   $('functions-unsaved').hidden=!initialized||(!changed&&(!settingsRebootPending||settingsRebootDeferred));
- $('settings-notice-title').textContent=changed?'Ungespeicherte Änderungen':'Neustart erforderlich';
+ $('settings-notice-title').textContent=changed?(saveError?'Nicht gespeichert':'Ungespeicherte Änderungen'):'Gespeichert – Neustart erforderlich';
  $('settings-notice-icon').textContent=changed?'✎':'↻';
  $('functions-unsaved').dataset.kind=changed?'unsaved':'restart';
- $('settings-notice-text').textContent=changed?'Bitte Einstellungen speichern.':'Gespeicherte Systemänderungen werden nach dem Neustart aktiv.';
+ $('functions-unsaved').dataset.error=saveError?'true':'false';
+ $('settings-notice-text').textContent=saveError||(changed?'Bitte Einstellungen speichern.':'Die Änderung ist gespeichert und wird nach dem Neustart aktiv.');
  $('settings-notice-save').hidden=!changed;
  $('settings-notice-restart-actions').hidden=changed||!settingsRebootPending;
+ if(typeof window!=='undefined'){window.teenetPhaseTest?.update();window.teenetExpert?.updateWrites();}
 
 }
 function updateSaveStatus(result){
@@ -486,12 +507,14 @@ function updateSaveStatus(result){
  if(!settingsRebootPending||newlyRequired)settingsRebootDeferred=false;
  return newlyRequired;
 }
+$('config-form').addEventListener('input',()=>{configSaveError='';},true);
+$('config-form').addEventListener('change',()=>{configSaveError='';},true);
 $('config-form').addEventListener('input',updateUnsavedFunctions);
 $('config-form').addEventListener('change',e=>{
  const f=$('config-form').elements,name=e.target.name;
  if(e.target.id==='opendtu-enabled'){f.mqtt_input_source.value=e.target.checked?'2':'0';if(e.target.checked)f.mqtt_enabled.checked=true;}
  if(name==='phase_switch_enabled'&&f.phase_switch_enabled.checked){f.relay_board_enabled.checked=true;f.relay1_mode.value='3';}
- if(name==='relay_board_enabled'&&!f.relay_board_enabled.checked)f.phase_switch_enabled.checked=false;
+ if(name==='relay_board_enabled'){f.phase_switch_enabled.checked=f.relay_board_enabled.checked;f.relay1_mode.value=f.relay_board_enabled.checked?'3':'0';}
  if(name==='mqtt_enabled'&&!f.mqtt_enabled.checked){f.mqtt_input_source.value='0';f.vehicle_soc_enabled.checked=false;if(!(f.huawei_enabled.checked&&f.huawei_battery.checked))f.battery_protect.checked=false;if(!(f.huawei_enabled.checked&&f.huawei_pv.checked))f.pv_display_enabled.checked=false;}
  if(name==='house_meter_type'&&f.house_meter_type.value==='huawei')f.huawei_enabled.checked=true;
  if(name==='huawei_enabled'&&!f.huawei_enabled.checked){f.huawei_battery.checked=false;f.huawei_pv.checked=false;if(f.house_meter_type.value==='huawei'){f.house_meter_type.value='tasmota';f.house_meter_host.value='';f.zero_feed_enabled.checked=false;}if(!f.mqtt_enabled.checked){f.battery_protect.checked=false;f.pv_display_enabled.checked=false;}}
@@ -506,7 +529,7 @@ $('config-form').addEventListener('change',e=>{
  if(name==='pv_display_enabled'&&f[name].checked&&!(f.huawei_enabled.checked&&f.huawei_pv.checked))f.mqtt_enabled.checked=true;
  updateEquipment();
 });
-async function loadConfig(){const cfg=await api('/api/config');if(Number(cfg.mqtt_input_source)===1)cfg.mqtt_input_source=0;configBaseline=cfg;for(const [name,value] of Object.entries(cfg)){const el=$('config-form').elements.namedItem(name);if(!el)continue;if(el.type==='checkbox')el.checked=value;else if(el.hasAttribute('data-boolean'))el.value=String(!!value);else if(el.type==='number'){const scale=Number(el.dataset.scale)||1;el.value=Number((Number(value)/scale).toFixed(4));}else if(!el.hasAttribute('data-secret')){if(el.tagName==='SELECT'&&!Array.from(el.options).some(option=>option.value===String(value))){const option=document.createElement('option');option.value=String(value);option.textContent=String(value);el.append(option);}el.value=value;}}batterySliderDirty=false;$('battery-reserve-slider').value=String(Math.round(cfg.battery_reserve_soc/5)*5);updateBatterySlider();updateMeterFields();updateExpertMode();updateEquipment();secretPlaceholders();}
+async function loadConfig(){const cfg=await api('/api/config');if(Number(cfg.mqtt_input_source)===1)cfg.mqtt_input_source=0;if(typeof cfg.phase_switch_enabled==='boolean')cfg.relay_board_enabled=cfg.phase_switch_enabled;configBaseline=cfg;for(const [name,value] of Object.entries(cfg)){const el=$('config-form').elements.namedItem(name);if(!el)continue;if(el.type==='checkbox')el.checked=value;else if(el.hasAttribute('data-boolean'))el.value=String(!!value);else if(el.type==='number'){const scale=Number(el.dataset.scale)||1;el.value=Number((Number(value)/scale).toFixed(4));}else if(!el.hasAttribute('data-secret')){if(el.tagName==='SELECT'&&!Array.from(el.options).some(option=>option.value===String(value))){const option=document.createElement('option');option.value=String(value);option.textContent=String(value);el.append(option);}el.value=value;}}batterySliderDirty=false;$('battery-reserve-slider').value=String(Math.round(cfg.battery_reserve_soc/5)*5);updateBatterySlider();updateMeterFields();updateExpertMode();updateEquipment();secretPlaceholders();}
 function updateBatterySlider(){$('battery-reserve-view').textContent=`${format(Number($('battery-reserve-slider').value),0)} %`;}
 function powerFactor(phases=state?.charge_phases??3){const single=state?.single_power_per_amp_kw;return Number.isFinite(single)?single*phases:.23*phases;}
 function phaseForPower(kw){return state?.phase_switch_enabled?(kw>0&&kw<=3.5?1:3):(state?.fixed_charge_phases??3);}
@@ -596,10 +619,11 @@ async function pollMeterPreview(){
 }
 setTimeout(pollMeterPreview,1500);
 
-function secretPlaceholders(){for(const name of ['wifi_password','mqtt_password'])$('config-form').elements[name].placeholder=configBaseline[name+'_set']?'•••••••• · gespeichert':'Kein Passwort gespeichert';}
+function secretPlaceholders(){for(const name of ['wifi_password','mqtt_password','phase_shelly_password'])$('config-form').elements[name].placeholder=configBaseline[name+'_set']?'•••••••• · gespeichert':'Kein Passwort gespeichert';}
 function passwordToggle(buttonName,inputName){$(buttonName).addEventListener('click',()=>{const input=$('config-form').elements[inputName],show=input.type==='password';input.type=show?'text':'password';$(buttonName).textContent=show?'Verbergen':'Anzeigen';$(buttonName).setAttribute('aria-pressed',String(show));});}
 passwordToggle('show-mqtt-password','mqtt_password');
 passwordToggle('show-wifi-password','wifi_password');
+passwordToggle('show-phase-shelly-password','phase_shelly_password');
 
 $('wifi-scan').addEventListener('click',()=>action(async()=>{const button=$('wifi-scan');button.textContent='Suche …';try{const result=await api('/api/wifi/scan');const select=$('wifi-networks'),unique=[...new Map((result.networks||[]).map(n=>[n.ssid,n])).values()];const placeholder=document.createElement('option');placeholder.value='';placeholder.textContent='Netzwerk auswählen …';select.replaceChildren(placeholder,...unique.map(n=>{const option=document.createElement('option');option.value=n.ssid;option.textContent=`${n.ssid} (${n.rssi} dBm)`;return option;}));select.hidden=!unique.length;toast(`${unique.length} WLAN-Netzwerke gefunden.`);}finally{button.textContent='Netzwerke suchen';}}));
 
@@ -628,11 +652,12 @@ document.querySelectorAll('[data-mode]').forEach(el=>el.addEventListener('click'
 }));
 
 $('control-form').addEventListener('submit',e=>{e.preventDefault();action(async()=>{
-  if(state.charge_stop_latched||state.phase_state==='fehler'){
+  if(state.phase_test_active){await api('/api/phase-test',{stop:true});toast('Schütztest beendet. Ladung bleibt gestoppt.');}
+  else if(state.enabled||state.evcc_enabled){rememberChargeMode($('mode').value);await api('/api/control',{enabled:false,mode:'off'});toast('Stop-Anforderung gesendet.');}
+  else if(state.charge_stop_latched||state.phase_state==='fehler'){
     if(state.can_unlock===false){toast('Zuerst Störung beheben.',true);return;}
     await api('/api/control',{enabled:false,restart:true});toast('Sperre aufgehoben. Zum Laden erneut starten.');
-  }else if(state.enabled){rememberChargeMode($('mode').value);await api('/api/control',{enabled:false,mode:'off'});toast('Stop-Anforderung gesendet.');}
-  else {
+  }else {
     const actual=state.actual_a||[];
     if(state.feedback_ok&&actual.some(a=>Number.isFinite(a)&&a>=1)){toast('Stopp wird noch ausgeführt.');return;}
     const mode=$('mode').value,enabled=mode!=='manual'||selectedPower()>0;
@@ -645,7 +670,43 @@ $('control-form').addEventListener('submit',e=>{e.preventDefault();action(async(
 $('unlock-control').addEventListener('click',()=>action(async()=>{await api('/api/control',{enabled:false,restart:true});await pollStatus();toast('Sperre aufgehoben. Mit Start laden.');}));
 
 
-$('config-form').addEventListener('submit',e=>{e.preventDefault();action(async()=>{const data={};for(const el of $('config-form').elements){if(!el.name||el.type==='submit'||el.disabled)continue;if(el.hasAttribute('data-secret')&&!el.value)continue;const scale=Number(el.dataset.scale)||1;const value=el.type==='number'||el.hasAttribute('data-number')?Number(el.value)*scale:el.type==='checkbox'?el.checked:el.hasAttribute('data-boolean')?el.value==='true':el.value;const baseline=typeof configBaseline[el.name]==='number'?Number(configBaseline[el.name].toFixed(4)):configBaseline[el.name];if(value!==baseline)data[el.name]=value;}if($('clear-wifi-password').checked)data.wifi_password='';configSaving=true;writes();try{const result=await api('/api/config',data);Object.assign(configBaseline,data);for(const name of ['wifi_password','mqtt_password'])if(name in data){configBaseline[name+'_set']=!!data[name];delete configBaseline[name];}secretPlaceholders();await loadConfig();$('clear-wifi-password').checked=false;$('config-note').hidden=true;for(const el of $('config-form').elements)if(el.hasAttribute('data-secret'))el.value='';const restartNeeded=updateSaveStatus(result);updateUnsavedFunctions();if(!restartNeeded)toast(settingsRebootPending?'Änderungen übernommen. Ein früherer Neustart steht noch aus.':'Einstellungen übernommen.');await pollStatus();}finally{configSaving=false;writes();}});});
+function validateConfigForm(){
+ // Expert fields have their own save actions; optional hidden controls are not part of this form's validation.
+ for(const input of $('config-form').elements){
+  if(!input.name||input.disabled||input.closest('#expert-settings')||input.closest('[hidden]')||input.checkValidity())continue;
+  const label=(input.closest('label')?.firstChild?.textContent||input.name).trim();
+  configSaveError=`${label}: ${input.validationMessage}`;updateUnsavedFunctions();
+  for(let parent=input.parentElement;parent;parent=parent.parentElement)if(parent.tagName==='DETAILS')parent.open=true;
+  input.focus();input.reportValidity();return false;
+ }
+ return true;
+}
+$('config-form').addEventListener('submit',e=>{e.preventDefault();if(!validateConfigForm())return;action(async()=>{
+ const data={};configSaveError='';
+ for(const el of $('config-form').elements){
+  if(!el.name||el.type==='submit'||el.disabled||el.closest('#expert-settings'))continue;
+  if(el.hasAttribute('data-secret')&&!el.value)continue;
+  const scale=Number(el.dataset.scale)||1;
+  const value=el.type==='number'||el.hasAttribute('data-number')?Number(el.value)*scale:el.type==='checkbox'?el.checked:el.hasAttribute('data-boolean')?el.value==='true':el.value;
+  const baseline=typeof configBaseline[el.name]==='number'?Number(configBaseline[el.name].toFixed(4)):configBaseline[el.name];
+  if(value!==baseline)data[el.name]=value;
+ }
+ if($('clear-wifi-password').checked)data.wifi_password='';
+ if(Number($('config-form').elements.phase_actuator_type.value)===1&&$('phase-shelly-auth').value==='0'&&configBaseline.phase_shelly_password_set)data.phase_shelly_password='';
+ configSaving=true;writes();
+ try{
+  let result;
+  try{result=await api('/api/config',data);}
+  catch(error){configSaveError=error.name==='AbortError'?'Zeitüberschreitung. Verbindung prüfen und erneut speichern.':error.message;updateUnsavedFunctions();throw error;}
+  Object.assign(configBaseline,data);
+  for(const name of ['wifi_password','mqtt_password','phase_shelly_password'])if(name in data){configBaseline[name+'_set']=!!data[name];delete configBaseline[name];}
+  secretPlaceholders();await loadConfig();$('clear-wifi-password').checked=false;
+  $('config-note').hidden=true;for(const el of $('config-form').elements)if(el.hasAttribute('data-secret'))el.value='';
+  const restartNeeded=updateSaveStatus(result);updateUnsavedFunctions();
+  if(!restartNeeded)toast(settingsRebootPending?'Änderungen übernommen. Ein früherer Neustart steht noch aus.':'Einstellungen übernommen.');
+  await pollStatus();
+ }finally{configSaving=false;writes();}
+});});
 
 
 
@@ -766,7 +827,7 @@ window.addEventListener('resize',()=>{drawCharts();updateHeaderOffset();});
 if(typeof ResizeObserver!=='undefined')new ResizeObserver(updateHeaderOffset).observe(document.querySelector('.app-header'));
 updateHeaderOffset();
 
-function showPage(){const anchor=location.hash.slice(1),groups=['equipment-settings','opendtu-settings','huawei-settings','relay-settings','connection-settings','shell-settings','meter-settings','house-settings','hardware-settings','consumption-settings','mqtt-settings','evcc-settings','vehicle-settings','diagnostic-settings','maintenance','appearance-settings'];const page=anchor==='statistics'?'statistics':anchor==='settings'||groups.includes(anchor)?'settings':'overview';for(const id of ['overview','statistics','settings'])$(id).hidden=id!==page;document.querySelector('.status-wrap').hidden=page!=='overview';document.querySelectorAll('nav a').forEach(a=>{const active=a.getAttribute('href')==='#'+page;a.classList.toggle('active',active);if(active)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});if(page==='statistics'&&initialized){loadHistory();loadSessions();}if(groups.includes(anchor)){for(let section=$(anchor);section;section=section.parentElement)if(section.tagName==='DETAILS')section.open=true;}requestAnimationFrame(()=>{drawCharts();if(groups.includes(anchor))$(anchor).scrollIntoView({block:'start'});else window.scrollTo(0,0);});}
+function showPage(){const anchor=location.hash.slice(1),groups=['equipment-settings','opendtu-settings','huawei-settings','relay-settings','connection-settings','shell-settings','meter-settings','house-settings','hardware-settings','consumption-settings','mqtt-settings','evcc-settings','vehicle-settings','diagnostic-settings','maintenance','appearance-settings','expert-settings'];const page=anchor==='statistics'?'statistics':anchor==='settings'||groups.includes(anchor)?'settings':'overview';for(const id of ['overview','statistics','settings'])$(id).hidden=id!==page;document.querySelector('.status-wrap').hidden=page!=='overview';document.querySelectorAll('nav a').forEach(a=>{const active=a.getAttribute('href')==='#'+page;a.classList.toggle('active',active);if(active)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});if(page==='statistics'&&initialized){loadHistory();loadSessions();}if(groups.includes(anchor)){for(let section=$(anchor);section;section=section.parentElement)if(section.tagName==='DETAILS')section.open=true;}requestAnimationFrame(()=>{drawCharts();if(groups.includes(anchor))$(anchor).scrollIntoView({block:'start'});else window.scrollTo(0,0);});}
 
 const donateUrl=$('donate-link').href;
 let qrLoading=false;
@@ -791,20 +852,161 @@ window.addEventListener('hashchange',showPage);
 
 showPage();writes();poll();
 
+/* Separate Shelly actuator setup; meter searches keep their own results. */
+(() => {
+ let scanning=false,devices=[],pollTimer,lastBaseline;
+ const f=$('config-form').elements,select=$('phase-shelly-found'),note=$('phase-shelly-scan-status'),feedback=$('phase-feedback-choice');
+ function update(){
+  const kind=Number(f.phase_actuator_type.value),remote=kind===1||kind===3,mqtt=kind===2;
+  const baseline=typeof configBaseline==='undefined'?null:configBaseline;
+  if(baseline&&baseline!==lastBaseline){$('phase-shelly-auth').value=baseline.phase_shelly_password_set?'1':'0';feedback.value=f.phase_feedback_count.value==='2'?'2':f.phase_feedback_closed_is_single.value==='true'?'1-single':'1';$('phase-choice-note').hidden=true;$('phase-choice-note').textContent='';lastBaseline=baseline;}
+  if(!feedback.value)feedback.value='1';
+  const none=mqtt;
+
+  for(const option of Array.from(f.phase_shelly_model.options||[]))option.disabled=false;
+  for(const option of Array.from(f.phase_actuator_type.options||[]))if(option.value==='3')option.disabled=false;
+  const inputs=Number(f.phase_shelly_model.value)<2?2:1;
+
+  for(const option of Array.from(feedback.options||[]))option.disabled=remote&&((option.value==='2'&&inputs===1)||(option.value!=='2'&&f.phase_shelly_pulse.value==='true'));
+  for(const option of Array.from(f.phase_shelly_pulse.options||[]))option.disabled=option.value==='true'&&(kind===3||inputs===1);
+  $('phase-shelly-settings').hidden=!remote||none;
+  $('phase-actuator-label').hidden=none&&!!state?.phase_mqtt_allowed;
+  $('phase-feedback-settings').hidden=none;
+  $('phase-feedback-heading').textContent=remote?'Rückmeldung über Shelly':'Rückmeldung am ESP';
+  $('phase-feedback-description').textContent=remote?'Hilfskontakte des Schützes an die Shelly-Eingänge anschließen.':'Potentialfreie Hilfskontakte des Schützes an die ESP-Eingänge anschließen.';
+  f.phase_feedback_enabled.closest('label').hidden=true;
+  $('phase-connection-note').hidden=remote||none;
+  f.phase_shelly_host.required=remote&&!none&&f.phase_switch_enabled.checked;
+  /* Previewing the protected option must not dirty ordinary saved settings. */
+  f.phase_feedback_enabled.checked=!mqtt;f.relay1_mode.value=f.phase_switch_enabled.checked?'3':'0';
+  const password=$('phase-shelly-auth').value==='1';
+  $('phase-shelly-auth-settings').hidden=false;
+  $('phase-shelly-password-label').hidden=!password;
+  f.phase_shelly_password.disabled=!password;
+  f.phase_shelly_password.required=remote&&!none&&f.phase_switch_enabled.checked&&password&&!baseline?.phase_shelly_password_set;
+  $('phase-shelly-polarity').hidden=f.phase_shelly_pulse.value==='true';
+  const pulseNote=$('phase-pulse-support');
+  pulseNote.hidden=!remote||none;
+  pulseNote.textContent=kind===3?'Modbus: nur Ein/Aus. Für Impulse Pro 1 oder Pro 2 über HTTP wählen.':
+   inputs===1?'Dieses Modell hat einen Rückmeldeeingang. Impulse benötigen Pro 1 oder Pro 2 mit zwei Kontakten.':
+   f.phase_shelly_pulse.value==='true'?'TeeNet startet den Impuls. Der Shelly schaltet nach 0,5 s aus. Zwei Rückmeldekontakte erforderlich.':'';
+  pulseNote.hidden=!remote||none||!pulseNote.textContent;
+  const gp={relay1_pin:12,phase_feedback_pin:13,phase_feedback_second_pin:14,...state?.gpio_pins,...baseline};
+  $('phase-connection-note').innerHTML=`GPIO${gp.relay1_pin}: Relais · 3,3 V / High schaltet ein · GPIO${gp.phase_feedback_pin}: Kontakt 1${Number(f.phase_feedback_count.value)===2?` · GPIO${gp.phase_feedback_second_pin}: Kontakt 2`:''}. <a href="/guide#relais-phasen" target="_blank" rel="noopener">Anschluss</a>`;
+  const mapping=f.phase_feedback_closed_is_single;
+  $('phase-feedback-single-mapping').hidden=true;
+  const closedSingle=mapping.value==='true',closedText=closedSingle?'einphasig':'dreiphasig',openText=closedSingle?'dreiphasig':'einphasig';
+  const pins=$('phase-feedback-pin-note');pins.hidden=none;
+  pins.textContent=remote?(Number(f.phase_feedback_count.value)===2?
+   'SW1 (Eingang 0) geschlossen: dreiphasig.\nSW2 (Eingang 1) geschlossen: einphasig.\nGenau ein Kontakt muss geschlossen sein.':
+   `SW1 (Eingang 0) geschlossen: ${closedText}.\nOffen: ${openText}. Eingang nicht invertieren.`):
+   Number(f.phase_feedback_count.value)===2?
+   `GPIO${gp.phase_feedback_pin} gegen GND geschlossen: dreiphasig. GPIO${gp.phase_feedback_second_pin} gegen GND geschlossen: einphasig. Genau ein Kontakt muss geschlossen sein.`:
+   `GPIO${gp.phase_feedback_pin} gegen GND geschlossen: ${closedText}. Offen: ${openText}. Nur potentialfreie Kontakte verwenden.`;
+  $('phase-shelly-setup-note').textContent=kind===3?'Am Shelly: Modbus aktivieren, Eingang entkoppeln (Detached), Einschaltzustand Aus, Timer aus. HTTP bleibt für die Prüfung nötig.':
+   f.phase_shelly_pulse.value==='true'?'Am Shelly: Eingang entkoppeln (Detached), Einschaltzustand Aus, Auto-Aus 0,5 s; Auto-Ein aus.':
+   'Am Shelly: Eingang entkoppeln (Detached), Einschaltzustand Aus, Timer aus.';
+  const option=Array.from(f.phase_actuator_type.options||[]).find(o=>o.value==='2');
+  if(option)option.hidden=!mqtt&&!state?.phase_mqtt_allowed;
+  updateLive();
+ }
+ /* Status polling must not rewrite unsaved configuration fields. */
+ function updateLive(){
+  const kind=Number(f.phase_actuator_type.value),none=kind===2;
+  $('phase-actuator-label').hidden=none&&!!state?.phase_mqtt_allowed;
+  const outputNote=$('phase-mqtt-profile-note');outputNote.hidden=!none;
+  if(none)outputNote.textContent=state?.phase_mqtt_allowed?
+   `${['MQTT','Shelly Modbus TCP','Shelly HTTP ohne Passwort','Shelly HTTP mit Passwort'][state.phase_output_transport||0]}: ${typeof state.phase_mqtt_output_single==='boolean'?`letzter Befehl ${state.phase_mqtt_output_single?'einphasig':'dreiphasig'}`:'noch kein Befehl bestätigt'} · keine Schützrückmeldung.`:
+   'Ohne Rückmeldung: Freigabe im Expertenmodus erforderlich.';
+  if(none){const link=document.createElement('a');link.href='#expert-settings';link.textContent=' Im Expertenmodus ändern';outputNote.append(link);}
+  const contacts=$('phase-contact-status');
+  contacts.hidden=none||!state?.phase_switch_enabled||kind!==state.phase_actuator_type;
+  if(!contacts.hidden){
+   const baseline=typeof configBaseline==='undefined'?null:configBaseline;
+   const changed=baseline&&['phase_feedback_count','phase_feedback_closed_is_single','phase_shelly_model','phase_shelly_pulse','phase_shelly_true_three_phase','phase_shelly_host'].some(name=>String(baseline[name])!==f[name].value);
+   if(changed||state.reboot_required){contacts.textContent=state.reboot_required?'Rückmeldung nach dem Neustart prüfen.':'Neue Zuordnung noch nicht gespeichert.';return;}
+   const contactText=value=>typeof value==='boolean'?(value?'geschlossen':'offen'):'unbekannt';
+   const observed=Number(state.phase_feedback);
+   contacts.textContent=`Kontakt 1: ${contactText(state.phase_contact1_closed)}${Number(state.phase_feedback_count)===2?` · Kontakt 2: ${contactText(state.phase_contact2_closed)}`:''} · ${observed===1?'Einphasig bestätigt':observed===3?'Dreiphasig bestätigt':'Schützstellung nicht bestätigt'}`;
+  }
+ }
+ function render(result){
+  if(result.family!=='shelly_switch')throw Error('Andere Gerätesuche läuft. Bitte später erneut versuchen.');
+  devices=result.devices||[];select.replaceChildren();
+  const first=document.createElement('option');first.value='';first.textContent='Shelly auswählen';select.append(first);
+  devices.forEach((device,index)=>{
+   const option=document.createElement('option');option.value=String(index);option.disabled=!device.compatible;
+   option.textContent=`${device.host} · ${device.name}${device.protected?' · Passwortschutz':''}${device.compatible?' · Hardware noch nicht getestet':' · nicht unterstützt'}`;
+   select.append(option);
+  });select.hidden=!devices.length;
+  note.textContent=result.running?`Suche nach Shelly-Schaltgeräten · ${result.progress} %`:
+   `${devices.filter(d=>d.compatible).length} passende Shelly gefunden.${result.partial?' Suche vorzeitig beendet.':''} ${devices.some(d=>d.protected)?'Geschützte Geräte werden angezeigt; Passwort unten eingeben.':''}`;
+ }
+ async function poll(){
+  try{const result=await api('/api/meters/scan');render(result);if(result.running){pollTimer=setTimeout(poll,1500);return;}}
+  catch(error){note.textContent=error.message;}
+  scanning=false;$('phase-shelly-scan').disabled=!online||busy;
+ }
+ $('phase-shelly-scan').addEventListener('click',async()=>{
+  if(scanning||!online||busy)return;
+  scanning=true;$('phase-shelly-scan').disabled=true;clearTimeout(pollTimer);
+  try{const result=await api('/api/meters/scan',{family:'shelly_switch'});render(result);if(result.running)pollTimer=setTimeout(poll,1500);else scanning=false;}
+  catch(error){scanning=false;note.textContent=error.message;}
+  if(!scanning)$('phase-shelly-scan').disabled=!online||busy;
+ });
+ select.addEventListener('change',()=>{
+  const device=devices[Number(select.value)];if(select.value===''||!device?.compatible)return;
+  f.phase_shelly_host.value=device.host;
+  if(Number.isInteger(device.profile)&&device.profile<=4)f.phase_shelly_model.value=String(device.profile);
+  $('phase-shelly-auth').value=device.protected?'1':'0';normalizeChoice();update();
+  f.phase_shelly_host.dispatchEvent(new Event('change',{bubbles:true}));
+ });
+ // Normalize only explicit user choices, never saved data while rendering or polling.
+ function normalizeChoice(event){
+  let kind=Number(f.phase_actuator_type.value),remote=kind===1||kind===3;
+  const notice=$('phase-choice-note');notice.textContent='';notice.hidden=true;
+  if(event?.target?.name==='phase_actuator_type'&&kind===3){f.phase_shelly_model.value='4';notice.textContent='Shelly 1 Gen4 gewählt: Ein/Aus mit einem Rückmeldekontakt.';}
+  if(kind===3&&f.phase_shelly_model.value!=='4'){f.phase_actuator_type.value='1';kind=1;notice.textContent='Für dieses Modell wurde HTTP gewählt.';}
+  if(remote&&(kind===3||Number(f.phase_shelly_model.value)>=2))f.phase_shelly_pulse.value='false';
+  if(remote&&Number(f.phase_shelly_model.value)>=2)f.phase_feedback_count.value='1';
+  if(remote&&f.phase_shelly_pulse.value==='true')f.phase_feedback_count.value='2';
+  if(f.phase_feedback_count.value==='2')f.phase_feedback_closed_is_single.value='false';
+  feedback.value=f.phase_feedback_count.value==='2'?'2':f.phase_feedback_closed_is_single.value==='true'?'1-single':'1';
+  notice.hidden=!notice.textContent;
+ }
+ for(const name of ['phase_actuator_type','phase_shelly_model','phase_shelly_pulse'])f[name].addEventListener('change',normalizeChoice);
+ $('phase-shelly-auth').addEventListener('change',update);
+ window.teenetShellyPhase={update,updateLive};update();
+})();
 /* Password stays in this page's memory; no cookies or local storage. */
 (() => {
- let pin='',snapshot=null,working=false,timer,rows=[],savedModified=false,lastMarkerState=null;
+ let pin='',snapshot=null,working=false,timer,rows=[],savedModified=false,lastMarkerState=null,expertSchemaPromise=null;
  const el=id=>document.getElementById(id),same=(a,b)=>typeof a==='number'&&typeof b==='number'?Math.abs(a-b)<.0001:a===b;
  const message=(text,error=false)=>{el('expert-message').textContent=text;el('expert-message').classList.toggle('expert-message-error',error);};
  function parameterMeta(raw){const meta={...raw};for(const key of ['min','max','step','default','value','active'])if(typeof meta[key]==='number')meta[key]=Number(meta[key].toFixed(6));return meta;}
+ async function expertSchema(){
+  if(!expertSchemaPromise)expertSchemaPromise=fetch('/expert-schema.json',{cache:'no-cache'}).then(async response=>{if(!response.ok)throw Error('Expertenparameter konnten nicht geladen werden.');return response.json();}).catch(error=>{expertSchemaPromise=null;throw error;});
+  return expertSchemaPromise;
+ }
+ async function loadExpertParameters(accessPin){
+  const dynamic=await api('/api/expert',{pin:accessPin,action:'read'});
+  /* Full objects remain accepted by isolated UI tests and older previews. */
+  if(Array.isArray(dynamic.parameters))return dynamic;
+  const schema=await expertSchema(),values=dynamic.values,active=dynamic.active;
+  if(!Array.isArray(schema.parameters)||!Array.isArray(values)||!Array.isArray(active)||values.length!==schema.parameters.length||active.length!==values.length)throw Error('Expertenparameter unvollständig.');
+  return {parameters:schema.parameters.map((meta,index)=>({...meta,value:values[index],active:active[index]})),settings:configBaseline||{},pending:!!dynamic.pending,
+   phase_mqtt_allowed:state?.phase_mqtt_allowed,phase_mqtt_ready:state?.phase_mqtt_ready,phase_output_base_ready:state?.phase_output_base_ready,
+   phase_output_meter_ready:state?.phase_output_meter_ready,phase_output_measured_phases:state?.phase_output_measured_phases,phase_output_mqtt_ready:state?.phase_output_mqtt_ready};
+ }
+ async function loadExpertGPIO(accessPin){return api('/api/expert',{pin:accessPin,action:'read_gpio'});}
  function readable(v,input){if(input?.tagName==='SELECT')return Array.from(input.options).find(o=>o.value===String(v))?.textContent||String(v);if(typeof v==='boolean')return v?'Ein':'Aus';return v===''?'Nicht eingetragen':typeof v==='number'?String(Number(v.toFixed(4))):String(v);}
  function value(row){return row.secret?row.input.value:row.boolean?row.input.checked:row.booleanSelect?row.input.value==='true':row.numeric?Number(row.input.value)*row.scale:row.input.value;}
  function changed(row){return row.secret?!!row.input.value:!same(value(row),row.saved);}
  function renew(){clearTimeout(timer);timer=setTimeout(()=>lock(),15*60*1000);}
- function lock(){clearTimeout(timer);pin='';snapshot=null;rows=[];el('expert-content').hidden=true;el('expert-lock').hidden=false;el('expert-parameters').replaceChildren();el('expert-pin').value='';updateGroupMarkers();message('Expertenbereich gesperrt.');}
+ function lock(){window.teenetPhaseTest?.close();phaseAccess=false;cancelPhaseMqtt();cancelPhaseAccess();clearTimeout(timer);pin='';snapshot=null;rows=[];gpioRows=[];el('expert-content').hidden=true;el('expert-lock').hidden=false;el('expert-parameters').replaceChildren();el('expert-gpio-roles')?.replaceChildren();el('expert-pin').value='';update();message('Expertenbereich gesperrt.');}
  function chargingActive(){return !!(state?.enabled||state?.evcc_enabled||(state?.evcc_test_enabled&&!state.evcc_local_stop&&!state.evcc_lease_expired)||state?.actual_a?.some(a=>typeof a==='number'&&Number.isFinite(a)&&a>=1));}
  async function stopExpertCharging(){if(!pin||working||busy||!online)return;await action(async()=>{rememberChargeMode(el('mode').value);await api('/api/control',{enabled:false,mode:'off'});await pollStatus();message('Stopp angefordert. Parameter werden nach bestätigtem Stillstand freigegeben.');});}
- function editAllowed(){return online&&initialized&&!busy&&!uploading&&!configSaving&&state?.enabled===false&&!chargingActive()&&!state.phase_switching&&(!state.phase_switch_enabled||state.phase_state==='bereit')&&state.meter_ok===true&&Array.isArray(state.actual_a)&&state.actual_a.length===3&&state.actual_a.every(a=>typeof a==='number'&&Number.isFinite(a)&&a>=0&&a<1);}
+ function editAllowed(){return !state?.phase_test_active&&!state?.firmware_check_pending&&online&&initialized&&!busy&&!uploading&&!configSaving&&state?.enabled===false&&!chargingActive()&&!state.phase_switching&&(!state.phase_switch_enabled||state.phase_state==='bereit')&&state.meter_ok===true&&Array.isArray(state.actual_a)&&state.actual_a.length===3&&state.actual_a.every(a=>typeof a==='number'&&Number.isFinite(a)&&a>=0&&a<1);}
  function curveModel(phases=3){
   const setting=key=>{const row=rows.find(r=>r.key===key),n=row?value(row):NaN;return Number.isFinite(n)&&n>=row?.min&&n<=row?.max?n:row?.standard??1;};
   const cfg=snapshot?.settings||{},minimum=setting('MIN_CURRENT');let maximum=Math.max(minimum,Math.min(63,Number(cfg.max_charge_a)||16));
@@ -833,9 +1035,9 @@ showPage();writes();poll();
  }
  function updateGroupMarkers(){
   const panel=el('expert-settings');
-  if(state!==lastMarkerState){lastMarkerState=state;if(typeof state?.expert_parameters_modified==='boolean')savedModified=state.expert_parameters_modified;}
+  if(state!==lastMarkerState){lastMarkerState=state;if(typeof state?.expert_parameters_modified==='boolean')savedModified=state.expert_parameters_modified;if(snapshot&&typeof state?.phase_mqtt_allowed==='boolean')snapshot.phase_mqtt_allowed=state.phase_mqtt_allowed;}
   for(const group of [el('maintenance'),panel,...panel.querySelectorAll('.expert-section')]){
-   const modified=!pin&&(group===panel||group===el('maintenance'))?savedModified:!!group.querySelector('.expert-row.is-modified');
+   const modified=(!pin||!rows.length)&&(group===panel||group===el('maintenance'))?savedModified:!!group.querySelector('.expert-row.is-modified');
    group.classList.toggle('has-modified-parameters',modified);
    const summary=group.querySelector(':scope > summary');
    if(summary){summary.classList.toggle('parameter-summary-modified',modified);if(modified)summary.setAttribute('title','Enthält Einstellungen, die vom Standard abweichen.');else summary.removeAttribute('title');}
@@ -843,16 +1045,156 @@ showPage();writes();poll();
  }
  function update(){
   const editable=!!pin&&!working&&editAllowed();
-  el('expert-edit-note').textContent=editAllowed()?'Änderungen gelten nach einem Neustart. Gelb markierte Zeilen weichen vom Standard ab.':'Eingaben sind bis zum bestätigten Ladestopp gesperrt.';
+  el('expert-edit-note').textContent=editAllowed()?'Änderungen gelten nach einem Neustart. Gelb markierte Zeilen weichen vom Standard ab.':state?.phase_test_active?'Während des Schütztests sind Regelparameter gesperrt.':'Eingaben sind bis zum bestätigten Ladestopp gesperrt.';
   el('expert-stop').hidden=!chargingActive();el('expert-stop').disabled=!online||!initialized||busy||working||uploading;
   for(const row of rows){row.input.disabled=!editable;row.reset.disabled=!editable;const differs=row.secret?!!snapshot?.settings[row.key+'_set']||!!row.input.value:!same(value(row),row.standard);row.node.classList.toggle('is-modified',differs);row.node.classList.toggle('is-unsaved',changed(row));}
-  updateGroupMarkers();
+  updatePhaseMqtt();updateGPIO();updateGroupMarkers();
   for(const [list,note,button] of [[rows,'expert-parameter-note','expert-save']]){
    const count=list.filter(changed).length;el(note).textContent=count?`${count} Änderung${count===1?'':'en'} noch nicht gespeichert.`:'Keine ungespeicherten Änderungen.';el(note).parentElement.classList.toggle('has-edits',!!count);el(button).disabled=!editable||!count;
+   const normalNotice=el('functions-unsaved'),normalSettingsDirty=normalNotice&&!normalNotice.hidden&&normalNotice.dataset?.kind==='unsaved';
+   el('expert-unsaved').hidden=!pin||!count||normalSettingsDirty;el('expert-unsaved-text').textContent=count===1?'Eine Änderung wartet auf das Speichern.':`${count} Änderungen warten auf das Speichern.`;el('expert-unsaved-save').disabled=!editable;
   }
   el('expert-unlock').disabled=working||!online||!initialized;
   el('expert-defaults').disabled=!editable;
   drawCurve();
+ }
+ let phaseMqttDraft=null,phaseMqttStage=0,phaseAccess=false,phaseBaseline=null;
+ const phaseMessage=(text,error=false,normal=false)=>{const node=el(normal?'phase-setup-message':'expert-phase-output-message');node.textContent=text;node.classList.toggle('expert-message-error',error);};
+ function phaseSettings(){return snapshot?.settings||configBaseline||{};}
+ function fillPhaseSettings(data){
+  const cfg=data.settings||data;
+  el('expert-phase-mqtt-topic').value=cfg.phase_mqtt_topic||((cfg.mqtt_prefix||'wallbox-ems')+'/output/single_phase');
+  el('expert-phase-mqtt-contactor').value=String(cfg.phase_mqtt_true_three_phase===true);
+  el('expert-phase-output-transport').value=String(cfg.phase_output_transport||0);
+  el('expert-phase-output-host').value=cfg.phase_output_host||'';
+  el('expert-phase-output-channel').value=String(cfg.phase_output_switch_id||0);
+  el('expert-phase-output-password').value='';
+ }
+ function openPhaseAccess(){
+  if(working||busy||!online){phaseMessage('ESP nicht erreichbar oder beschäftigt.',true);return;}
+  phaseAccess=false;phaseMessage('');el('phase-no-feedback-pin').value='';el('phase-no-feedback-unlock-error').textContent='';
+  el('phase-no-feedback-unlock-dialog').showModal();updatePhaseMqtt();
+ }
+ function cancelPhaseAccess(){
+  el('phase-no-feedback-pin').value='';if(el('phase-no-feedback-unlock-dialog').open)el('phase-no-feedback-unlock-dialog').close();
+  
+ }
+ async function unlockPhaseAccess(){
+  if(working||busy||!online)return;
+  const candidate=el('phase-no-feedback-pin').value;
+  if(!/^\d{4}$/.test(candidate)){el('phase-no-feedback-unlock-error').textContent='Passwort eingeben.';return;}
+  working=true;updatePhaseMqtt();
+  try{await api('/api/expert',{pin:candidate,action:'authorize'});pin=candidate;phaseAccess=true;
+   fillPhaseSettings(snapshot||configBaseline||{});el('phase-no-feedback-unlock-dialog').close();phaseMessage('Ansteuerung einrichten, dann „Ohne Rückmeldung aktivieren“ wählen.');renew();
+  }catch(error){el('phase-no-feedback-unlock-error').textContent=error.message;}
+  finally{el('phase-no-feedback-pin').value='';working=false;updatePhaseMqtt();}
+ }
+ async function selectFeedback(){
+  const choice=el('phase-feedback-choice'),f=el('config-form').elements;
+  const count=choice.value==='2'?'2':'1',single=choice.value==='1-single';
+  if(state?.phase_mqtt_allowed||snapshot?.phase_mqtt_allowed){
+   working=true;updatePhaseMqtt();try{await writePhaseMqtt(false);}catch(error){phaseMessage(error.message,true,true);window.teenetShellyPhase?.update();return;}finally{working=false;}
+  }
+  f.phase_feedback_count.value=count;f.phase_feedback_closed_is_single.value=String(single);
+  if(Number(f.phase_actuator_type.value)===2)f.phase_actuator_type.value='0';
+  f.phase_feedback_enabled.checked=true;window.teenetShellyPhase?.update();
+  f.phase_feedback_count.dispatchEvent(new Event('change',{bubbles:true}));phaseMessage('',false,true);updatePhaseMqtt();
+ }
+ function phaseOutputMethod(){return Number(el('expert-phase-output-transport').value||0);}
+ function phaseOutputHostValid(){return /^[a-zA-Z0-9][a-zA-Z0-9.-]{0,62}$/.test(el('expert-phase-output-host').value.trim());}
+ function phaseOutputPasswordReady(){return phaseOutputMethod()!==3||!!el('expert-phase-output-password').value||
+  (phaseSettings().phase_output_password_set===true&&el('expert-phase-output-host').value.trim()===phaseSettings().phase_output_host);}
+ function phaseOutputReady(){const method=phaseOutputMethod(),base=state?.phase_output_base_ready??snapshot?.phase_output_base_ready??snapshot?.phase_mqtt_ready;
+  return base&&(state?.phase_output_meter_ready??snapshot?.phase_output_meter_ready)!==false&&phaseOutputPasswordReady()&&
+   (method===0?(state?.phase_output_mqtt_ready??snapshot?.phase_output_mqtt_ready??snapshot?.phase_mqtt_ready):phaseOutputHostValid());}
+ function phaseMqttStopped(){if(typeof state?.phase_output_setup_allowed==='boolean')return state.phase_output_setup_allowed;return state?.enabled===false&&!state?.evcc_enabled&&!state?.phase_switching&&state?.meter_ok===true&&
+  Array.isArray(state.actual_a)&&state.actual_a.length===3&&state.actual_a.every(a=>Number.isFinite(a)&&a>=0&&a<1);}
+ function updatePhaseMqtt(){
+  const input=el('expert-phase-mqtt-enabled');if(!input)return;
+  if(typeof configBaseline!=='undefined'&&configBaseline!==phaseBaseline){phaseBaseline=configBaseline;if(!phaseAccess)fillPhaseSettings(configBaseline||{});}
+  if(state!==lastMarkerState&&snapshot&&typeof state?.phase_mqtt_allowed==='boolean')snapshot.phase_mqtt_allowed=state.phase_mqtt_allowed;
+  const allowed=!!(snapshot?.phase_mqtt_allowed??state?.phase_mqtt_allowed);
+  input.checked=allowed;
+  input.disabled=working||!online||!initialized||busy||uploading||configSaving||
+   (!allowed&&(!pin||!phaseAccess))||
+   (!allowed&&(!phaseMqttStopped()||!phaseOutputReady()||state?.reboot_required));
+  const edit=!!pin&&phaseAccess&&!working&&!busy&&online&&!chargingActive()&&!state?.phase_switching;
+  el('phase-no-feedback-unlock-open').hidden=phaseAccess||allowed;
+  el('expert-phase-output-edit-note').hidden=!allowed;
+  el('phase-no-feedback-unlock-open').disabled=working||busy||!online;
+  el('expert-phase-mqtt-topic').disabled=allowed||!edit;
+  const type=el('expert-phase-mqtt-contactor');
+  if(allowed)type.value=String(phaseSettings().phase_mqtt_true_three_phase===true);
+  if(allowed){el('expert-phase-output-transport').value=String(phaseSettings().phase_output_transport||0);
+   el('expert-phase-output-host').value=phaseSettings().phase_output_host||'';el('expert-phase-output-channel').value=String(phaseSettings().phase_output_switch_id||0);}
+  for(const id of ['expert-phase-output-transport','expert-phase-output-host','expert-phase-output-channel','expert-phase-output-password'])el(id).disabled=allowed||!edit;
+  const method=phaseOutputMethod();el('expert-phase-mqtt-topic').closest('label').hidden=method!==0;
+  el('expert-phase-output-shelly').hidden=method===0;el('expert-phase-mqtt-broker-note').hidden=method!==0;
+  el('expert-phase-output-password-label').hidden=method!==3;
+  el('expert-phase-output-password').placeholder=phaseSettings().phase_output_password_set?'•••••••• · gespeichert':'Shelly-Gerätepasswort eingeben';
+  el('expert-phase-output-summary').textContent=method===0?'TeeNet sendet Ein/Aus-Befehle an deinen Schaltaktor. Dieser betätigt das Schütz.':'Der Shelly betätigt die Schützspule. Das Schütz schaltet L2/L3.';
+  el('expert-phase-output-shelly-note').textContent=(method===1?
+   'Modbus TCP aktivieren. Der Shelly muss den gewählten Schaltausgang unterstützen.':
+   method===3?'TeeNet meldet sich mit dem Gerätepasswort am Shelly an.':'Für diese Auswahl muss der Shelly ohne Passwort erreichbar sein.')+' Shelly-Timer und weitere Schaltwege deaktivieren.';
+  type.disabled=allowed||!edit;
+  el('expert-phase-mqtt').classList.toggle('is-modified',allowed);
+  el('expert-phase-mqtt-status').textContent=allowed?'Aktiv · ohne Schützrückmeldung.':
+   !online?'ESP nicht erreichbar.':!phaseAccess?'Warnung und Passwort bestätigen.':state?.reboot_required?'Zuerst neu starten.':
+   !phaseMqttStopped()?'Ladung stoppen oder aktuelle Strommessung prüfen.':
+   (state?.phase_output_meter_ready??snapshot?.phase_output_meter_ready)===false?
+    (state?.wallbox_meter_type==='xemex'&&Number(state?.xemex_coils)<2?'Xemex: mindestens L1 und L2 messen.':'Mindestens L1 und L2 messen.'):
+   phaseOutputMethod()>0&&!phaseOutputHostValid()?'Shelly-Adresse eingeben.':
+   !phaseOutputPasswordReady()?'Shelly-Gerätepasswort eingeben.':
+   method===0&&!(state?.phase_output_mqtt_ready??snapshot?.phase_output_mqtt_ready??snapshot?.phase_mqtt_ready)?'MQTT-Verbindung fehlt.':
+   phaseOutputReady()?((state?.phase_output_measured_phases??snapshot?.phase_output_measured_phases)===2?'Freigabe möglich · L3 wird geschätzt.':'Deaktiviert · Freigabe möglich.'):'Messung oder Verbindung fehlt.';
+ }
+ function cancelPhaseMqtt(){phaseMqttStage=0;phaseMqttDraft=null;el('phase-mqtt-repeat-pin').value='';el('expert-phase-output-password').value='';if(el('phase-mqtt-confirm-dialog').open)el('phase-mqtt-confirm-dialog').close();update();}
+ async function writePhaseMqtt(enabled,repeatPin=''){
+  const request={pin,action:'mqtt_phase_output',enabled,topic:enabled?phaseMqttDraft.topic:'',true_three_phase:enabled?phaseMqttDraft.true_three_phase:false,
+   transport:enabled?phaseMqttDraft.transport:0,host:enabled?phaseMqttDraft.host:'',switch_id:enabled?phaseMqttDraft.switch_id:0,repeat_pin:repeatPin,confirm_risk:enabled,confirm_no_feedback:enabled};
+  if(enabled&&phaseMqttDraft.transport===3)request.password=phaseMqttDraft.password;
+  const result=await api('/api/expert',request);
+  await loadConfig();
+  await pollStatus();
+  if(pin&&snapshot){const previous=phaseSettings(),updated={...(snapshot.settings||{}),...(configBaseline||{})};
+   if(enabled)Object.assign(updated,{phase_mqtt_topic:request.topic,phase_mqtt_true_three_phase:request.true_three_phase,
+    phase_output_transport:request.transport,phase_output_host:request.host,phase_output_switch_id:request.switch_id,
+    phase_output_password_set:request.transport===3?(!!request.password||previous.phase_output_password_set):false,phase_mqtt_output_enabled:true});
+   else updated.phase_mqtt_output_enabled=false;
+   snapshot.settings=updated;snapshot.phase_mqtt_allowed=typeof state?.phase_mqtt_allowed==='boolean'?state.phase_mqtt_allowed:enabled;fillPhaseSettings(snapshot);}
+  else{snapshot=null;fillPhaseSettings(configBaseline);}
+  updateSaveStatus(result);updateUnsavedFunctions();if(pin)renew();
+  return result;
+ }
+ async function changePhaseMqtt(){
+  const enabled=el('expert-phase-mqtt-enabled').checked;if(working)return;
+  if(!enabled){working=true;updatePhaseMqtt();try{await writePhaseMqtt(false);phaseMessage('Deaktiviert. Es werden keine neuen Schaltbefehle gesendet.');}catch(error){phaseMessage(error.message,true);}finally{working=false;updatePhaseMqtt();}return;}
+  if(!pin||!phaseAccess){updatePhaseMqtt();return;}
+  const type=el('expert-phase-mqtt-contactor').value;
+  const method=phaseOutputMethod();
+  if(!phaseMqttStopped()||!['false','true'].includes(type)||![0,1,2,3].includes(method)||!phaseOutputReady()){phaseMessage('Ladung stoppen und Schütztyp sowie Verbindung prüfen.',true);update();return;}
+  phaseMqttDraft={topic:el('expert-phase-mqtt-topic').value.trim()||((snapshot?.settings?.mqtt_prefix||'wallbox-ems')+'/output/single_phase'),true_three_phase:type==='true',
+   transport:method,host:el('expert-phase-output-host').value.trim(),switch_id:Number(el('expert-phase-output-channel').value||0),password:method===3?el('expert-phase-output-password').value:''};
+  el('phase-mqtt-confirm-topic').textContent=method===0?`Schalttopic: ${phaseMqttDraft.topic}`:
+   `${['MQTT','Shelly Modbus TCP','Shelly HTTP ohne Passwort','Shelly HTTP mit Passwort'][method]}: ${phaseMqttDraft.host} · Ausgang ${phaseMqttDraft.switch_id}`;
+  el('phase-mqtt-access-warning').textContent=method===0?'Schalttopic am Broker nur für TeeNet zum Schreiben freigeben. Andere Teilnehmer mit Schreibrechten könnten sonst das Schütz steuern.':
+   'Shelly-Zugriff im Heimnetz auf TeeNet beschränken. Andere Teilnehmer könnten sonst das Schütz steuern. Shelly-Timer, weitere Schaltwege und Automatiken deaktivieren.';
+  el('phase-mqtt-repeat-pin').value='';el('phase-mqtt-confirm-error').textContent='';phaseMqttStage=1;renderPhaseMqttStep();el('phase-mqtt-confirm-dialog').showModal();
+ }
+ function renderPhaseMqttStep(){
+  el('phase-mqtt-confirm-title').textContent=phaseMqttStage===3?'Freigabe bestätigen':`Warnung ${phaseMqttStage} von 2`;
+  el('phase-mqtt-warning-one').hidden=phaseMqttStage!==1;el('phase-mqtt-warning-two').hidden=phaseMqttStage!==2;
+  el('phase-mqtt-password-step').hidden=phaseMqttStage!==3;el('phase-mqtt-confirm-next').hidden=phaseMqttStage===3;
+  el('phase-mqtt-confirm-activate').hidden=phaseMqttStage!==3;
+ }
+ function nextPhaseMqttStep(){if(!pin||!phaseAccess||working||phaseMqttDraft===null||phaseMqttStage<1||phaseMqttStage>2)return;phaseMqttStage++;renderPhaseMqttStep();}
+ async function activatePhaseMqtt(){
+  if(!pin||!phaseAccess||working||phaseMqttDraft===null||phaseMqttStage!==3)return;
+  const repeat=el('phase-mqtt-repeat-pin').value;
+  if(!/^\d{4}$/.test(repeat)){el('phase-mqtt-confirm-error').textContent='Experten-Passwort erneut eingeben.';return;}
+  await run(async()=>{try{const result=await writePhaseMqtt(true,repeat);cancelPhaseMqtt();
+   phaseMessage(result.restart_needed?'Gespeichert. Neue Schnittstelle nach Neustart aktiv.':'Schützsteuerung freigegeben.');
+  }catch(error){el('phase-mqtt-confirm-error').textContent=error.message;throw error;}finally{el('phase-mqtt-repeat-pin').value='';}});
  }
  function makeRow(meta,input,extra={}){
   const node=document.createElement('div');node.className='expert-row';
@@ -860,30 +1202,170 @@ showPage();writes();poll();
   const id='expert-field-'+meta.key;input.id=id;input.setAttribute('aria-label',meta.label);input.removeAttribute('name');input.removeAttribute('data-secret');input.removeAttribute('data-write');input.removeAttribute('disabled');label.htmlFor=id;
   title.textContent=meta.label;note.textContent=meta.help;standard.className='expert-standard';standard.textContent=`Standard: ${readable(meta.standard,input)}${meta.unit?' '+meta.unit:''}`;
   label.append(title,note,standard);const reset=document.createElement('button');reset.type='button';reset.className='button expert-reset';reset.textContent='Standard';reset.setAttribute('aria-label',meta.label+' auf Standard setzen');
-  const row={...meta,...extra,input,node,reset};reset.addEventListener('click',()=>{if(!editAllowed()||working)return;if(row.boolean)input.checked=row.standard;else input.value=row.secret?'':row.numeric?String(Number((row.standard/row.scale).toFixed(4))):String(row.standard);input.dispatchEvent(new Event('input',{bubbles:true}));});
-  input.addEventListener('input',()=>{renew();update();});input.addEventListener('change',()=>{renew();update();});node.append(label,input,reset);return row;
+  const row={...meta,...extra,input,node,reset};reset.addEventListener('click',()=>{if(!(row.gpio?gpioEditable():editAllowed())||working)return;if(row.boolean)input.checked=row.standard;else input.value=row.secret?'':row.numeric?String(Number((row.standard/row.scale).toFixed(4))):String(row.standard);input.dispatchEvent(new Event('input',{bubbles:true}));});
+  input.addEventListener('input',()=>{renew();update();});input.addEventListener('change',()=>{renew();update();});input.addEventListener('keydown',event=>{if(event.key==='Enter'&&!row.gpio){event.preventDefault();save();}});node.append(label,input,reset);return row;
  }
+ function updateExpertCount(){el('expert-count').textContent=`${rows.length} Regelparameter${gpioRows.length?` · ${gpioRows.length} GPIO-Zuordnungen`:''}`;}
  function render(data){
-  snapshot=data;rows=[];el('expert-parameters').replaceChildren();
-  savedModified=data.parameters.some(meta=>!same(meta.value,meta.default));
+  const preservedGPIO=snapshot?.gpio;snapshot={...data,gpio:data.gpio||preservedGPIO};lastMarkerState=state;rows=[];el('expert-parameters').replaceChildren();
+  if(!phaseAccess)fillPhaseSettings(data);
+  savedModified=typeof state?.expert_parameters_modified==='boolean'?state.expert_parameters_modified:data.parameters.some(meta=>!same(meta.value,meta.default))||snapshot.gpio?.roles.some(meta=>!same(meta.value,meta.default));
   const groups=new Map();
   for(const raw of data.parameters){const meta=parameterMeta(raw);let group=groups.get(meta.group);if(!group){group=document.createElement('details');group.className='expert-section';const summary=document.createElement('summary');summary.textContent=meta.group;group.append(summary);groups.set(meta.group,group);el('expert-parameters').append(group);}const input=document.createElement('input');input.type='number';input.min=meta.min;input.max=meta.max;input.step=meta.step;input.value=meta.value;
    const row=makeRow({key:meta.id,label:meta.label,help:meta.help,unit:meta.unit,standard:meta.default,saved:meta.value,min:meta.min,max:meta.max,numeric:true,scale:1},input);rows.push(row);group.append(row.node);
    if(!same(meta.active,meta.value)){const note=document.createElement('small');note.textContent=`Bis zum Neustart aktiv: ${meta.active} ${meta.unit}`;row.node.querySelector('label').append(note);}
   }
   const shellGroup=groups.get('Regelverhalten zur Shell');if(shellGroup){const chart=document.createElement('div');chart.id='expert-shell-curve';chart.className='expert-shell-curve';shellGroup.querySelector('summary').after(chart);}
-  el('expert-count').textContent=`${rows.length} Regelparameter`;el('expert-content').hidden=false;el('expert-lock').hidden=true;renew();update();
+  renderGPIO(snapshot);updateExpertCount();el('expert-content').hidden=false;el('expert-lock').hidden=true;renew();update();
  }
  async function run(work){if(working)return;working=true;update();try{await work();}catch(error){message(error.message,true);}finally{working=false;update();}}
- el('expert-unlock').addEventListener('click',()=>run(async()=>{const candidate=el('expert-pin').value;const data=await api('/api/expert',{pin:candidate,action:'read'});pin=candidate;el('expert-pin').value='';render(data);message('Expertenbereich entsperrt.');}));
+ el('expert-unlock').addEventListener('click',()=>run(async()=>{const candidate=el('expert-pin').value;const data=await loadExpertParameters(candidate);pin=candidate;el('expert-pin').value='';render(data);message('Expertenbereich entsperrt.');}));
  el('expert-pin').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();el('expert-unlock').click();}});
- el('expert-lock-button').addEventListener('click',()=>{if(rows.some(changed)&&!confirm('Ungespeicherte Expertenänderungen verwerfen?'))return;lock();});
+ el('expert-lock-button').addEventListener('click',()=>{if([...rows,...gpioRows].some(changed)&&!confirm('Ungespeicherte Expertenänderungen verwerfen?'))return;lock();});
  el('expert-defaults').addEventListener('click',()=>{if(!editAllowed()||working||!confirm('Alle Regelparameter auf Standard setzen? Erst Speichern übernimmt die Änderungen.'))return;for(const row of rows)row.input.value=row.standard;update();renew();});
  async function save(){if(!pin)return;if(!editAllowed()){update();message('Parameter gesperrt. Ladung zuerst stoppen.',true);return;}updateUnsavedFunctions();if(el('functions-unsaved').dataset.kind==='unsaved'&&!el('functions-unsaved').hidden){message('Bitte zuerst die Änderungen in den normalen Einstellungskacheln speichern.',true);return;}const updates={};for(const row of rows){if(!row.input.checkValidity()){row.input.reportValidity();return;}if(changed(row))updates[row.key]=value(row);}if(!Object.keys(updates).length)return;
-  await run(async()=>{const result=await api('/api/expert',{pin,action:'save',values:updates});const data=await api('/api/expert',{pin,action:'read'});render(data);updateSaveStatus(result);updateUnsavedFunctions();message(result.restart_needed?'Gespeichert. Nach einem Neustart wirksam.':'Einstellungen übernommen.');});
+  await run(async()=>{const result=await api('/api/expert',{pin,action:'save',values:updates});const data=await loadExpertParameters(pin);render(data);updateSaveStatus(result);updateUnsavedFunctions();message(result.restart_needed?'Gespeichert. Nach einem Neustart wirksam.':'Einstellungen übernommen.');});
  }
  el('expert-save').addEventListener('click',save);
+ el('expert-unsaved-save').addEventListener('click',save);
  el('expert-stop').addEventListener('click',stopExpertCharging);
+ el('phase-feedback-choice').addEventListener('change',e=>{e.stopPropagation();selectFeedback();});
+ el('phase-no-feedback-unlock-open').addEventListener('click',openPhaseAccess);
+ el('phase-no-feedback-unlock-confirm').addEventListener('click',unlockPhaseAccess);
+ el('phase-no-feedback-unlock-cancel').addEventListener('click',cancelPhaseAccess);
+ el('phase-no-feedback-unlock-dialog').addEventListener('cancel',cancelPhaseAccess);
+ el('phase-no-feedback-pin').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();unlockPhaseAccess();}});
+ el('expert-phase-mqtt').addEventListener('input',e=>e.stopPropagation());el('expert-phase-mqtt').addEventListener('change',e=>e.stopPropagation());
+
+ el('expert-phase-mqtt-enabled')?.addEventListener('change',changePhaseMqtt);
+ el('expert-phase-mqtt-contactor').addEventListener('change',()=>{renew();updatePhaseMqtt();});
+ for(const id of ['expert-phase-output-transport','expert-phase-output-host','expert-phase-output-channel','expert-phase-output-password'])el(id).addEventListener('input',()=>{renew();updatePhaseMqtt();});
+ el('phase-mqtt-confirm-next').addEventListener('click',nextPhaseMqttStep);
+ el('phase-mqtt-confirm-activate').addEventListener('click',activatePhaseMqtt);
+ el('phase-mqtt-confirm-cancel').addEventListener('click',cancelPhaseMqtt);
+ el('phase-mqtt-confirm-dialog').addEventListener('cancel',cancelPhaseMqtt);
+ el('phase-mqtt-repeat-pin').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();activatePhaseMqtt();}});
  el('expert-settings').addEventListener('input',e=>e.stopPropagation());el('expert-settings').addEventListener('change',e=>e.stopPropagation());
+/* Inside the password-protected expert UI. No pin is applied before reboot. */
+let gpioRows=[];
+function gpioEditable(){return !state?.phase_test_active&&!!pin&&!working&&online&&initialized&&!busy&&!uploading&&!configSaving&&!chargingActive()&&state?.gpio_setup_allowed===true;}
+function gpioUsed(row){
+ const c=configBaseline||snapshot?.settings||{},id=row.key;
+ if(id.startsWith('wallbox_'))return Number(c.shell_rs485_interface||0)===0;
+ if(id.startsWith('xemex_'))return Number(c.meter_rs485_interface||0)===0&&!['shelly_gen2','shelly_em1','em24_tcp'].includes(c.wallbox_meter_type);
+ if(id.startsWith('house_'))return Number(c.house_rs485_interface||0)===0&&['xemex','sdm630','sdm630mct'].includes(c.house_meter_type);
+ if(id==='external_mode_input_pin')return !!c.external_mode_input_enabled;
+ if(id==='evu_input_pin')return !!c.evu_input_enabled;
+ if(id==='relay1_pin')return !!c.relay_board_enabled&&Number(c.phase_actuator_type||0)===0;
+ if(id.startsWith('phase_feedback'))return !!c.phase_switch_enabled&&Number(c.phase_actuator_type||0)===0&&(id==='phase_feedback_pin'||Number(c.phase_feedback_count)===2);
+ return value(row)!==-1;
+}
+function renderGPIO(data){
+ gpioRows=[];el('expert-gpio-roles')?.replaceChildren();
+ if(!data.gpio)return;
+ el('expert-gpio-board').textContent=data.gpio.board;
+ for(const meta of data.gpio.roles){
+  const input=document.createElement('select'),pins=data.gpio.pins.filter(p=>meta.led?p.led_allowed:!p.reason);
+  if(meta.led)pins.unshift({pin:-1});
+  for(const p of pins){const option=document.createElement('option');option.value=String(p.pin);option.textContent=p.pin===-1?'Aus':`GPIO ${p.pin}`;input.append(option);}
+  input.value=String(meta.value);input.setAttribute('form','expert-gpio-form');
+  const row=makeRow({key:meta.id,label:meta.label,help:meta.help,standard:meta.default,saved:meta.value,numeric:true,scale:1,gpio:true,led:meta.led},input);
+  gpioRows.push(row);el('expert-gpio-roles').append(row.node);
+ }
+ updateGPIO();
+}
+function updateGPIO(){
+ if(!gpioRows.length)return;
+ const editable=gpioEditable(),occupied=new Map();
+ for(const row of gpioRows)if(gpioUsed(row)&&value(row)!==-1){const pin=value(row);occupied.set(pin,[...(occupied.get(pin)||[]),row.label]);}
+ let conflicts=0;
+ for(const row of gpioRows){
+  row.input.disabled=row.reset.disabled=!editable;
+  const modified=!same(value(row),row.standard),invalid=gpioUsed(row)&&value(row)!==-1&&(occupied.get(value(row))||[]).length>1;
+  conflicts+=Number(invalid);row.input.setCustomValidity(invalid?'GPIO ist mehrfach belegt. Eine andere freie Belegung wählen.':'');
+  row.node.classList.toggle('is-modified',modified);row.node.classList.toggle('is-unsaved',changed(row));row.node.classList.toggle('gpio-conflict',invalid);
+  for(const option of Array.from(row.input.options)){
+   const pin=Number(option.value),others=(occupied.get(pin)||[]).filter(label=>label!==row.label);
+   option.textContent=pin===-1?'Aus':`GPIO ${pin}${others.length?' · belegt: '+others.join(', '):pin===row.standard?' · Standard':''}`;
+  }
+ }
+ const dirty=gpioRows.filter(changed).length;
+ el('expert-gpio-note').textContent=conflicts?'Doppelte GPIO-Belegung aktiver Funktionen korrigieren.':dirty?`${dirty} GPIO-Änderung${dirty===1?'':'en'} noch nicht gespeichert.`:editable?'Keine ungespeicherten GPIO-Änderungen.':'GPIOs können nur bei gestoppter Ladung geändert werden.';
+ el('expert-gpio-note').parentElement.classList.toggle('has-edits',!!dirty);
+ el('expert-gpio-save').disabled=!editable||!dirty||!!conflicts;el('expert-gpio-defaults').disabled=!editable;
+ const inventory=el('expert-gpio-inventory');inventory.replaceChildren();
+ for(const p of snapshot.gpio.pins){
+  const roles=gpioRows.filter(row=>value(row)===p.pin),line=document.createElement('div');line.className='gpio-pin-line';
+  line.classList.toggle('is-modified',roles.some(row=>value(row)!==row.standard));
+  const number=document.createElement('b'),usage=document.createElement('span');number.textContent=`GPIO ${p.pin}`;
+  usage.textContent=roles.map(row=>`${row.label}${gpioUsed(row)?'':' · Funktion aus'}`).join(' / ')||p.reason||'Frei';
+  line.append(number,usage);inventory.append(line);
+ }
+}
+async function saveGPIO(){
+ if(!gpioEditable()){message('GPIOs nur bei gestoppter Ladung ändern.',true);return;}
+ updateUnsavedFunctions();if(el('functions-unsaved').dataset.kind==='unsaved'&&!el('functions-unsaved').hidden){message('Bitte zuerst Änderungen in den normalen Einstellungen speichern.',true);return;}
+ const values={};for(const row of gpioRows){if(!row.input.checkValidity()){row.input.reportValidity();return;}if(changed(row))values[row.key]=value(row);}
+ if(!Object.keys(values).length)return;
+ await run(async()=>{const result=await api('/api/expert',{pin,action:'gpio',values});await loadConfig();await pollStatus();snapshot.gpio=await loadExpertGPIO(pin);renderGPIO(snapshot);updateExpertCount();updateSaveStatus(result);updateUnsavedFunctions();message('GPIO-Belegung gespeichert. Nach dem Neustart wirksam.');});
+}
+async function ensureExpertGPIO(){
+ if(!el('expert-gpio-section').open||!pin||snapshot?.gpio||working)return;
+ await run(async()=>{snapshot.gpio=await loadExpertGPIO(pin);renderGPIO(snapshot);updateExpertCount();message('GPIO-Belegung geladen.');});
+}
+el('expert-gpio-save')?.addEventListener('click',saveGPIO);
+el('expert-gpio-defaults')?.addEventListener('click',()=>{if(!gpioEditable()||!confirm('Standardbelegung einsetzen? Erst Speichern übernimmt die Änderung.'))return;for(const row of gpioRows)row.input.value=String(row.standard);update();renew();});
+el('expert-gpio-section')?.addEventListener('toggle',ensureExpertGPIO);
+
+
  window.teenetExpert={updateWrites:update};update();
 })();
+/* Only explicit local hardware tests; every movement asks for warning/PIN. */
+(() => {
+ let goal=0,requesting=false;
+ function unsaved(){return !$('functions-unsaved').hidden&&$('functions-unsaved').dataset.kind==='unsaved';}
+ function blocked(){
+  if(!online)return 'ESP nicht erreichbar.';
+  if(unsaved())return 'Zuerst die geänderten Einstellungen speichern.';
+  if(state?.reboot_required)return 'Einstellungen gespeichert. Zuerst neu starten.';
+  return state?.phase_test_ready?'':state?.phase_test_block||'Ladung stoppen und aktuelle Strommessung sowie Schützverbindung prüfen.';
+ }
+ function update(){
+  const s=state,active=!!s?.phase_test_active;
+  for(const id of ['phase-test-single','phase-test-three'])$(id).disabled=requesting||busy||!online||!initialized||active;
+  $('phase-test-stop').hidden=!active;
+  $('phase-test-stop').disabled=requesting||busy||!online;
+  const reason=blocked();
+  $('phase-test-status').textContent=active?`Test: ${s.phase_test_goal===1?'einphasig':'dreiphasig'} · Ladung bleibt gestoppt.`:reason||'Bereit · vor dem Schalten Warnung und Passwort bestätigen.';
+  $('phase-test-block').hidden=!reason;
+  $('phase-test-block').textContent=reason?`Test noch gesperrt: ${reason}`:'';
+  $('phase-test-confirm').disabled=requesting||busy||!!reason||!goal;
+ }
+ function open(phases){
+  if(state?.phase_test_active||busy||!online||!initialized||requesting)return;
+  goal=phases;$('phase-test-pin').value='';$('phase-test-error').textContent='';
+  $('phase-test-confirm-text').textContent=`${phases===1?'Einphasig':'Dreiphasig'} testen: Das angeschlossene Schütz wird dafür angesteuert.`;
+  update();
+  $('phase-test-dialog').showModal();
+ }
+ function close(){goal=0;$('phase-test-pin').value='';$('phase-test-dialog').close();}
+ $('phase-test-single').addEventListener('click',()=>open(1));
+ $('phase-test-three').addEventListener('click',()=>open(3));
+ $('phase-test-cancel').addEventListener('click',close);
+ $('phase-test-dialog').addEventListener('cancel',()=>{goal=0;$('phase-test-pin').value='';});
+ $('phase-test-confirm').addEventListener('click',async()=>{
+  if(requesting||!goal)return;
+  if(blocked()){$('phase-test-error').textContent=blocked();return;}
+  requesting=true;update();$('phase-test-confirm').disabled=true;
+  try{await api('/api/phase-test',{phases:goal,pin:$('phase-test-pin').value,confirm_risk:true});close();await pollStatus();toast('Schütztest angefordert. Ladung bleibt gestoppt.');}
+  catch(error){$('phase-test-error').textContent=error.message;}
+  finally{$('phase-test-pin').value='';requesting=false;$('phase-test-confirm').disabled=false;update();}
+ });
+ $('phase-test-stop').addEventListener('click',()=>action(async()=>{await api('/api/phase-test',{stop:true});await pollStatus();toast('Schütztest beendet. Ladung bleibt gestoppt.');}));
+ window.teenetPhaseTest={update,close};update();
+})();
+
+
+
+
+

@@ -5,7 +5,7 @@ Quellcode für Shell Recharge Advanced 3.0 mit zwei Hardwareprofilen:
 - **ESP32-S3 N16R8:** 16 MB Flash, Shell TX17/RX18, Zähler TX4/RX5.
 - **Andreas Testboard · AtomS3 Lite:** 8 MB Flash, Shell TX6/RX5, Zähler TX1/RX2, Betriebsartkontakt optional auf GPIO1.
 
-Standard-Build: `277d15efb407`.
+Standard-Build: `fd454a1e8488`.
 
 ## Bauen
 
