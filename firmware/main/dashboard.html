@@ -183,11 +183,12 @@
 
 <details class="panel settings-group" id="relay-settings"><summary>Phasenumschaltung</summary>
 <label hidden><input name="phase_switch_enabled" type="checkbox" hidden>Phasenumschaltung aktiv</label>
-<label id="phase-actuator-label">Schütz ansteuern über<select name="phase_actuator_type" data-number><option value="0">Relaisboard am ESP</option><option value="1">Shelly · HTTP</option><option value="3">Shelly 1 Gen4 · Modbus TCP</option><option value="2" disabled hidden>Ohne Rückmeldung · geschützt</option></select></label>
+<label id="phase-actuator-label">Schütz ansteuern über<select name="phase_actuator_type" data-number><option value="0">Relaisboard am ESP</option><option value="1">Shelly</option><option value="3" hidden>Shelly</option><option value="2" disabled hidden>Ohne Rückmeldung · geschützt</option></select></label>
 <p id="phase-choice-note" class="footnote" role="status" hidden></p>
 <input name="relay1_mode" type="hidden" value="3" data-number>
 <div class="phase-option" id="phase-settings"><label hidden><input name="phase_feedback_enabled" type="checkbox" checked hidden>Rückmeldung ist immer aktiv</label>
-<div id="phase-shelly-settings" hidden><section class="phase-component"><h4>Shelly · Schaltaktor für das Schütz</h4><p class="footnote">Der Shelly betätigt das Schütz und liest dessen Hilfskontakte.</p><label>Shelly-Modell<select name="phase_shelly_model" data-number><option value="0">Shelly Pro 1 · Hardware noch nicht getestet</option><option value="1">Shelly Pro 2 · Hardware noch nicht getestet</option><option value="2">Shelly Plus 1 · Hardware noch nicht getestet</option><option value="3">Shelly 1 Gen3 · Hardware noch nicht getestet</option><option value="4">Shelly 1 Gen4 · Hardware noch nicht getestet</option></select></label>
+<div id="phase-shelly-settings" hidden><section class="phase-component"><h4>Shelly · Schaltaktor für das Schütz</h4><p class="footnote">Der Shelly betätigt das Schütz und liest dessen Hilfskontakte.</p><label>Shelly-Modell<select name="phase_shelly_model" data-number><option value="0">Shelly Pro 1 · HTTP</option><option value="1">Shelly Pro 2 · HTTP</option><option value="2">Shelly Plus 1 · HTTP</option><option value="3">Shelly 1 Gen3 · HTTP</option><option value="4">Shelly 1 Gen4 · HTTP oder Modbus TCP</option></select></label>
+<label>Verbindung zum Shelly<select id="phase-shelly-connection"><option value="1">HTTP</option><option value="3">Modbus TCP · nur Shelly 1 Gen4</option></select></label>
 <button id="phase-shelly-scan" type="button" class="button" data-write>Shelly suchen</button>
 <p id="phase-shelly-scan-status" class="footnote" role="status"></p><select id="phase-shelly-found" aria-label="Gefundene Shelly-Schaltgeräte" hidden></select>
 <label>Shelly-Adresse<input name="phase_shelly_host" maxlength="63" placeholder="IP-Adresse oder Gerätename"></label>

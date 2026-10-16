@@ -855,16 +855,18 @@ showPage();writes();poll();
 /* Separate Shelly actuator setup; meter searches keep their own results. */
 (() => {
  let scanning=false,devices=[],pollTimer,lastBaseline;
- const f=$('config-form').elements,select=$('phase-shelly-found'),note=$('phase-shelly-scan-status'),feedback=$('phase-feedback-choice');
+ const f=$('config-form').elements,select=$('phase-shelly-found'),note=$('phase-shelly-scan-status'),feedback=$('phase-feedback-choice'),connection=$('phase-shelly-connection');
  function update(){
   const kind=Number(f.phase_actuator_type.value),remote=kind===1||kind===3,mqtt=kind===2;
   const baseline=typeof configBaseline==='undefined'?null:configBaseline;
-  if(baseline&&baseline!==lastBaseline){$('phase-shelly-auth').value=baseline.phase_shelly_password_set?'1':'0';feedback.value=f.phase_feedback_count.value==='2'?'2':f.phase_feedback_closed_is_single.value==='true'?'1-single':'1';$('phase-choice-note').hidden=true;$('phase-choice-note').textContent='';lastBaseline=baseline;}
+  if(baseline&&baseline!==lastBaseline){$('phase-shelly-auth').value=baseline.phase_shelly_password_set?'1':'0';connection.value=Number(baseline.phase_actuator_type)===3?'3':'1';feedback.value=f.phase_feedback_count.value==='2'?'2':f.phase_feedback_closed_is_single.value==='true'?'1-single':'1';$('phase-choice-note').hidden=true;$('phase-choice-note').textContent='';lastBaseline=baseline;}
+  if(!connection.value)connection.value=kind===3?'3':'1';
   if(!feedback.value)feedback.value='1';
   const none=mqtt;
 
   for(const option of Array.from(f.phase_shelly_model.options||[]))option.disabled=false;
-  for(const option of Array.from(f.phase_actuator_type.options||[]))if(option.value==='3')option.disabled=false;
+  const modbusOption=Array.from(connection.options||[]).find(option=>option.value==='3');
+  if(modbusOption)modbusOption.disabled=f.phase_shelly_model.value!=='4';
   const inputs=Number(f.phase_shelly_model.value)<2?2:1;
 
   for(const option of Array.from(feedback.options||[]))option.disabled=remote&&((option.value==='2'&&inputs===1)||(option.value!=='2'&&f.phase_shelly_pulse.value==='true'));
@@ -880,10 +882,10 @@ showPage();writes();poll();
   /* Previewing the protected option must not dirty ordinary saved settings. */
   f.phase_feedback_enabled.checked=!mqtt;f.relay1_mode.value=f.phase_switch_enabled.checked?'3':'0';
   const password=$('phase-shelly-auth').value==='1';
-  $('phase-shelly-auth-settings').hidden=false;
+  $('phase-shelly-auth-settings').hidden=kind===3;
   $('phase-shelly-password-label').hidden=!password;
-  f.phase_shelly_password.disabled=!password;
-  f.phase_shelly_password.required=remote&&!none&&f.phase_switch_enabled.checked&&password&&!baseline?.phase_shelly_password_set;
+  f.phase_shelly_password.disabled=kind===3||!password;
+  f.phase_shelly_password.required=kind===1&&!none&&f.phase_switch_enabled.checked&&password&&!baseline?.phase_shelly_password_set;
   $('phase-shelly-polarity').hidden=f.phase_shelly_pulse.value==='true';
   const pulseNote=$('phase-pulse-support');
   pulseNote.hidden=!remote||none;
@@ -965,8 +967,10 @@ showPage();writes();poll();
  function normalizeChoice(event){
   let kind=Number(f.phase_actuator_type.value),remote=kind===1||kind===3;
   const notice=$('phase-choice-note');notice.textContent='';notice.hidden=true;
-  if(event?.target?.name==='phase_actuator_type'&&kind===3){f.phase_shelly_model.value='4';notice.textContent='Shelly 1 Gen4 gewählt: Ein/Aus mit einem Rückmeldekontakt.';}
-  if(kind===3&&f.phase_shelly_model.value!=='4'){f.phase_actuator_type.value='1';kind=1;notice.textContent='Für dieses Modell wurde HTTP gewählt.';}
+  if(event?.target===connection){kind=Number(connection.value);f.phase_actuator_type.value=String(kind);remote=kind===1||kind===3;}
+  if((event?.target===connection||event?.target?.name==='phase_actuator_type')&&kind===3){f.phase_shelly_model.value='4';notice.textContent='Modbus TCP gewählt: Shelly 1 Gen4 mit einem Rückmeldekontakt.';}
+  if(kind===3&&f.phase_shelly_model.value!=='4'){f.phase_actuator_type.value='1';connection.value='1';kind=1;notice.textContent='Dieses Modell unterstützt hier HTTP. Die Verbindung wurde auf HTTP gesetzt.';}
+  else connection.value=kind===3?'3':'1';
   if(remote&&(kind===3||Number(f.phase_shelly_model.value)>=2))f.phase_shelly_pulse.value='false';
   if(remote&&Number(f.phase_shelly_model.value)>=2)f.phase_feedback_count.value='1';
   if(remote&&f.phase_shelly_pulse.value==='true')f.phase_feedback_count.value='2';
@@ -975,6 +979,7 @@ showPage();writes();poll();
   notice.hidden=!notice.textContent;
  }
  for(const name of ['phase_actuator_type','phase_shelly_model','phase_shelly_pulse'])f[name].addEventListener('change',normalizeChoice);
+ connection.addEventListener('change',event=>{normalizeChoice(event);f.phase_actuator_type.dispatchEvent(new Event('change',{bubbles:true}));});
  $('phase-shelly-auth').addEventListener('change',update);
  window.teenetShellyPhase={update,updateLive};update();
 })();
@@ -1077,7 +1082,7 @@ showPage();writes();poll();
  }
  function cancelPhaseAccess(){
   el('phase-no-feedback-pin').value='';if(el('phase-no-feedback-unlock-dialog').open)el('phase-no-feedback-unlock-dialog').close();
-  
+
  }
  async function unlockPhaseAccess(){
   if(working||busy||!online)return;
