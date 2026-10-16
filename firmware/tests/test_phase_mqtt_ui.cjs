@@ -3,7 +3,7 @@ const src=fs.readFileSync('tools/expert_ui.js','utf8'),nodes={};
 const el=id=>nodes[id]??={checked:false,disabled:false,textContent:'',value:'',open:false,closest(){return this.label??={hidden:false};},showModal(){this.open=true;},close(){this.open=false;},classList:{toggle(){}}};
 let prompts=[],requests=[],allowed=false,trueThree=false,savedMethod=0,savedHost='',savedChannel=0,savedPassword='';
 const state={enabled:false,reboot_required:false,meter_ok:true,actual_a:[0,0,0],phase_mqtt_allowed:false};
-const c={el,state,lastMarkerState:state,configBaseline:{},window:{teenetShellyPhase:{update(){}}},Event:function(){},chargingActive:()=>state.enabled||!!state.actual_a?.some(a=>a>=1),snapshot:{phase_mqtt_allowed:false,phase_mqtt_ready:true,settings:{mqtt_prefix:'my-teenet'}},pin:'4040',working:false,online:true,initialized:true,busy:false,uploading:false,configSaving:false,savedModified:false,
+const c={el,state,lastMarkerState:state,configBaseline:{mqtt_enabled:true},window:{teenetShellyPhase:{update(){}}},Event:function(){},chargingActive:()=>state.enabled||!!state.actual_a?.some(a=>a>=1),snapshot:{phase_mqtt_allowed:false,phase_mqtt_ready:true,settings:{mqtt_enabled:true,mqtt_prefix:'my-teenet'}},pin:'4040',working:false,online:true,initialized:true,busy:false,uploading:false,configSaving:false,savedModified:false,
  confirm:()=>prompts.shift(),same:(a,b)=>a===b,renew(){},message(){},updateSaveStatus(){},updateUnsavedFunctions(){},loadConfig:async()=>{},pollStatus:async()=>{},
  api:async(path,body)=>{requests.push(body);assert.equal(path,'/api/expert');if(body.action==='mqtt_phase_output'){allowed=body.enabled;if(body.enabled){trueThree=body.true_three_phase;savedMethod=body.transport;savedHost=body.host;savedChannel=body.switch_id;savedPassword=body.transport===3?body.password||savedPassword:'';}state.phase_mqtt_allowed=allowed;return {ok:true};}if(body.pin!=='4040')throw Error('Passwort falsch');if(body.action==='authorize')return {ok:true};return {parameters:[],phase_mqtt_allowed:allowed,phase_mqtt_ready:true,settings:{mqtt_prefix:'my-teenet',phase_mqtt_true_three_phase:trueThree,phase_output_transport:savedMethod,phase_output_host:savedHost,phase_output_switch_id:savedChannel,phase_output_password_set:!!savedPassword},phase_output_base_ready:true,phase_output_mqtt_ready:savedMethod===0};},run:async work=>work()};
 el('config-form').elements={phase_actuator_type:{value:'0'},phase_feedback_count:{value:'1',dispatchEvent(){}},phase_feedback_closed_is_single:{value:'false'},phase_feedback_enabled:{checked:true}};c.update=()=>c.updatePhaseMqtt();vm.createContext(c);vm.runInContext(src.slice(src.indexOf(' let phaseMqttDraft='),src.indexOf(' function makeRow(')),c);
@@ -21,6 +21,10 @@ el('config-form').elements={phase_actuator_type:{value:'0'},phase_feedback_count
  assert.match(el('expert-phase-output-message').textContent,/Ansteuerung einrichten/);
  assert.equal(el('phase-setup-message').textContent,'','Expert messages stay in the expert card');
  assert(!requests.some(r=>r.enabled===true),'Unlocking only opens setup, never activates');requests=[];
+ state.reboot_required=true;state.phase_output_setup_allowed=true;state.phase_output_mqtt_ready=false;c.update();
+ assert(!el('expert-phase-mqtt-enabled').disabled,'An existing pending restart must not block saving the protected setup');
+ assert.match(el('expert-phase-mqtt-status').textContent,/verbindet sich nach dem Neustart/);
+ state.reboot_required=false;delete state.phase_output_setup_allowed;delete state.phase_output_mqtt_ready;
  el('expert-phase-mqtt-contactor').value='false';c.update();el('expert-phase-mqtt-topic').value='my-teenet/output/single_phase';
  el('expert-phase-mqtt-enabled').checked=true;await c.changePhaseMqtt();assert(el('phase-mqtt-confirm-dialog').open);assert(!el('phase-mqtt-warning-one').hidden);
  el('phase-mqtt-repeat-pin').value='4040';await c.activatePhaseMqtt();assert.equal(requests.length,0,'Password cannot bypass warning stages');
@@ -56,6 +60,7 @@ el('config-form').elements={phase_actuator_type:{value:'0'},phase_feedback_count
   assert.equal(requests[0].transport,method);assert.equal(requests[0].host,'192.168.1.88','Endpoint frozen at warning');assert.equal(requests[0].switch_id,0);
   if(method===3)assert.equal(requests[0].password,'synthetic-secret');else assert(!('password' in requests[0]));assert(!('phase_shelly_password' in requests[0]));assert.equal(el('expert-phase-output-transport').value,String(method));
  }
+ el('expert-phase-mqtt-enabled').checked=false;await c.changePhaseMqtt();
  c.snapshot.phase_mqtt_allowed=false;state.phase_mqtt_allowed=false;state.phase_output_meter_ready=false;state.wallbox_meter_type='xemex';state.xemex_coils=1;c.update();assert(el('expert-phase-mqtt-enabled').disabled);assert.equal(el('expert-phase-mqtt-status').textContent,'Xemex: mindestens L1 und L2 messen.');
 state.phase_output_meter_ready=state.phase_output_base_ready=true;state.phase_output_measured_phases=state.xemex_coils=2;c.update();assert(!el('expert-phase-mqtt-enabled').disabled);assert.match(el('expert-phase-mqtt-status').textContent,/L3 wird geschätzt/);
  state.phase_output_meter_ready=true;c.snapshot.phase_mqtt_allowed=true;state.phase_mqtt_allowed=true;

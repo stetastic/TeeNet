@@ -22,15 +22,16 @@ static esp_err_t phase_mqtt_post(httpd_req_t *req,cJSON *o){
         for(cJSON *j=i->next;j;j=j->next)if(!strcmp(i->string,j->string))valid=false;
     if(!valid){cJSON_Delete(o);return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,
         "Warnungen bestaetigen und Experten-Passwort erneut eingeben. Schnittstelle, Adresse und Schuetztyp pruefen.");}
+    bool restart_needed=false;
     esp_err_t err=save_phase_mqtt_permission(enabled,enabled&&cJSON_IsString(topic)?topic->valuestring:NULL,
         cJSON_IsTrue(polarity),(uint8_t)transport,enabled&&cJSON_IsString(host)?host->valuestring:NULL,(uint8_t)switch_id,
-        enabled&&cJSON_IsString(password)?password->valuestring:NULL);cJSON_Delete(o);
+        enabled&&cJSON_IsString(password)?password->valuestring:NULL,&restart_needed);cJSON_Delete(o);
     if(err==ESP_ERR_INVALID_STATE){httpd_resp_set_status(req,"409 Conflict");return httpd_resp_sendstr(req,
         "Ladung stoppen und ausstehenden Neustart durchfuehren. Zaehlertyp fuer mindestens L1/L2 und Schuetzverbindung pruefen. Bekannte Messwerte muessen frisch und unter 1 A sein.");}
     if(err!=ESP_OK){httpd_resp_set_status(req,"500 Internal Server Error");return httpd_resp_sendstr(req,
         "Freigabe nicht gespeichert. Abwahl sperrt weitere Ausgaben sofort; einen bereits begonnenen Versand kann sie nicht zurueckrufen. Speichern erneut versuchen.");}
     cJSON *result=cJSON_CreateObject();cJSON_AddBoolToObject(result,"ok",true);
     LOCK();bool pending=restart_pending();UNLOCK();
-    cJSON_AddBoolToObject(result,"reboot_required",pending);cJSON_AddBoolToObject(result,"restart_needed",pending);
+    cJSON_AddBoolToObject(result,"reboot_required",pending);cJSON_AddBoolToObject(result,"restart_needed",restart_needed);
     return send_json(req,result);
 }

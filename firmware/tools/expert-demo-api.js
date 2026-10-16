@@ -7,7 +7,7 @@
  const json=(v,status=200)=>new Response(JSON.stringify(v),{status,headers:{'Content-Type':'application/json'}});
  const plain=(v,status)=>new Response(v,{status});
  const schemaPromise=previous('/expert-schema.json').then(r=>r.json());
- const outputBoot=(async()=>{if(outputSetup){await previous('/api/control',{method:'POST',body:JSON.stringify({enabled:false,mode:'off'})});await previous('/api/config',{method:'POST',body:JSON.stringify(outputSetup.config)});await previous('/api/reboot',{method:'POST',body:'{}'});}})();
+ const outputBoot=(async()=>{if(outputSetup?.enabled){await previous('/api/control',{method:'POST',body:JSON.stringify({enabled:false,mode:'off'})});await previous('/api/config',{method:'POST',body:JSON.stringify(outputSetup.config)});await previous('/api/reboot',{method:'POST',body:'{}'});}})();
 let gpioValues={},gpioActive={};
 try{gpioValues=JSON.parse(localStorage.getItem(storage+'-gpio')||'{}');gpioActive=JSON.parse(localStorage.getItem(storage+'-gpio-active')||'{}');}catch(e){}
 const gpioConfig=(schema,cfg)=>({...schema.defaults,...cfg,...gpioValues});
@@ -136,15 +136,20 @@ function gpioRemember(schema,cfg,next){
     const endpoint=Number.isInteger(method)&&method>=0&&method<=3&&Number.isInteger(id)&&[0,100].includes(id)&&(method===0?topicValid(body.topic,cfg):hostValid(body.host))&&(body.password===undefined||typeof body.password==='string'&&body.password.length<=64)&&(method!==3||!!(suppliedPassword||storedPassword));
     if(typeof body.enabled!=='boolean'||(body.enabled&&(body.confirm_risk!==true||body.confirm_no_feedback!==true||body.repeat_pin!=='4040'||!endpoint||typeof body.true_three_phase!=='boolean')))return plain('Warnungen bestaetigen und Experten-Passwort erneut eingeben. Schalttopic und Schuetztyp pruefen.',400);
     if(body.enabled&&phaseMqttAllowed&&(body.true_three_phase!==trueThree()||method!==(outputSetup?.transport||0)||id!==(outputSetup?.switch_id||0)||(method>0&&body.host!==outputSetup?.host)||(method===3&&suppliedPassword&&suppliedPassword!==outputSetup?.password)))return plain('Vor Aenderung des Schuetztyps die MQTT-Freigabe ausschalten.',409);
-    if(body.enabled&&(status.enabled||status.evcc_enabled||status.phase_switching||!status.meter_ok||(status.actual_a||[]).length!==3||(status.actual_a||[]).some(a=>typeof a!=='number'||!Number.isFinite(a)||a<0||a>=1)||!phaseSupported(cfg,method)||status.reboot_required))return plain('Ladung stoppen. MQTT, mindestens L1/L2 gemessen und kein ausstehender Neustart erforderlich.',409);
-    if(!body.enabled){phaseMqttAllowed=false;await previous('/api/control',{method:'POST',body:JSON.stringify({enabled:false,mode:'off'})});if(outputSetup)outputSetup.enabled=false;}
+    if(body.enabled&&(status.enabled||status.evcc_enabled||status.phase_switching||!status.meter_ok||(status.actual_a||[]).length!==3||(status.actual_a||[]).some(a=>typeof a!=='number'||!Number.isFinite(a)||a<0||a>=1)||!phaseSupported(cfg,method)))return plain('Ladung stoppen sowie MQTT-Konfiguration und mindestens L1/L2 prüfen.',409);
+    let activationRestartNeeded=false;
+    if(!body.enabled){phaseMqttAllowed=false;await previous('/api/control',{method:'POST',body:JSON.stringify({enabled:false,mode:'off'})});
+     const response=await previous('/api/config',{method:'POST',body:JSON.stringify({phase_actuator_type:0,phase_feedback_enabled:true})});
+     if(response.ok){const result=await response.clone().json();activationRestartNeeded=!!result.restart_needed;}if(outputSetup)outputSetup.enabled=false;}
     else{
+     const pendingBefore=!!status.reboot_required;
      const config={basic_mode:false,phase_actuator_type:2,relay_board_enabled:true,phase_switch_enabled:true,relay1_mode:3,phase_feedback_enabled:false,mqtt_enabled:cfg.mqtt_enabled,wallbox_meter_type:cfg.wallbox_meter_type,xemex_coils:cfg.xemex_coils};
      const response=await previous('/api/config',{method:'POST',body:JSON.stringify(config)});if(!response.ok)return response;
-     outputSetup={enabled:true,topic:body.topic||outputTopic(cfg),true_three_phase:body.true_three_phase,transport:method,host:body.host||'',switch_id:id,password:method===3?(suppliedPassword||storedPassword):'',config};phaseMqttAllowed=true;
+     const result=await response.clone().json();activationRestartNeeded=!!result.restart_needed;
+     outputSetup={enabled:true,topic:body.topic||outputTopic(cfg),true_three_phase:body.true_three_phase,transport:method,host:body.host||'',switch_id:id,password:method===3?(suppliedPassword||storedPassword):'',config};phaseMqttAllowed=!pendingBefore&&!activationRestartNeeded;
     }
     try{localStorage.setItem(storage+'-phase-mqtt-output',JSON.stringify(outputSetup));}catch(e){phaseMqttAllowed=false;return plain('Freigabe nicht gespeichert.',500);}
-    const current=await (await previous('/api/status')).json();return json({ok:true,reboot_required:!!current.reboot_required,restart_needed:!!current.reboot_required});
+    const current=await (await previous('/api/status')).json();return json({ok:true,reboot_required:!!current.reboot_required,restart_needed:activationRestartNeeded});
    }
    if(status.enabled||status.evcc_enabled||status.phase_switching||!status.meter_ok||(status.actual_a||[0,0,0]).some(a=>a>=1))return plain('Ladung zuerst stoppen; frische Messwerte unter 1 A erforderlich.',409);
    if(body.action==='config')return previous('/api/config',{...options,body:JSON.stringify(body.changes)});
@@ -158,7 +163,7 @@ function gpioRemember(schema,cfg,next){
   }
   if(url.origin===location.origin && url.pathname==='/api/reboot'&&options.method==='POST'){
    testUntil=testGoal=0;
-   const response=await previous(input,options);if(response.ok){active={...saved};gpioActive={...gpioValues};try{localStorage.setItem(storage+'-gpio-active',JSON.stringify(gpioActive));localStorage.setItem(storage+'-active',JSON.stringify(active));}catch(e){}}return response;
+   const response=await previous(input,options);if(response.ok){active={...saved};gpioActive={...gpioValues};phaseMqttAllowed=outputSetup?.enabled===true;try{localStorage.setItem(storage+'-gpio-active',JSON.stringify(gpioActive));localStorage.setItem(storage+'-active',JSON.stringify(active));}catch(e){}}return response;
   }
   const response=await previous(input,options);
   if(url.origin===location.origin&&url.pathname==='/api/config'&&response.ok){
@@ -191,7 +196,7 @@ function gpioRemember(schema,cfg,next){
    if(!contactsReady)state.phase_feedback=0;
    if(schema.parameters.some(p=>(saved[p.id]??p.default)!==(active[p.id]??p.default)))state.reboot_required=true;
    const stopped=!state.enabled&&!state.evcc_enabled&&!state.phase_switching&&state.meter_ok&&(state.actual_a||[]).length===3&&state.actual_a.every(a=>Number.isFinite(a)&&a>=0&&a<1);
-   state.phase_output_setup_allowed=stopped&&!state.reboot_required;
+   state.phase_output_setup_allowed=stopped;
    state.phase_test_ready=stopped&&!state.reboot_required&&!state.phase_test_active&&!!cfg.phase_switch_enabled&&(state.phase_actuator_type===0||state.phase_actuator_type===2&&phaseMqttAllowed||[1,3].includes(state.phase_actuator_type)&&!!cfg.phase_shelly_host);
    state.phase_test_block=state.phase_test_ready?'':!cfg.phase_switch_enabled?'Phasenumschaltung zuerst einrichten und speichern.':state.reboot_required?'Einstellungen gespeichert. Zuerst neu starten.':!stopped?'Ladung stoppen und aktuelle Strommessung prüfen.':'Shelly-Verbindung oder externe Freigabe fehlt.';
    if(active.MIN_CURRENT)state.min_charge_a=active.MIN_CURRENT;

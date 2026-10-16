@@ -5,6 +5,7 @@ for(const id of ['phase-hardware-test','expert-phase-mqtt']){
  const at=html.indexOf(`id="${id}"`);assert(at>expert&&at<end,`${id} must be inside the locked expert content`);
 }
 assert(!html.includes('>Automatische Phasenumschaltung</label>'));
+assert(!html.includes('Ohne Rückmeldung · geschützt'),'Protected no-feedback control must not appear in the ordinary actuator dropdown');
 const feedback=html.match(/id="phase-feedback-choice">(.*?)<\/select>/)[1];
 assert(!feedback.includes('value="0"'));assert(feedback.includes('1-single'));
 assert(!js.includes("if(el('phase-feedback-choice').value==='0'"),'Expert preview must not intercept normal form saves');

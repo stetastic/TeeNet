@@ -92,6 +92,18 @@ int main(void){
             req=post("{\"price_kwh\":0.30}");assert(req.status==200 && prepared_count==2);
         }
     }
+    /* The protected output profile survives unrelated settings saves. If an
+       ordinary setting removes its MQTT prerequisite, it is revoked and the
+       visible normal feedback profile is restored instead of becoming an
+       unsavable half-configuration. */
+    fixture();settings.basic_mode=false;settings.relay_board_enabled=true;settings.phase_switch_enabled=true;
+    settings.phase_actuator_type=2;settings.phase_feedback_enabled=false;settings.phase_mqtt_output_enabled=true;
+    settings.mqtt_enabled=true;settings.xemex_coils=2;saved_settings=settings;
+    recovery=post("{\"price_kwh\":0.31}");
+    assert(recovery.status==200&&prepared_settings.phase_actuator_type==2&&prepared_settings.phase_mqtt_output_enabled);
+    saved_settings=prepared_settings;settings=saved_settings;
+    recovery=post("{\"mqtt_enabled\":false}");
+    assert(recovery.status==200&&prepared_settings.phase_actuator_type==0&&prepared_settings.phase_feedback_enabled&&!prepared_settings.phase_mqtt_output_enabled);
     /* An unrelated malformed field must name its own error, not claim that
        the valid host/coils later in the request were missing. */
     fixture();httpd_req_t bad=post("{\"basic_mode\":false,\"relay_board_enabled\":true,\"phase_switch_enabled\":true,\"phase_actuator_type\":1,\"mqtt_enabled\":\"true\",\"phase_shelly_host\":\"192.168.1.88\",\"xemex_coils\":2}");

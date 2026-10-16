@@ -16,14 +16,14 @@ function demo(store){
  await d.post('/api/control',{enabled:false,mode:'off'});
  let response=await d.post('/api/config',{basic_mode:false,mqtt_enabled:true,xemex_coils:2});assert.equal(response.status,200);
  const yes={enabled:true,topic:'wallbox-ems/output/single_phase',repeat_pin:'4040',confirm_risk:true,confirm_no_feedback:true,true_three_phase:false};
- assert.equal((await expert(yes)).status,409,'Pending restart prevents permission');await d.post('/api/reboot',{});
  assert.equal((await expert({...yes,repeat_pin:'1111'})).status,400);
  assert.equal((await expert({...yes,true_three_phase:'true'})).status,400);
  assert.equal((await expert({...yes,topic:'wallbox-ems/command/phases'})).status,400,'Own inbound topics cannot become a switch output');
- assert.equal((await d.post('/api/config',{phase_actuator_type:2})).status,403,'Ordinary config cannot bypass warnings/password');
+ assert.equal((await d.post('/api/config',{phase_mqtt_output_enabled:true})).status,403,'Ordinary config cannot bypass warnings/password');
  assert.equal((await d.post('/api/config',{phase_mqtt_true_three_phase:true})).status,403);
  response=await expert(yes);assert.equal(response.status,200,await response.clone().text());
- assert.equal((await d.read('/api/config')).phase_actuator_type,2);await d.post('/api/reboot',{});
+ let activation=await response.json();assert(activation.reboot_required&&activation.restart_needed,'Setup can be stored while another restart is pending');
+ assert.equal((await d.read('/api/config')).phase_actuator_type,2);assert.equal((await d.read('/api/status')).phase_mqtt_allowed,false,'Saved setup activates only after reboot');await d.post('/api/reboot',{});
  assert((await d.read('/api/status')).phase_mqtt_allowed);assert.equal((await d.read('/api/status')).phase_mqtt_requested,undefined);
  assert.equal((await d.read('/api/status')).phase_mqtt_output_topic,yes.topic);
  let status=await d.read('/api/status');assert.equal(status.phase_mqtt_true_three_phase,false);assert.equal(status.phase_mqtt_output_on,status.charge_phases===1);
@@ -34,21 +34,25 @@ function demo(store){
  await d.post('/api/control',{enabled:true,mode:'manual'});assert.equal((await expert(yes)).status,409);
  assert.equal((await expert({enabled:false})).status,200,'Disable is possible while charging');
  assert.equal((await d.read('/api/status')).enabled,false);assert.equal((await d.read('/api/status')).phase_mqtt_output_single,null);
+ assert.equal((await d.read('/api/config')).phase_actuator_type,0,'Disabling returns to a normal feedback profile');await d.post('/api/reboot',{});
  await d.post('/api/control',{enabled:false,mode:'off'});
  response=await expert({...yes,true_three_phase:true});assert.equal(response.status,200,await response.clone().text());
+ await d.post('/api/reboot',{});
  status=await d.read('/api/status');assert.equal(status.phase_mqtt_true_three_phase,true);assert.equal(status.phase_mqtt_output_on,status.charge_phases===3);
  d=demo(store);assert.equal((await d.read('/api/status')).phase_mqtt_true_three_phase,true,'NO polarity survives reload');
  assert.equal((await expert({enabled:false})).status,200);
  d=demo(store);assert.equal((await d.read('/api/status')).phase_mqtt_allowed,false,'Revocation persists on reload');
  assert.equal((await d.read('/api/status')).phase_mqtt_true_three_phase,true,'Revocation does not erase stored polarity');
- await d.post('/api/config',{mqtt_enabled:false});await d.post('/api/reboot',{});
+ await d.post('/api/config',{basic_mode:false,mqtt_enabled:false,xemex_coils:2});await d.post('/api/reboot',{});
  for(const method of [1,2,3]){
   response=await expert({...yes,transport:method,host:'192.168.1.88',switch_id:0,...(method===3?{password:'synthetic-secret'}:{})});assert.equal(response.status,200,await response.clone().text());
+  await d.post('/api/reboot',{});
   status=await d.read('/api/status');assert.equal(status.phase_output_transport,method);assert.equal(status.phase_output_mqtt_ready,false);
   const privateState=await d.read('/api/config');assert.equal(privateState.phase_output_host,'192.168.1.88');if(method===3){assert(privateState.phase_output_password_set);assert.equal(privateState.phase_output_password,undefined);}
   assert.equal((await d.post('/api/config',{phase_output_host:'192.168.1.99'})).status,403);
   assert.equal((await expert({...yes,transport:method,host:'192.168.1.99',...(method===3?{password:'synthetic-secret'}:{})})).status,409);
   assert.equal((await expert({enabled:false})).status,200);
+  await d.post('/api/reboot',{});
  }
  console.log('PASS: private demo MQTT/Modbus/RPC, no Shelly password or hardware request, transport/host persistence and protection, isolated phase inputs, stopped gates and immediate revocation');
 })().catch(error=>{console.error(error);process.exitCode=1;});

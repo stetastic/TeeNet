@@ -1289,16 +1289,16 @@ static cJSON *status_json(bool include_token) {
     cJSON_AddBoolToObject(o,"expert_parameters_modified",expert_modified(&expert_saved)||settings_gpio_modified(&saved_settings));
     cJSON_AddBoolToObject(o,"phase_mqtt_allowed",phase_mqtt_allowed);
     cJSON_AddBoolToObject(o,"phase_mqtt_ready",phase_mqtt_supported_locked());
-    cJSON_AddBoolToObject(o,"phase_output_base_ready",wifi_online&&phase_switch_meter_supported(&settings));
-    cJSON_AddBoolToObject(o,"phase_output_setup_allowed",!phase_test_active&&!restart_pending()&&phase_mqtt_stopped_locked());
+    cJSON_AddBoolToObject(o,"phase_output_base_ready",phase_switch_meter_supported(&saved_settings));
+    cJSON_AddBoolToObject(o,"phase_output_setup_allowed",!phase_test_active&&phase_mqtt_stopped_locked());
     cJSON_AddBoolToObject(o,"phase_test_active",phase_test_active);
     cJSON_AddBoolToObject(o,"phase_test_ready",phase_test_ready_locked(now));
     cJSON_AddStringToObject(o,"phase_test_block",phase_test_block_locked(now));
     cJSON_AddNumberToObject(o,"phase_test_goal",phase_test_active?phase_test_goal:0);
     cJSON_AddBoolToObject(o,"phase_output_mqtt_ready",mqtt_online&&settings.mqtt_enabled);
     cJSON_AddNumberToObject(o,"phase_output_transport",saved_settings.phase_output_transport);
-    cJSON_AddBoolToObject(o,"phase_output_meter_ready",phase_switch_meter_supported(&settings));
-    cJSON_AddNumberToObject(o,"phase_output_measured_phases",phase_measured_currents(&settings));
+    cJSON_AddBoolToObject(o,"phase_output_meter_ready",phase_switch_meter_supported(&saved_settings));
+    cJSON_AddNumberToObject(o,"phase_output_measured_phases",phase_measured_currents(&saved_settings));
     cJSON_AddBoolToObject(o,"phase_output_connected",phase_output_link_locked());
     cJSON_AddBoolToObject(o,"phase_mqtt_true_three_phase",saved_settings.phase_mqtt_true_three_phase);
     char phase_topic[128];
@@ -2287,8 +2287,13 @@ static esp_err_t config_apply(httpd_req_t *req,cJSON *o,bool restore) {
     next.relay1_mode=next.phase_switch_enabled?3:0;
     if(next.phase_actuator_type==2)next.phase_feedback_enabled=false;
     if(next.phase_actuator_type!=2||!next.phase_switch_enabled||!next.relay_board_enabled||
-       (next.phase_output_transport==0&&!next.mqtt_enabled))
+       (next.phase_output_transport==0&&!next.mqtt_enabled)){
         next.phase_mqtt_output_enabled=false;
+        /* Ordinary settings may remove a prerequisite of the protected
+           no-feedback profile. Return to the normal feedback profile instead
+           of leaving an impossible actuator configuration behind. */
+        if(next.phase_actuator_type==2){next.phase_actuator_type=0;next.phase_feedback_enabled=true;}
+    }
     next.enabled=false; next.mode=MODE_OFF; next.pv_surplus_a=0;
     if(restore)next.control_verified=false;
     /* Clear the retired Solis experiment while retaining its settings-byte slot. */

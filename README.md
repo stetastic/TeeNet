@@ -1,4 +1,4 @@
-# TeeNet 1.20
+# TeeNet 1.21
 
 Lokale ESP32-S3-Steuerung für die **Shell Recharge Advanced 3.0**.
 
@@ -33,4 +33,5 @@ Am Referenzaufbau erprobt: dreiphasig 6–11 kW, einphasig 2,0–3,5 kW. Der nut
 ## Hinweis
 
 **Privates, kostenloses Bastelprojekt. Nutzung auf eigene Gefahr.** Netzanschlüsse nur durch Elektrofachkräfte. Eingriffe in die Wallbox können Garantieansprüche beeinträchtigen. Vor Installation und Betrieb [Nutzung, Sicherheit und Haftung](DISCLAIMER.md) lesen.
+
 
