@@ -45,10 +45,10 @@ function demo(store){
  assert.equal((await d.read('/api/status')).phase_mqtt_true_three_phase,true,'Revocation does not erase stored polarity');
  await d.post('/api/config',{basic_mode:false,mqtt_enabled:false,xemex_coils:2});await d.post('/api/reboot',{});
  for(const method of [1,2,3]){
-  response=await expert({...yes,transport:method,host:'192.168.1.88',switch_id:0,...(method===3?{password:'synthetic-secret'}:{})});assert.equal(response.status,200,await response.clone().text());
+  response=await expert({...yes,transport:method,host:'192.168.1.88',switch_id:0,shelly_model:method===1?4:0,...(method===3?{password:'synthetic-secret'}:{})});assert.equal(response.status,200,await response.clone().text());
   await d.post('/api/reboot',{});
   status=await d.read('/api/status');assert.equal(status.phase_output_transport,method);assert.equal(status.phase_output_mqtt_ready,false);
-  const privateState=await d.read('/api/config');assert.equal(privateState.phase_output_host,'192.168.1.88');if(method===3){assert(privateState.phase_output_password_set);assert.equal(privateState.phase_output_password,undefined);}
+  const privateState=await d.read('/api/config');assert.equal(privateState.phase_output_host,'192.168.1.88');assert.equal(privateState.phase_shelly_model,method===1?4:0,'Selected model persists with the protected setup');if(method===3){assert(privateState.phase_output_password_set);assert.equal(privateState.phase_output_password,undefined);}
   assert.equal((await d.post('/api/config',{phase_output_host:'192.168.1.99'})).status,403);
   assert.equal((await expert({...yes,transport:method,host:'192.168.1.99',...(method===3?{password:'synthetic-secret'}:{})})).status,409);
   assert.equal((await expert({enabled:false})).status,200);
@@ -56,3 +56,4 @@ function demo(store){
  }
  console.log('PASS: private demo MQTT/Modbus/RPC, no Shelly password or hardware request, transport/host persistence and protection, isolated phase inputs, stopped gates and immediate revocation');
 })().catch(error=>{console.error(error);process.exitCode=1;});
+

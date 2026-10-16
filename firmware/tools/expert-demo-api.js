@@ -132,6 +132,7 @@ function gpioRemember(schema,cfg,next){
    }
    if(body.action==='mqtt_phase_output'){
     const method=body.transport===undefined?0:body.transport,id=body.switch_id===undefined?0:body.switch_id;
+    if(body.enabled&&body.shelly_model!==undefined&&(!Number.isInteger(body.shelly_model)||body.shelly_model<0||body.shelly_model>12||method===0||id!==0||method===1&&![4,12].includes(body.shelly_model)))return plain('Shelly-Modell und Verbindung prüfen.',400);
     const suppliedPassword=typeof body.password==='string'?body.password:'';const storedPassword=outputSetup?.host===body.host?outputSetup?.password||'':'';
     const endpoint=Number.isInteger(method)&&method>=0&&method<=3&&Number.isInteger(id)&&[0,100].includes(id)&&(method===0?topicValid(body.topic,cfg):hostValid(body.host))&&(body.password===undefined||typeof body.password==='string'&&body.password.length<=64)&&(method!==3||!!(suppliedPassword||storedPassword));
     if(typeof body.enabled!=='boolean'||(body.enabled&&(body.confirm_risk!==true||body.confirm_no_feedback!==true||body.repeat_pin!=='4040'||!endpoint||typeof body.true_three_phase!=='boolean')))return plain('Warnungen bestaetigen und Experten-Passwort erneut eingeben. Schalttopic und Schuetztyp pruefen.',400);
@@ -144,6 +145,7 @@ function gpioRemember(schema,cfg,next){
     else{
      const pendingBefore=!!status.reboot_required;
      const config={basic_mode:false,phase_actuator_type:2,relay_board_enabled:true,phase_switch_enabled:true,relay1_mode:3,phase_feedback_enabled:false,mqtt_enabled:cfg.mqtt_enabled,wallbox_meter_type:cfg.wallbox_meter_type,xemex_coils:cfg.xemex_coils};
+     if(body.shelly_model!==undefined)config.phase_shelly_model=body.shelly_model;
      const response=await previous('/api/config',{method:'POST',body:JSON.stringify(config)});if(!response.ok)return response;
      const result=await response.clone().json();activationRestartNeeded=!!result.restart_needed;
      outputSetup={enabled:true,topic:body.topic||outputTopic(cfg),true_three_phase:body.true_three_phase,transport:method,host:body.host||'',switch_id:id,password:method===3?(suppliedPassword||storedPassword):'',config};phaseMqttAllowed=!pendingBefore&&!activationRestartNeeded;

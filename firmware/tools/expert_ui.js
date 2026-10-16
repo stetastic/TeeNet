@@ -89,7 +89,50 @@
   el('expert-phase-output-host').value=cfg.phase_output_host||'';
   el('expert-phase-output-channel').value=String(cfg.phase_output_switch_id||0);
   el('expert-phase-output-password').value='';
+  el('expert-phase-output-actuator').value=Number(cfg.phase_output_transport)>0?'1':'0';
+  el('expert-phase-output-model').value=Number(cfg.phase_output_switch_id)===100?'addon':String(cfg.phase_shelly_model||0);
+  el('expert-phase-output-connection').value=Number(cfg.phase_output_transport)===1?'modbus':'http';
+  el('expert-phase-output-auth').value=Number(cfg.phase_output_transport)===3?'1':'0';
  }
+ function normalizePhaseShelly(){
+  const model=el('expert-phase-output-model').value,connection=el('expert-phase-output-connection');
+  if(!['4','12'].includes(model))connection.value='http';
+  el('expert-phase-output-channel').value=model==='addon'?'100':'0';
+  el('expert-phase-output-transport').value=el('expert-phase-output-actuator').value==='0'?'0':
+   connection.value==='modbus'?'1':el('expert-phase-output-auth').value==='1'?'3':'2';
+  renew();updatePhaseMqtt();
+ }
+ let phaseShellyDevices=[],phaseShellyScanning=false,phaseShellyTimer;
+ function renderPhaseShellyScan(result){
+  if(result.family!=='shelly_switch')throw Error('Andere Gerätesuche läuft. Bitte später erneut versuchen.');
+  phaseShellyDevices=result.devices||[];
+  const found=el('expert-phase-output-found');found.replaceChildren();
+  const first=document.createElement('option');first.value='';first.textContent='Shelly auswählen';found.append(first);
+  phaseShellyDevices.forEach((device,index)=>{const option=document.createElement('option');option.value=String(index);option.disabled=!device.compatible;
+   option.textContent=`${device.name||device.host} · ${device.host}${device.protected?' · Passwortschutz':''}${device.compatible?'':' · nicht unterstützt'}`;found.append(option);});
+  found.hidden=!phaseShellyDevices.length;
+  el('expert-phase-output-scan-status').textContent=result.running?`Suche läuft · ${result.progress||0} %`:`${phaseShellyDevices.filter(d=>d.compatible).length} passende Shelly gefunden.`;
+  phaseShellyScanning=!!result.running;
+  if(phaseShellyScanning)phaseShellyTimer=setTimeout(pollPhaseShellyScan,1000);
+  updatePhaseMqtt();
+ }
+ async function pollPhaseShellyScan(){
+  try{renderPhaseShellyScan(await api('/api/meters/scan'));}catch(error){phaseShellyScanning=false;el('expert-phase-output-scan-status').textContent=error.message;updatePhaseMqtt();}
+ }
+ async function scanPhaseShelly(){
+  if(phaseShellyScanning||!pin||!phaseAccess||phaseMqttConfigured()||chargingActive()||state?.phase_switching||busy||!online)return;
+  phaseShellyScanning=true;clearTimeout(phaseShellyTimer);updatePhaseMqtt();
+  try{renderPhaseShellyScan(await api('/api/meters/scan',{family:'shelly_switch'}));}catch(error){phaseShellyScanning=false;el('expert-phase-output-scan-status').textContent=error.message;updatePhaseMqtt();}
+ }
+ function selectPhaseShelly(){
+  if(!pin||!phaseAccess||phaseMqttConfigured()||chargingActive())return;
+  const device=phaseShellyDevices[Number(el('expert-phase-output-found').value)];
+  if(!device?.compatible||el('expert-phase-output-found').value==='')return;
+  el('expert-phase-output-host').value=device.host;
+  if(Number.isInteger(device.profile)&&device.profile<=12)el('expert-phase-output-model').value=String(device.profile);
+  el('expert-phase-output-auth').value=device.protected?'1':'0';normalizePhaseShelly();
+ }
+
  function openPhaseAccess(){
   if(working||busy||!online){phaseMessage('ESP nicht erreichbar oder beschäftigt.',true);return;}
   phaseAccess=false;phaseMessage('');el('phase-no-feedback-pin').value='';el('phase-no-feedback-unlock-error').textContent='';
@@ -149,10 +192,15 @@
   if(configured)type.value=String(phaseSettings().phase_mqtt_true_three_phase===true);
   if(configured){el('expert-phase-output-transport').value=String(phaseSettings().phase_output_transport||0);
    el('expert-phase-output-host').value=phaseSettings().phase_output_host||'';el('expert-phase-output-channel').value=String(phaseSettings().phase_output_switch_id||0);}
-  for(const id of ['expert-phase-output-transport','expert-phase-output-host','expert-phase-output-channel','expert-phase-output-password'])el(id).disabled=configured||!edit;
+  for(const id of ['expert-phase-output-transport','expert-phase-output-host','expert-phase-output-channel','expert-phase-output-password','expert-phase-output-actuator','expert-phase-output-model','expert-phase-output-connection','expert-phase-output-auth','expert-phase-output-found'])el(id).disabled=configured||!edit;
+  el('expert-phase-output-scan').disabled=configured||!edit||phaseShellyScanning;
+  const modbus=Array.from(el('expert-phase-output-connection').options||[]).find(o=>o.value==='modbus');
+  if(modbus){modbus.hidden=!['4','12'].includes(el('expert-phase-output-model').value);modbus.disabled=modbus.hidden;}
+
   const method=phaseOutputMethod();el('expert-phase-mqtt-topic').closest('label').hidden=method!==0;
   el('expert-phase-output-shelly').hidden=method===0;el('expert-phase-mqtt-broker-note').hidden=method!==0;
   el('expert-phase-output-password-label').hidden=method!==3;
+  el('expert-phase-output-auth-label').hidden=method===1;
   el('expert-phase-output-password').placeholder=phaseSettings().phase_output_password_set?'•••••••• · gespeichert':'Shelly-Gerätepasswort eingeben';
   el('expert-phase-output-summary').textContent=method===0?'TeeNet sendet Ein/Aus-Befehle an deinen Schaltaktor. Dieser betätigt das Schütz.':'Der Shelly betätigt die Schützspule. Das Schütz schaltet L2/L3.';
   el('expert-phase-output-shelly-note').textContent=(method===1?
@@ -175,6 +223,7 @@
   const request={pin,action:'mqtt_phase_output',enabled,topic:enabled?phaseMqttDraft.topic:'',true_three_phase:enabled?phaseMqttDraft.true_three_phase:false,
    transport:enabled?phaseMqttDraft.transport:0,host:enabled?phaseMqttDraft.host:'',switch_id:enabled?phaseMqttDraft.switch_id:0,repeat_pin:repeatPin,confirm_risk:enabled,confirm_no_feedback:enabled};
   if(enabled&&phaseMqttDraft.transport===3)request.password=phaseMqttDraft.password;
+  if(enabled&&Number.isInteger(phaseMqttDraft.shelly_model))request.shelly_model=phaseMqttDraft.shelly_model;
   const result=await api('/api/expert',request);
   await loadConfig();
   await pollStatus();
@@ -183,6 +232,7 @@
     phase_output_transport:request.transport,phase_output_host:request.host,phase_output_switch_id:request.switch_id,
     phase_output_password_set:request.transport===3?(!!request.password||previous.phase_output_password_set):false,phase_mqtt_output_enabled:true});
    else updated.phase_mqtt_output_enabled=false;
+   if(enabled&&Number.isInteger(request.shelly_model))updated.phase_shelly_model=request.shelly_model;
    snapshot.settings=updated;snapshot.phase_mqtt_allowed=typeof state?.phase_mqtt_allowed==='boolean'?state.phase_mqtt_allowed:enabled;fillPhaseSettings(snapshot);}
   else{snapshot=null;fillPhaseSettings(configBaseline);}
   updateSaveStatus(result);updateUnsavedFunctions();if(pin)renew();
@@ -196,6 +246,7 @@
   const method=phaseOutputMethod();
   if(!phaseMqttStopped()||!['false','true'].includes(type)||![0,1,2,3].includes(method)||!phaseOutputReady()){phaseMessage('Ladung stoppen und Schütztyp sowie Verbindung prüfen.',true);update();return;}
   phaseMqttDraft={topic:el('expert-phase-mqtt-topic').value.trim()||((snapshot?.settings?.mqtt_prefix||'wallbox-ems')+'/output/single_phase'),true_three_phase:type==='true',
+   shelly_model:method>0&&el('expert-phase-output-model').value!=='addon'?Number(el('expert-phase-output-model').value):undefined,
    transport:method,host:el('expert-phase-output-host').value.trim(),switch_id:Number(el('expert-phase-output-channel').value||0),password:method===3?el('expert-phase-output-password').value:''};
   el('phase-mqtt-confirm-topic').textContent=method===0?`Schalttopic: ${phaseMqttDraft.topic}`:
    `${['MQTT','Shelly Modbus TCP','Shelly HTTP ohne Passwort','Shelly HTTP mit Passwort'][method]}: ${phaseMqttDraft.host} · Ausgang ${phaseMqttDraft.switch_id}`;
@@ -260,6 +311,9 @@
  el('expert-phase-mqtt').addEventListener('input',e=>e.stopPropagation());el('expert-phase-mqtt').addEventListener('change',e=>e.stopPropagation());
 
  el('expert-phase-mqtt-enabled')?.addEventListener('change',changePhaseMqtt);
+ for(const id of ['expert-phase-output-actuator','expert-phase-output-model','expert-phase-output-connection','expert-phase-output-auth'])el(id).addEventListener('change',normalizePhaseShelly);
+ el('expert-phase-output-scan').addEventListener('click',scanPhaseShelly);
+ el('expert-phase-output-found').addEventListener('change',selectPhaseShelly);
  el('expert-phase-mqtt-contactor').addEventListener('change',()=>{renew();updatePhaseMqtt();});
  for(const id of ['expert-phase-output-transport','expert-phase-output-host','expert-phase-output-channel','expert-phase-output-password'])el(id).addEventListener('input',()=>{renew();updatePhaseMqtt();});
  el('phase-mqtt-confirm-next').addEventListener('click',nextPhaseMqttStep);

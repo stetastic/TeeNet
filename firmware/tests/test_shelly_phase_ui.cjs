@@ -9,6 +9,27 @@ const context={window:{},$:el,online:true,busy:false,state:{phase_actuator_type:
  api:async(path,body)=>{requests.push({path,body});return {family:'shelly_switch',running:false,progress:100,devices:[{host:'192.168.1.88',name:'Protected Pro 1',protected:true,compatible:true},{host:'192.168.1.89',name:'Other Shelly',compatible:false}]};}};
 vm.runInNewContext(fs.readFileSync('tools/phase_shelly_ui.js','utf8'),context);
 (async()=>{
+ for(const model of ['0','1','2','3','4','5','6','7','8','9','10','11','12','0']){
+  f.phase_shelly_model.value=model;context.window.teenetShellyPhase.update();
+  const modbus=el('phase-shelly-connection').options.find(o=>o.value==='3');
+  assert.equal(modbus.hidden,!['4','12'].includes(model),'Only supported protocols appear for the selected Shelly model');
+  assert.equal(modbus.disabled,modbus.hidden);
+ }
+ f.phase_shelly_model.value='0';context.window.teenetShellyPhase.update();
+ const expertOption={value:'2',textContent:'Schaltaktor auswählen',hidden:true,disabled:true};
+ f.phase_actuator_type.options=[{value:'0'},{value:'1'},{value:'3',hidden:true},expertOption];
+ for(const savedMode of [false,true]){
+  context.configBaseline={phase_actuator_type:2,phase_mqtt_output_enabled:savedMode};
+  context.state.phase_mqtt_allowed=savedMode;
+  for(const kind of ['2','0','1','2']){
+   f.phase_actuator_type.value=kind;
+   context.window.teenetShellyPhase.update();
+   assert(expertOption.hidden&&expertOption.disabled,'Expert actuator stays out of the normal dropdown on load, change and reload');
+   assert.equal(f.phase_actuator_type.value,kind,'Rendering preserves the actual actuator setting');
+   assert.deepEqual(f.phase_actuator_type.options.filter(o=>!o.hidden&&!o.disabled).map(o=>o.value),['0','1']);
+  }
+ }
+ delete context.configBaseline;context.state.phase_mqtt_allowed=false;f.phase_actuator_type.value='1';context.window.teenetShellyPhase.update();
  assert(f.phase_feedback_enabled.checked);assert.equal(f.relay1_mode.value,'3');assert(f.phase_shelly_host.required);
  assert(f.phase_feedback_enabled.closest('label').hidden);
  assert.equal(el('phase-feedback-heading').textContent,'Rückmeldung über Shelly');assert.match(el('phase-feedback-description').textContent,/Shelly-Eingänge/);assert(!el('phase-feedback-pin-note').textContent.includes('GPIO'));assert(el('phase-connection-note').hidden);

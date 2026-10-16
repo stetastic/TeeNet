@@ -2,7 +2,7 @@
    key. Revocation cancels jobs immediately; serialize any committed publish. */
 static esp_err_t save_phase_mqtt_permission(bool enabled,const char *topic,bool true_three_phase,
                                          uint8_t transport,const char *host,uint8_t switch_id,const char *password,
-                                         bool *restart_needed){
+                                         int shelly_model,bool *restart_needed){
     if(restart_needed)*restart_needed=false;
     LOCK();if(!enabled){phase_mqtt_allowed=false;phase_mqtt_cancel_locked(true);}UNLOCK();
     if(!config_storage_ok)return ESP_FAIL;
@@ -15,6 +15,7 @@ static esp_err_t save_phase_mqtt_permission(bool enabled,const char *topic,bool 
         next.relay1_mode=3;next.phase_feedback_enabled=false;next.basic_mode=false;
         snprintf(next.phase_mqtt_topic,sizeof(next.phase_mqtt_topic),"%s",topic?topic:"");
         next.phase_mqtt_true_three_phase=true_three_phase;
+        if(shelly_model>=0&&shelly_model<=12)next.phase_shelly_model=(uint8_t)shelly_model;
         next.phase_output_transport=transport;next.phase_output_switch_id=switch_id;
         if(transport!=3||strcmp(next.phase_output_host,host?host:""))next.phase_output_password[0]=0;
         if(transport==3&&password&&password[0])snprintf(next.phase_output_password,sizeof(next.phase_output_password),"%s",password);

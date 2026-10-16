@@ -124,5 +124,15 @@ int main(void){
     phase_mqtt_allowed=false;reboot_required=false;pending=true;stopped=true;count=writes;
     assert(request(yes)==200&&writes==count+1&&!phase_mqtt_allowed&&reboot_required);
     assert(persisted.phase_mqtt_output_enabled&&persisted.phase_actuator_type==2);
+    settings_defaults(&settings);settings.mqtt_enabled=true;settings.xemex_coils=3;saved_settings=settings;
+    phase_mqtt_allowed=false;reboot_required=false;pending=false;stopped=true;
+    count=writes;assert(request("{\"enabled\":true,\"confirm_risk\":true,\"confirm_no_feedback\":true,\"repeat_pin\":\"4040\",\"true_three_phase\":false,\"transport\":1,\"host\":\"192.168.1.88\",\"switch_id\":0,\"shelly_model\":-1}")==400&&writes==count);
+    count=writes;assert(request("{\"enabled\":true,\"confirm_risk\":true,\"confirm_no_feedback\":true,\"repeat_pin\":\"4040\",\"true_three_phase\":false,\"transport\":1,\"host\":\"192.168.1.88\",\"switch_id\":0,\"shelly_model\":0}")==400&&writes==count);
+    count=writes;assert(request("{\"enabled\":true,\"confirm_risk\":true,\"confirm_no_feedback\":true,\"repeat_pin\":\"4040\",\"true_three_phase\":false,\"transport\":1,\"host\":\"192.168.1.88\",\"switch_id\":0,\"shelly_model\":3}")==400&&writes==count);
+    count=writes;assert(request("{\"enabled\":true,\"confirm_risk\":true,\"confirm_no_feedback\":true,\"repeat_pin\":\"4040\",\"true_three_phase\":false,\"transport\":1,\"host\":\"192.168.1.88\",\"switch_id\":0,\"shelly_model\":13}")==400&&writes==count);
+    count=writes;assert(request("{\"enabled\":true,\"confirm_risk\":true,\"confirm_no_feedback\":true,\"repeat_pin\":\"4040\",\"true_three_phase\":false,\"transport\":1,\"host\":\"192.168.1.88\",\"switch_id\":0,\"shelly_model\":4.5}")==400&&writes==count);
+    count=writes;assert(request("{\"enabled\":true,\"confirm_risk\":true,\"confirm_no_feedback\":true,\"repeat_pin\":\"4040\",\"true_three_phase\":false,\"transport\":1,\"host\":\"192.168.1.88\",\"switch_id\":0,\"shelly_model\":\"4\"}")==400&&writes==count);
+    assert(request("{\"enabled\":true,\"confirm_risk\":true,\"confirm_no_feedback\":true,\"repeat_pin\":\"4040\",\"true_three_phase\":false,\"transport\":1,\"host\":\"192.168.1.88\",\"switch_id\":0,\"shelly_model\":4}")==200&&persisted.phase_shelly_model==4);boot_saved();
+    assert(settings.phase_shelly_model==4);
     puts("PASS: real expert output API and root authorization: guarded activation, PIN-free local revocation even after wrong PIN, no unauthorized revoke, duplicate rejection, transports and persistence");
 }
