@@ -143,7 +143,7 @@ typedef struct {
     /* Version 32: mandatory normal feedback, optional complementary contact,
        compatible Shelly profiles and explicit authenticated expert RPC. */
     uint8_t phase_feedback_count; /* 1 contact, 2 complementary contacts */
-    uint8_t phase_shelly_model; /* 0 Pro1, 1 Pro2, 2 Plus1, 3 1Gen3, 4 1Gen4 */
+    uint8_t phase_shelly_model; /* 0..12: supported 230-V Shelly profile */
     bool phase_shelly_pulse; /* bounded bistable pulse; otherwise absolute state */
     bool phase_shelly_true_three_phase;
     char phase_output_password[65]; /* used only by expert transport 3 */

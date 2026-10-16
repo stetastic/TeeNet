@@ -95,8 +95,8 @@ function gpioRemember(schema,cfg,next){
     if(!next.phase_shelly_host)return plain('Shelly-Adresse fehlt. Im Bereich Schuetzsteuerung eintragen.',400);
     if(!(['shelly_gen2','em24_tcp','sdm630','sdm630mct'].includes(next.wallbox_meter_type)||(next.wallbox_meter_type==='xemex'&&[2,3].includes(Number(next.xemex_coils)))))return plain(next.wallbox_meter_type==='xemex'?`Wallbox-Zaehler: Xemex mit ${next.xemex_coils} Messspule(n) eingestellt. Fuer die Shelly-Phasenumschaltung mindestens L1 und L2 messen.`:`Wallbox-Zaehlerprofil '${next.wallbox_meter_type}' erfasst nicht mindestens L1 und L2. Fuer die Shelly-Phasenumschaltung ein passendes Profil waehlen.`,400);
     request.phase_feedback_enabled=true;
-    const count=Number(next.phase_feedback_count||1),model=Number(next.phase_shelly_model||0);
-    if(![1,2].includes(count)||(count===2&&model>1)||(next.phase_shelly_pulse&&(count!==2||Number(next.phase_actuator_type)===3))||(Number(next.phase_actuator_type)===3&&model!==4))return plain('Shelly-Modell, Kontakte und Schuetzansteuerung passen nicht zusammen.',400);
+    const count=Number(next.phase_feedback_count||1),model=Number(next.phase_shelly_model||0),inputs=[2,2,1,1,1,2,2,2,3,4,1,1,1][model]||0;
+    if(!inputs||![1,2].includes(count)||count>inputs||(next.phase_shelly_pulse&&(count!==2||Number(next.phase_actuator_type)===3))||(Number(next.phase_actuator_type)===3&&model!==4))return plain('Shelly-Modell, Kontakte und Schuetzansteuerung passen nicht zusammen.',400);
    }
    const status=await (await previous('/api/status')).json();
    if(status.enabled&&['phase_actuator_type','phase_shelly_host','phase_shelly_password','phase_feedback_count','phase_feedback_closed_is_single','phase_shelly_model','phase_shelly_pulse','phase_shelly_true_three_phase'].some(key=>key in request&&request[key]!==cfg[key]))return plain('Schuetzanbindung nur bei gestoppter Ladung aendern.',409);

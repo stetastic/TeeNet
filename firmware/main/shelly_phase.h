@@ -11,7 +11,7 @@ typedef struct {
     char id[64],model[48],name[64];
     unsigned generation;
     bool protected_device,pro1;
-    uint8_t profile,inputs; /* known dry-contact profile 0..4; 255 unsupported */
+    uint8_t profile,inputs; /* known 230-V profile 0..12; 255 unsupported */
 } shelly_phase_identity_t;
 typedef struct {
     bool output,no_closed,nc_closed;
@@ -20,6 +20,7 @@ typedef struct {
     bool has_uptime;
 } shelly_phase_feedback_t;
 bool shelly_phase_identity(const char *json,shelly_phase_identity_t *out);
+unsigned shelly_phase_profile_inputs(unsigned profile);
 bool shelly_phase_feedback(const char *json,shelly_phase_feedback_t *out);
 bool shelly_phase_safe_config(const char *json);
 bool shelly_phase_feedback_for(const char *json,shelly_phase_feedback_t *out,unsigned count,bool closed_is_single);

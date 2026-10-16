@@ -866,8 +866,8 @@ showPage();writes();poll();
 
   for(const option of Array.from(f.phase_shelly_model.options||[]))option.disabled=false;
   const modbusOption=Array.from(connection.options||[]).find(option=>option.value==='3');
-  if(modbusOption)modbusOption.disabled=f.phase_shelly_model.value!=='4';
-  const inputs=Number(f.phase_shelly_model.value)<2?2:1;
+  if(modbusOption)modbusOption.disabled=!['4','12'].includes(f.phase_shelly_model.value);
+  const inputs=[2,2,1,1,1,2,2,2,3,4,1,1,1][Number(f.phase_shelly_model.value)]||1;
 
   for(const option of Array.from(feedback.options||[]))option.disabled=remote&&((option.value==='2'&&inputs===1)||(option.value!=='2'&&f.phase_shelly_pulse.value==='true'));
   for(const option of Array.from(f.phase_shelly_pulse.options||[]))option.disabled=option.value==='true'&&(kind===3||inputs===1);
@@ -959,7 +959,7 @@ showPage();writes();poll();
  select.addEventListener('change',()=>{
   const device=devices[Number(select.value)];if(select.value===''||!device?.compatible)return;
   f.phase_shelly_host.value=device.host;
-  if(Number.isInteger(device.profile)&&device.profile<=4)f.phase_shelly_model.value=String(device.profile);
+  if(Number.isInteger(device.profile)&&device.profile<=12)f.phase_shelly_model.value=String(device.profile);
   $('phase-shelly-auth').value=device.protected?'1':'0';normalizeChoice();update();
   f.phase_shelly_host.dispatchEvent(new Event('change',{bubbles:true}));
  });
@@ -968,11 +968,12 @@ showPage();writes();poll();
   let kind=Number(f.phase_actuator_type.value),remote=kind===1||kind===3;
   const notice=$('phase-choice-note');notice.textContent='';notice.hidden=true;
   if(event?.target===connection){kind=Number(connection.value);f.phase_actuator_type.value=String(kind);remote=kind===1||kind===3;}
-  if((event?.target===connection||event?.target?.name==='phase_actuator_type')&&kind===3){f.phase_shelly_model.value='4';notice.textContent='Modbus TCP gewählt: Shelly 1 Gen4 mit einem Rückmeldekontakt.';}
-  if(kind===3&&f.phase_shelly_model.value!=='4'){f.phase_actuator_type.value='1';connection.value='1';kind=1;notice.textContent='Dieses Modell unterstützt hier HTTP. Die Verbindung wurde auf HTTP gesetzt.';}
+  if((event?.target===connection||event?.target?.name==='phase_actuator_type')&&kind===3){if(!['4','12'].includes(f.phase_shelly_model.value))f.phase_shelly_model.value='4';notice.textContent='Modbus TCP gewählt: Gen4-Shelly mit einem Rückmeldekontakt.';}
+  if(kind===3&&!['4','12'].includes(f.phase_shelly_model.value)){f.phase_actuator_type.value='1';connection.value='1';kind=1;notice.textContent='Dieses Modell unterstützt hier HTTP. Die Verbindung wurde auf HTTP gesetzt.';}
   else connection.value=kind===3?'3':'1';
-  if(remote&&(kind===3||Number(f.phase_shelly_model.value)>=2))f.phase_shelly_pulse.value='false';
-  if(remote&&Number(f.phase_shelly_model.value)>=2)f.phase_feedback_count.value='1';
+  const inputs=[2,2,1,1,1,2,2,2,3,4,1,1,1][Number(f.phase_shelly_model.value)]||1;
+  if(remote&&(kind===3||inputs===1))f.phase_shelly_pulse.value='false';
+  if(remote&&inputs===1)f.phase_feedback_count.value='1';
   if(remote&&f.phase_shelly_pulse.value==='true')f.phase_feedback_count.value='2';
   if(f.phase_feedback_count.value==='2')f.phase_feedback_closed_is_single.value='false';
   feedback.value=f.phase_feedback_count.value==='2'?'2':f.phase_feedback_closed_is_single.value==='true'?'1-single':'1';
@@ -1082,7 +1083,7 @@ showPage();writes();poll();
  }
  function cancelPhaseAccess(){
   el('phase-no-feedback-pin').value='';if(el('phase-no-feedback-unlock-dialog').open)el('phase-no-feedback-unlock-dialog').close();
-
+  
  }
  async function unlockPhaseAccess(){
   if(working||busy||!online)return;

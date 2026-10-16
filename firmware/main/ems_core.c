@@ -158,7 +158,7 @@ bool phase_mqtt_output_topic(const settings_t *s,char *out,size_t capacity) {
 }
 bool settings_valid(const settings_t *s) {
     if(s->phase_actuator_type>3 || s->phase_feedback_count<1||s->phase_feedback_count>2 ||
-       s->phase_shelly_model>4 || !memchr(s->phase_output_password,0,sizeof(s->phase_output_password)) ||
+       s->phase_shelly_model>12 || !memchr(s->phase_output_password,0,sizeof(s->phase_output_password)) ||
        !memchr(s->phase_shelly_host,0,sizeof(s->phase_shelly_host)) ||
        !memchr(s->phase_shelly_password,0,sizeof(s->phase_shelly_password)) ||
        !memchr(s->wallbox_meter_type,0,sizeof(s->wallbox_meter_type)))return false;
@@ -172,9 +172,9 @@ bool settings_valid(const settings_t *s) {
     if(s->phase_switch_enabled&&s->phase_actuator_type!=2&&!s->phase_feedback_enabled)return false;
     if((s->phase_actuator_type==1||s->phase_actuator_type==3) && s->phase_switch_enabled &&
        (!s->phase_feedback_enabled || !s->phase_shelly_host[0] ||
-        (s->phase_feedback_count==2&&s->phase_shelly_model>1) ||
+        (s->phase_feedback_count>shelly_phase_profile_inputs(s->phase_shelly_model)) ||
         (s->phase_shelly_pulse&&(s->phase_feedback_count!=2||s->phase_actuator_type==3)) ||
-        (s->phase_actuator_type==3&&s->phase_shelly_model!=4) ||
+        (s->phase_actuator_type==3&&s->phase_shelly_model!=4&&s->phase_shelly_model!=12) ||
         !phase_switch_meter_supported(s)))return false;
     if(s->shell_rs485_interface>1 || s->meter_rs485_interface>1 || s->house_rs485_interface>1 ||
        !memchr(s->shell_rs485_host,0,sizeof(s->shell_rs485_host)) ||

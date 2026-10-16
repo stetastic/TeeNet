@@ -6,6 +6,18 @@
 #include <math.h>
 #include <ctype.h>
 
+typedef struct {const char *prefix;uint8_t generation,inputs;} shelly_phase_profile_t;
+static const shelly_phase_profile_t shelly_phase_profiles[]={
+    {"shellypro1-",2,2},{"shellypro2-",2,2},{"shellyplus1-",2,1},
+    {"shelly1g3-",3,1},{"shelly1g4-",4,1},
+    {"shellypro1pm-",2,2},{"shellypro2pm-",2,2},{"shellyplus2pm-",2,2},
+    {"shellypro3-",2,3},{"shellypro4pm-",2,4},{"shellyplus1pm-",2,1},
+    {"shelly1pmg3-",3,1},{"shelly1minig4-",4,1}
+};
+unsigned shelly_phase_profile_inputs(unsigned profile){
+    return profile<sizeof(shelly_phase_profiles)/sizeof(shelly_phase_profiles[0])?shelly_phase_profiles[profile].inputs:0;
+}
+
 static const cJSON *item(const cJSON *o,const char *key){
     const cJSON *found=NULL;
     for(const cJSON *p=o?o->child:NULL;p;p=p->next)if(p->string&&!strcmp(p->string,key)){
@@ -44,10 +56,9 @@ bool shelly_phase_identity(const char *json,shelly_phase_identity_t *out){
     if(ok){
         next.generation=(unsigned)gen->valueint;
         next.pro1=next.generation==2&&!strncmp(next.id,"shellypro1-",11);
-        const char *names[]={"shellypro1-","shellypro2-","shellyplus1-","shelly1g3-","shelly1g4-"};
-        const unsigned generations[]={2,2,2,3,4};
-        for(unsigned i=0;i<5;i++)if(next.generation==generations[i]&&!strncmp(next.id,names[i],strlen(names[i]))){
-            next.profile=(uint8_t)i;next.inputs=i<2?2:1;break;
+        for(unsigned i=0;i<sizeof(shelly_phase_profiles)/sizeof(shelly_phase_profiles[0]);i++)
+            if(next.generation==shelly_phase_profiles[i].generation&&!strncmp(next.id,shelly_phase_profiles[i].prefix,strlen(shelly_phase_profiles[i].prefix))){
+            next.profile=(uint8_t)i;next.inputs=shelly_phase_profiles[i].inputs;break;
         }
         if(!text(root,"name",next.name,sizeof(next.name)))snprintf(next.name,sizeof(next.name),"%s",next.id);
         *out=next;

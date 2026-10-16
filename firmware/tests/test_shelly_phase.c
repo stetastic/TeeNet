@@ -165,12 +165,29 @@ int main(void){
     assert(shelly_phase_identity("{\"id\":\"shellyplus1-abcd\",\"gen\":2,\"model\":\"SNSW\",\"auth_en\":false}",&identity)&&identity.profile==2&&identity.inputs==1);
     assert(shelly_phase_identity("{\"id\":\"shelly1g3-abcd\",\"gen\":3,\"model\":\"S3SW\",\"auth_en\":false}",&identity)&&identity.profile==3&&identity.inputs==1);
     assert(shelly_phase_identity("{\"id\":\"shelly1g4-abcd\",\"gen\":4,\"model\":\"S4SW\",\"auth_en\":false}",&identity)&&identity.profile==4&&identity.inputs==1);
+    static const struct {const char *id;unsigned generation,profile,inputs;} additional[]={
+        {"shellypro1pm-abcd",2,5,2},{"shellypro2pm-abcd",2,6,2},
+        {"shellyplus2pm-abcd",2,7,2},{"shellypro3-abcd",2,8,3},
+        {"shellypro4pm-abcd",2,9,4},{"shellyplus1pm-abcd",2,10,1},
+        {"shelly1pmg3-abcd",3,11,1},{"shelly1minig4-abcd",4,12,1}
+    };
+    char identity_json[160];
+    for(unsigned i=0;i<sizeof(additional)/sizeof(additional[0]);i++){
+        snprintf(identity_json,sizeof(identity_json),"{\"id\":\"%s\",\"gen\":%u,\"model\":\"230V\",\"auth_en\":false}",additional[i].id,additional[i].generation);
+        assert(shelly_phase_identity(identity_json,&identity)&&identity.profile==additional[i].profile&&identity.inputs==additional[i].inputs);
+        assert(shelly_phase_profile_inputs(additional[i].profile)==additional[i].inputs);
+    }
+    assert(!shelly_phase_profile_inputs(13));
+    assert(shelly_phase_identity("{\"id\":\"shellypro3-abcd\",\"gen\":3,\"model\":\"wrong\",\"auth_en\":false}",&identity)&&identity.profile==255);
     const char *one="{\"switch:0\":{\"id\":0,\"output\":true},\"input:0\":{\"id\":0,\"state\":true},\"sys\":{\"uptime\":100}}";
     assert(shelly_phase_feedback_for(one,&parsed,1,true)&&parsed.phases==1&&parsed.has_uptime);
     assert(!shelly_phase_feedback_for(one,&parsed,2,true));
     const char *continuous="{\"switch:0\":{\"id\":0,\"in_mode\":\"detached\",\"initial_state\":\"off\",\"auto_on\":false,\"auto_off\":false},\"input:0\":{\"id\":0,\"type\":\"switch\",\"enable\":true,\"invert\":false}}";
     assert(shelly_phase_config_for(continuous,1,false));
     assert(!shelly_phase_config_for(continuous,2,false)&&!shelly_phase_config_for(continuous,1,true));
+    fixture(3);settings.phase_shelly_model=5;settings.phase_feedback_count=2;assert(settings_valid(&settings));
+    settings.phase_shelly_model=10;assert(!settings_valid(&settings));settings.phase_feedback_count=1;settings.phase_shelly_pulse=false;assert(settings_valid(&settings));
+    settings.phase_actuator_type=3;settings.phase_shelly_model=12;assert(settings_valid(&settings));
     for(unsigned transport=1;transport<=3;transport+=2)for(unsigned polarity=0;polarity<2;polarity++){
         fixture(3);settings.phase_actuator_type=transport;settings.phase_shelly_pulse=false;
         settings.phase_shelly_model=transport==3?4:2;settings.phase_feedback_count=1;
