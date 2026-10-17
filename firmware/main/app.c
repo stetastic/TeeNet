@@ -177,13 +177,15 @@ static bool house_bus_ready,relay_ready,relay_on[1];
 static bool config_storage_ok,stats_storage_ok,storage_error,reboot_required,restarting,sntp_ready,factory_reset_requested;
 static bool expert_reboot_pending;
 static volatile bool boot_validation_pending=true,boot_validation_failed,boot_validation_ok;
+static volatile bool runtime_watchdog_failed;
+static volatile uint32_t runtime_watchdog_tasks;
 static bool boot_config_ok=true,boot_rollback_armed,web_started;
 static volatile uint32_t boot_task_seen[5];
 /* Permission is persisted; phase commands are deliberately volatile. */
 static bool phase_mqtt_allowed,phase_mqtt_saving;
 static SemaphoreHandle_t phase_mqtt_send_lock;
 static expert_values_t expert_saved;
-static bool restart_pending(void){return reboot_required||expert_reboot_pending||boot_validation_pending||boot_validation_failed;}
+static bool restart_pending(void){return reboot_required||expert_reboot_pending||boot_validation_pending||boot_validation_failed||runtime_watchdog_failed;}
 
 static float meter_a[3],actual_a[3],xemex_a[3],wallbox_w,house_power_w,house_a[3];
 static int64_t house_current_at;
@@ -778,6 +780,7 @@ static const char *block_reason_locked(int64_t now) {
     if(phase_test_active)return "phase_test";
     if(boot_validation_pending)return "firmware_check";
     if(boot_validation_failed)return "firmware_failed";
+    if(runtime_watchdog_failed)return "runtime_watchdog";
     if(restart_pending()) return "reboot";
     if(!terms_accepted)return "agreement";
     if(evcc_configuring)return "maintenance";
@@ -1424,6 +1427,8 @@ static cJSON *status_json(bool include_token) {
     cJSON_AddBoolToObject(o,"firmware_check_pending",boot_validation_pending);
     cJSON_AddBoolToObject(o,"firmware_check_ok",boot_validation_ok);
     cJSON_AddBoolToObject(o,"firmware_check_failed",boot_validation_failed);
+    cJSON_AddBoolToObject(o,"runtime_watchdog_failed",runtime_watchdog_failed);
+    cJSON_AddNumberToObject(o,"runtime_watchdog_tasks",runtime_watchdog_tasks);
     cJSON_AddBoolToObject(o,"ota_rollback_armed",boot_rollback_armed); cJSON_AddBoolToObject(o,"clock_ok",date!=0);
 
     cJSON_AddNumberToObject(o,"current_date",date);

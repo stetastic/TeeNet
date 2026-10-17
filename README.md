@@ -1,4 +1,4 @@
-# TeeNet 1.21
+# TeeNet 1.22
 
 Lokale ESP32-S3-Steuerung für die **Shell Recharge Advanced 3.0**.
 
@@ -32,7 +32,7 @@ Am Referenzaufbau erprobt: dreiphasig 6–11 kW, einphasig 2,0–3,5 kW. Der nut
 
 ## Freiwillige Gerätestatistik
 
-Mit dem aktuellen Build von Version 1.21 kann TeeNet nach ausdrücklicher Bestätigung eine zufällige Kennung und die Firmwareversion an den Projektzähler senden. Die Teilnahme ist bei der Einrichtung vorausgewählt und jederzeit abschaltbar. Keine Lade-, WLAN- oder Standortdaten. Die Demo sendet keine Lebenszeichen. Details stehen in der Anleitung unter Gerätestatistik.
+Mit dem aktuellen Build von Version 1.22 kann TeeNet nach ausdrücklicher Bestätigung eine zufällige Kennung und die Firmwareversion an den Projektzähler senden. Die Teilnahme ist bei der Einrichtung vorausgewählt und jederzeit abschaltbar. Keine Lade-, WLAN- oder Standortdaten. Die Demo sendet keine Lebenszeichen. Details stehen in der Anleitung unter Gerätestatistik.
 
 ## Hinweis
 

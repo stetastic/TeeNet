@@ -1,6 +1,6 @@
 {
   "name": "TeeNet",
-  "version": "1.21",
+  "version": "1.22",
   "new_install_prompt_erase": false,
   "new_install_improv_wait_time": 0,
   "builds": [
@@ -8,7 +8,7 @@
       "chipFamily": "ESP32-S3",
       "parts": [
         {
-          "path": "TeeNet-1.21-factory.bin",
+          "path": "TeeNet-1.22-factory.bin",
           "offset": 0
         }
       ]

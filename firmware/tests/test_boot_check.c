@@ -10,10 +10,12 @@ typedef int esp_err_t;
 static void test_log(const char *tag,const char *message,...){(void)tag;(void)message;}
 #define ESP_LOGI(...) test_log(__VA_ARGS__)
 #define ESP_LOGE(...) test_log(__VA_ARGS__)
+#define TEE_BOOT_CHECK_TEST 1
 static const char *esp_err_to_name(int err){(void)err;return "test";}
 static settings_t settings;
 static bool boot_config_ok,config_storage_ok,web_started,wallbox_ready,meter_ready,house_bus_ready,contact_gpio_ready,wifi_online,phase_gpio_ready;
-static bool boot_rollback_armed,boot_validation_pending,boot_validation_ok,boot_validation_failed,phase_startup;
+static bool boot_rollback_armed,boot_validation_pending,boot_validation_ok,boot_validation_failed,phase_startup,runtime_watchdog_failed;
+static uint32_t runtime_watchdog_tasks;
 static uint32_t boot_task_seen[5],fake_now;
 static int state_lock,locks,valid_calls,invalid_calls,deleted,confirm_error;
 static bool possible,advance_tasks=true;
@@ -34,6 +36,7 @@ static void fixture(void){
  settings_defaults(&settings);fake_now=1000;valid_calls=invalid_calls=deleted=locks=confirm_error=0;
  boot_config_ok=config_storage_ok=web_started=wallbox_ready=meter_ready=house_bus_ready=contact_gpio_ready=wifi_online=phase_gpio_ready=true;
  boot_validation_pending=phase_startup=advance_tasks=true;boot_validation_ok=boot_validation_failed=boot_rollback_armed=possible=false;
+ runtime_watchdog_failed=false;runtime_watchdog_tasks=0;
  phase_stop_at=phase_move_at=phase_zero_at=0;for(unsigned i=0;i<5;i++)boot_task_seen[i]=fake_now;
 }
 int main(void){
@@ -41,9 +44,15 @@ int main(void){
  c=(boot_check_t){.started=0};assert(boot_check_step(&c,1000,true)==BOOT_CHECK_WAIT);assert(boot_check_step(&c,5000,false)==BOOT_CHECK_WAIT);assert(boot_check_step(&c,6000,true)==BOOT_CHECK_WAIT);assert(boot_check_step(&c,90000,true)==BOOT_CHECK_FAIL);
  fixture();boot_rollback_armed=true;boot_check_task(NULL);assert(valid_calls==1&&boot_validation_ok&&!boot_validation_pending&&!boot_validation_failed&&deleted==1&&!locks);assert(phase_stop_at==fake_now&&phase_zero_at==0);
  fixture();boot_check_task(NULL);assert(!valid_calls&&boot_validation_ok&&!invalid_calls);
- fixture();strcpy(settings.wifi_ssid,"Home");wifi_online=false;boot_rollback_armed=possible=true;boot_check_task(NULL);assert(invalid_calls==1&&boot_validation_failed&&!valid_calls&&!settings.enabled);
+ fixture();strcpy(settings.wifi_ssid,"Home");wifi_online=false;boot_rollback_armed=possible=true;boot_check_task(NULL);assert(valid_calls==1&&boot_validation_ok&&!boot_validation_failed&&!invalid_calls);
  fixture();boot_config_ok=false;boot_check_task(NULL);assert(boot_validation_failed&&!invalid_calls&&!valid_calls);
  fixture();boot_rollback_armed=possible=true;confirm_error=1;boot_check_task(NULL);assert(valid_calls==1&&invalid_calls==1&&boot_validation_failed);
  fixture();settings.zero_feed_enabled=true;boot_task_seen[3]=0;advance_tasks=false;boot_check_task(NULL);assert(boot_validation_failed&&!valid_calls);
- puts("PASS: actual boot observer: stable startup, WLAN/config/task failures, confirmation failure, one rollback attempt, old bootloader/no fallback and charge-blocked recovery");return 0;
+ uint32_t seen[5]={1000,1000,1000,1000,1000};
+ assert(runtime_stale_tasks(seen,RUNTIME_TASK_STATUS|RUNTIME_TASK_WALLBOX|RUNTIME_TASK_METER,10999)==0);
+ assert(runtime_stale_tasks(seen,RUNTIME_TASK_STATUS|RUNTIME_TASK_WALLBOX|RUNTIME_TASK_METER,11000)==(RUNTIME_TASK_STATUS|RUNTIME_TASK_WALLBOX));
+ assert(runtime_stale_tasks(seen,RUNTIME_TASK_METER,90999)==0&&runtime_stale_tasks(seen,RUNTIME_TASK_METER,91000)==RUNTIME_TASK_METER);
+ runtime_check_t runtime={0};assert(!runtime_check_step(&runtime,1000,RUNTIME_TASK_STATUS));assert(!runtime_check_step(&runtime,5999,RUNTIME_TASK_STATUS));
+ assert(runtime_check_step(&runtime,6000,RUNTIME_TASK_STATUS)==RUNTIME_TASK_STATUS);assert(!runtime_check_step(&runtime,6500,0));
+ puts("PASS: startup ignores router outages; local validation, rollback and persistent runtime task supervision are bounded and fail-safe");return 0;
 }
