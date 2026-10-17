@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1100" viewBox="0 0 1200 1100" role="img" aria-labelledby="title desc">
+<title id="title">TeeNet · externe Zähler und automatische RS485-Module</title>
+<desc id="desc">Zwei getrennte RS485-Busse verbinden den ESP32 mit Shell und Wallbox-Zähler. Ein Netzwerk-Hauszähler liefert Bezug und Einspeisung. Optionales Relaisboard und Kontakte sind separat dargestellt.</desc>
+<style>text{font:18px Arial,sans-serif;fill:#244a62}.heading{font-size:25px;font-weight:bold}.small{font-size:16px}.box{fill:white;stroke:#bed6e0;stroke-width:2}.wire{fill:none;stroke:#007fa8;stroke-width:3}.note{fill:#e6f4f8}.optional{fill:#fff4e4;stroke:#e4ba70;stroke-width:2}</style>
+<rect width="1200" height="1100" fill="#eef5f8"/TeeNet/>
+<text x="45" y="53" style="font-size:32px;font-weight:bold">TeeNet · Anschlussübersicht</text>
+<text x="45" y="83">ESP32-S3 N16R8 · automatische 3,3-V-RS485-Module · externe Zähler</text>
+<rect class="box" x="45" y="125" width="295" height="520" rx="20"/TeeNet/>
+<text class="heading" x="70" y="168">ESP32-S3</text><text x="70" y="199">GPIO-Logik: 3,3 V</text>
+<text x="70" y="255">GPIO17 · TX</text><text x="70" y="290">GPIO18 · RX</text>
+<text x="70" y="385">GPIO4 · TX</text><text x="70" y="420">GPIO5 · RX</text>
+<text x="70" y="528">WLAN zum Router</text><text x="70" y="590">Versorgung per USB</text>
+<rect class="box" x="420" y="215" width="310" height="105" rx="14"/TeeNet/>
+<text x="441" y="245" style="font-weight:bold">RS485-Modul 1 · automatisch</text>
+<text class="small" x="441" y="275">TX → Moduleingang</text><text class="small" x="441" y="300">Modulausgang → RX</text>
+<path class="wire" d="M340 254H420 M340 290H420"/TeeNet/>
+<rect class="box" x="845" y="215" width="310" height="105" rx="14"/TeeNet/>
+<text class="heading" x="868" y="260">Shell-Wallbox</text><text x="868" y="293">RS485 · Xemex / DLB</text>
+<path class="wire" d="M730 268H845"/TeeNet/><text class="small" x="755" y="251">A / B</text>
+<rect class="box" x="420" y="345" width="310" height="105" rx="14"/TeeNet/>
+<text x="441" y="375" style="font-weight:bold">RS485-Modul 2 · automatisch</text>
+<text class="small" x="441" y="405">TX → Moduleingang</text><text class="small" x="441" y="430">Modulausgang → RX</text>
+<path class="wire" d="M340 384H420 M340 420H420"/TeeNet/>
+<rect class="box" x="845" y="345" width="310" height="105" rx="14"/TeeNet/>
+<text class="heading" x="867" y="385">Wallbox-Zähler</text><text class="small" x="867" y="417">Hier: Xemex / Eastron</text>
+<path class="wire" d="M730 397H845"/TeeNet/><text class="small" x="755" y="380">A / B</text>
+<rect class="note" x="420" y="125" width="735" height="65" rx="12"/TeeNet/>
+<text class="small" x="439" y="151">Beide Module: VCC an 3,3 V, GND an ESP-GND. Automatische Umschaltung.</text>
+<text class="small" x="439" y="176">Signalrichtung prüfen: TXD/RXD-Beschriftungen unterscheiden sich je nach Modul.</text>
+<rect class="box" x="420" y="490" width="735" height="105" rx="14"/TeeNet/>
+<text class="heading" x="441" y="529">Hauszähler über Netzwerk</text>
+<text x="441" y="562">Wattwächter / Tasmota, Shelly oder EM24 · Bezug / Einspeisung</text>
+<path class="wire" stroke-dasharray="7 6" d="M340 535H420"/TeeNet/>
+<text class="small" x="420" y="630">Die Stromzangen gehören an den passenden externen Zähler, nicht an den ESP.</text>
+<rect class="optional" x="45" y="675" width="1110" height="235" rx="18"/TeeNet/>
+<text class="heading" x="70" y="712">Optional · Relaisboard und externe Kontakte</text>
+<text x="70" y="750">GPIO12 → Relais</text><text x="800" y="750">GPIO13 → Rückmeldung</text>
+<text class="small" x="70" y="779">GPIO12 → Relais-Kanal 1. Dessen COM/NO schaltet den Steuerkreis der Schützspule A1/A2.</text>
+<text class="small" x="70" y="807">Beispiel ESC441: vier Öffner; zwei davon in L2/L3. L1, N und PE bleiben verbunden.</text>
+<text class="small" x="70" y="835">GPIO13: Schützstellung nur über galvanisch getrennten Hilfskontakt gegen GND zurückmelden.</text>
+<text class="small" x="70" y="863">GPIO6 gegen GND: Manuell / PV-Überschuss · GPIO7 gegen GND: EVU · nur potentialfrei.</text>
+<text class="small" x="70" y="891">Netz- und Spulenkreis nach Gerätehandbuch; Netzspannung nie an ESP oder ESP-GND.</text>
+<rect class="box" x="45" y="940" width="1110" height="120" rx="18"/TeeNet/>
+<text class="heading" x="70" y="979">Überlastungsschutz Hausanschluss</text>
+<text x="70" y="1013">Drei echte Phasenströme: z. B. Xemex, SDM630, Shelly Pro 3EM oder EM24.</text>
+<text class="small" x="70" y="1042">Dritter separater RS485-Bus bei Bedarf: TX GPIO43 · RX GPIO44 · automatisches Modul.</text>
+<text class="small" x="45" y="1082">Standard-GPIOs · Änderungen im Expertenmodus beachten. A/B und Busabschluss nach Gerätehandbuch.</text>
+</svg>

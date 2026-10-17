@@ -7,7 +7,7 @@ $env:ZIG_GLOBAL_CACHE_DIR = Join-Path $workspaceRoot 'toolcache\zig-global-cache
 $env:ZIG_LOCAL_CACHE_DIR = Join-Path $workspaceRoot 'toolcache\zig-local-cache'
 $compiler = Join-Path $workspaceRoot 'toolcache\zig\zig-windows-x86_64-0.13.0\zig.exe'
 $jsonDir = Join-Path $workspaceRoot 'toolcache\esp-idf\v5.3.2\esp-idf\components\json\cJSON'
-foreach ($suite in @('phase_setup','assets','boot_check','http_encoding','gpio','gpio_atom','gpio_http','core','pv','battery_regression','energy_profiles','runtime','restart','review','sessions','calibration','hardware','hardware_atom','features','huawei','network','grid_fallback','fixed_phase','basic_mode','priority','support','support_atom','em24','opendtu','github_release','github_release_atom','evcc','rs485','rs485_io','bounded_socket','control_storage','expert_storage','wallbox_network','phase_status','phase_controller','phase_mqtt','phase_mqtt_storage','http_json','session_snapshot','xemex_two','mqtt_input','phase_output_network','shelly_phase','json_memory','config_apply','plan_http','terms','expert')) {
+foreach ($suite in @('telemetry','phase_setup','assets','boot_check','http_encoding','gpio','gpio_atom','gpio_http','core','pv','battery_regression','energy_profiles','runtime','restart','review','sessions','calibration','hardware','hardware_atom','features','huawei','network','grid_fallback','fixed_phase','basic_mode','priority','support','support_atom','em24','opendtu','github_release','github_release_atom','evcc','rs485','rs485_io','bounded_socket','control_storage','expert_storage','wallbox_network','phase_status','phase_controller','phase_mqtt','phase_mqtt_storage','http_json','session_snapshot','xemex_two','mqtt_input','phase_output_network','shelly_phase','json_memory','config_apply','plan_http','terms','expert')) {
     if ($Only.Count -gt 0 -and $suite -notin $Only) { continue }
     $baseSuite = $suite -replace '_atom$',''
     $defines = @('-DCJSON_NESTING_LIMIT=16')
@@ -131,4 +131,7 @@ node tests/test_phase_test_ui.cjs
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 node tests/test_phase_settings_layout.cjs
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+node tests/test_update_notice.cjs
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="1120" viewBox="0 0 1280 1120" role="img" aria-labelledby="title desc">
+<title id="title">Optionale Phasenumschaltung mit Relaisboard und Öffnerschütz · Beispiel Hager ESC441</title>
+<desc id="desc">GPIO12 steuert Kanal 1 des Relaisboards. Dessen Schließerkontakt schaltet die 230-Volt-Spule des ESC441. Zwei Öffner des Schützes unterbrechen L2 und L3 vor der Wallbox. L1, Neutralleiter und Schutzleiter bleiben verbunden. GPIO13 liest eine getrennte potentialfreie Rückmeldung gegen GND.</desc>
+<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#2283a5"/TeeNet/></marker></defs>
+<style>text{font:19px system-ui,Segoe UI,sans-serif;fill:#254b62}.title{font-size:30px;font-weight:700}.heading{font-size:23px;font-weight:650}.small{font-size:16px}.label{font-size:18px;font-weight:600}.box{fill:#fff;stroke:#c7dce6;stroke-width:2}.logic{fill:none;stroke:#2283a5;stroke-width:3}.phase{fill:none;stroke:#4e5762;stroke-width:4}.neutral{fill:none;stroke:#3685c5;stroke-width:4}.pe{fill:none;stroke:#469963;stroke-width:5}.coil{fill:none;stroke:#ad7642;stroke-width:3}.mechanical{fill:none;stroke:#93a8b3;stroke-width:2;stroke-dasharray:7 6}</style>
+<rect width="1280" height="1120" rx="20" fill="#f3f8fb"/TeeNet/>
+<text class="title" x="40" y="56">Optional · Relaisboard &amp; Öffnerschütz</text>
+<text x="40" y="91">Funktionsschema für die Umschaltung zwischen einer und drei Phasen</text>
+<rect x="40" y="119" width="1200" height="54" rx="10" fill="#e7f3f8"/TeeNet/>
+<text class="small" x="59" y="152">Erst Laden stoppen → frischen Strom unter 1 A für 8 s bestätigen → Schütz schalten → Pause → Laden starten</text>
+
+<text class="heading" x="40" y="214">1 · Steuerung und Spulenkreis</text>
+<rect class="box" x="40" y="241" width="272" height="206" rx="14"/TeeNet/>
+<text class="heading" x="60" y="278">ESP32-S3</text>
+<text x="60" y="322">GPIO12</text><text x="60" y="371">GND</text>
+<text class="small" x="60" y="420">GPIO-Logik: 3,3 V</text>
+<rect class="box" x="426" y="241" width="298" height="206" rx="14"/TeeNet/>
+<text class="heading" x="446" y="278">Relaisboard · Kanal 1</text>
+<text x="446" y="322">IN1</text><text x="446" y="371">DC− / GND</text>
+<text class="small" x="446" y="420">DC+ an 5-V-Versorgung</text>
+<path class="logic" marker-end="url(#arrow)" d="M312 316H426"/TeeNet/>
+<path class="logic" d="M312 365H426"/TeeNet/>
+<text class="small" x="40" y="482">Beispiel: Relais auf LOW aktiv stellen und denselben Schaltpegel in TeeNet wählen.</text>
+
+<rect class="box" x="816" y="241" width="424" height="206" rx="14"/TeeNet/>
+<text class="heading" x="836" y="278">230-V-Steuerkreis</text>
+<text class="small" x="836" y="307">L über passenden Steuerkreisschutz</text>
+<path class="coil" d="M842 345H900 M934 345H1000 M1078 345H1195"/TeeNet/>
+<circle cx="900" cy="345" r="4" fill="#ad7642"/TeeNet/><circle cx="934" cy="345" r="4" fill="#ad7642"/TeeNet/>
+<path class="coil" d="M900 345L928 329"/TeeNet/>
+<text class="small" x="880" y="393">COM1 / NO1</text>
+<rect x="1000" y="325" width="78" height="40" fill="#fff9f1" stroke="#ad7642" stroke-width="2"/TeeNet/>
+<text class="small" x="1006" y="350">Spule K1</text>
+<text class="small" x="993" y="393">A1</text><text class="small" x="1070" y="393">A2 → N</text>
+<text class="small" x="836" y="426">Beispiel K1: ESC441 · 4 Öffner</text>
+<path class="mechanical" d="M724 330H798"/TeeNet/>
+<text class="small" x="822" y="482">Netz- und Spulenkreis getrennt von ESP/GND führen.</text>
+
+<text class="heading" x="40" y="535">2 · Leistungspfad vor der Wallbox</text>
+<rect class="box" x="40" y="558" width="1200" height="307" rx="14"/TeeNet/>
+<text class="label" x="63" y="595">Netz / vorhandene Schutzgeräte</text>
+<text class="label" x="978" y="595">Shell Advanced 3.0</text>
+<rect x="570" y="657" width="140" height="108" rx="10" fill="#eef5f8" stroke="#c7dce6"/TeeNet/>
+<text class="small" x="584" y="707">K1 · 2 Öffner</text>
+<text x="68" y="641">L1</text><path class="phase" d="M118 635H1174"/TeeNet/>
+<text x="68" y="691">L2</text><path class="phase" d="M118 685H611 M649 685H1174 M611 685L649 685"/TeeNet/>
+<circle cx="611" cy="685" r="4" fill="#4e5762"/TeeNet/><circle cx="649" cy="685" r="4" fill="#4e5762"/TeeNet/>
+<text x="68" y="741">L3</text><path class="phase" d="M118 735H611 M649 735H1174 M611 735L649 735"/TeeNet/>
+<circle cx="611" cy="735" r="4" fill="#4e5762"/TeeNet/><circle cx="649" cy="735" r="4" fill="#4e5762"/TeeNet/>
+<path class="mechanical" d="M632 661V754"/TeeNet/>
+<text x="68" y="791">N</text><path class="neutral" d="M118 785H1174"/TeeNet/>
+<text x="68" y="841">PE</text><path class="pe" d="M118 835H1174"/TeeNet/>
+
+<rect x="40" y="891" width="576" height="80" rx="12" fill="#e7f3f8"/TeeNet/>
+<text class="label" x="60" y="922">Relais AUS · Spule AUS → 3 Phasen</text>
+<text class="small" x="60" y="950">L2 und L3 sind durch die Öffner verbunden.</text>
+<rect x="640" y="891" width="600" height="80" rx="12" fill="#e7f3f8"/TeeNet/>
+<text class="label" x="660" y="922">Relais EIN · Spule EIN → 1 Phase</text>
+<text class="small" x="660" y="950">L2 und L3 sind getrennt; L1, N und PE bleiben verbunden.</text>
+
+<text class="small" x="40" y="1009">Rückmeldung: GPIO13 → galvanisch getrennter potentialfreier Öffnerkontakt → ESP-GND.</text>
+<text class="small" x="40" y="1037">Geschlossen gegen GND = Schütz abgefallen / 3 Phasen · offen = Schütz angezogen / 1 Phase.</text>
+<text class="small" x="40" y="1074">ESC441 = Beispielmodell. Spulenspannung / Kontakte passend wählen. Funktionsschema; Netzanschluss durch Elektrofachkraft.</text>
+</svg>

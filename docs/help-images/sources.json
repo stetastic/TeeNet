@@ -1,0 +1,33 @@
+{
+  "esp32-s3-module.png": {
+    "source": "User-uploaded ESP32-S3 N16R8 pinout image, retained in teennet-pcb/reference/esp32-user-pinout.png"
+  },
+  "rs485-auto-module.png": {
+    "source": "User-uploaded automatic TTL to RS485 module image, retained in teennet-pcb/reference/rs485-user-photo.png"
+  },
+  "relay-2ch.png": {
+    "source": "https://www.reichelt.de/de/de/shop/produkt/entwicklerboards_-_relais-modul_2_channel_5_v_srd-05vdc-sl-c-242810",
+    "image": "https://cdn-reichelt.de/bilder/web/xxl_ws/A300%2FDEBO_RELAIS_2CH_01.png?type=ProductXxl",
+    "description": "Product illustration of the optional 2-channel relay board, not a photograph of the user's assembled installation"
+  },
+  "phase-switching.svg": {
+    "source": "Original TeeNet functional diagram",
+    "references": [
+      "https://cdn-reichelt.de/documents/datenblatt/A300/ANLEITUNGHLRELMDEUTSCH.pdf",
+      "https://hager.com/intl-en/catalogue/information/esc441-contactor-40a-4nc-230v"
+    ]
+  },
+  "guide.html#flow-title": {
+    "source": "Original TeeNet functional diagram",
+    "description": "Separate Shell, wallbox meter, house meter and optional PV/battery data paths."
+  },
+  "guide.html#shelly-plan-title": {
+    "source": "Original TeeNet functional diagram",
+    "references": [
+      "https://shelly-api-docs.shelly.cloud/gen2/Devices/Gen2/ShellyPro1/",
+      "https://shelly-api-docs.shelly.cloud/gen2/ComponentsAndServices/Switch/",
+      "https://shelly-api-docs.shelly.cloud/gen2/ComponentsAndServices/Input/"
+    ],
+    "description": "Logical control/feedback overview only, not mains-voltage wiring."
+  }
+}

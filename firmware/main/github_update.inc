@@ -98,6 +98,7 @@ static esp_err_t github_get(httpd_req_t *req){
     cJSON_AddBoolToObject(o,"ok",github_update.ok);cJSON_AddNumberToObject(o,"progress",github_update.progress);
     cJSON_AddStringToObject(o,"message",github_update.message);cJSON_AddStringToObject(o,"version",github_update.release.version);
     cJSON_AddStringToObject(o,"sha256",github_update.release.sha256);cJSON_AddNumberToObject(o,"bytes",github_update.release.bytes);
+    cJSON_AddNumberToObject(o,"checked_age_s",github_update.checked_at?(now_ms()-github_update.checked_at)/1000:-1);
     cJSON_AddBoolToObject(o,"newer",github_update.ok&&firmware_version_compare(github_update.release.version,EMS_VERSION)>0);
     UNLOCK();return send_json(req,o);
 }

@@ -754,7 +754,7 @@ async function waitGitHub(){
 let githubRelease=null;
 $('github-check').addEventListener('click',()=>action(async()=>{
   githubRelease=null;$('github-install').hidden=true;
-  await api('/api/update/github',{action:'check'});const result=await waitGitHub();githubRelease=result;window.dispatchEvent(new CustomEvent('teenet-release',{detail:{version:result.version}}));
+  await api('/api/update/github',{action:'check'});const result=await waitGitHub();githubRelease=result;window.dispatchEvent(new CustomEvent('teenet-release',{detail:result}));
   $('github-install').hidden=!result.newer;$('github-install').textContent=`TeeNet ${result.version} installieren`;
   $('github-status').textContent=result.newer?`TeeNet ${result.version} verfügbar.`:`GitHub: TeeNet ${result.version}. Installierte Version ${state.version} ist aktuell oder neuer.`;
 }));
@@ -827,7 +827,7 @@ window.addEventListener('resize',()=>{drawCharts();updateHeaderOffset();});
 if(typeof ResizeObserver!=='undefined')new ResizeObserver(updateHeaderOffset).observe(document.querySelector('.app-header'));
 updateHeaderOffset();
 
-function showPage(){const anchor=location.hash.slice(1),groups=['equipment-settings','opendtu-settings','huawei-settings','relay-settings','connection-settings','shell-settings','meter-settings','house-settings','hardware-settings','consumption-settings','mqtt-settings','evcc-settings','vehicle-settings','diagnostic-settings','maintenance','appearance-settings','expert-settings'];const page=anchor==='statistics'?'statistics':anchor==='settings'||groups.includes(anchor)?'settings':'overview';for(const id of ['overview','statistics','settings'])$(id).hidden=id!==page;document.querySelector('.status-wrap').hidden=page!=='overview';document.querySelectorAll('nav a').forEach(a=>{const active=a.getAttribute('href')==='#'+page;a.classList.toggle('active',active);if(active)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});if(page==='statistics'&&initialized){loadHistory();loadSessions();}if(groups.includes(anchor)){for(let section=$(anchor);section;section=section.parentElement)if(section.tagName==='DETAILS')section.open=true;}requestAnimationFrame(()=>{drawCharts();if(groups.includes(anchor))$(anchor).scrollIntoView({block:'start'});else window.scrollTo(0,0);});}
+function showPage(){const anchor=location.hash.slice(1),groups=['firmware-update','equipment-settings','opendtu-settings','huawei-settings','relay-settings','connection-settings','shell-settings','meter-settings','house-settings','hardware-settings','consumption-settings','mqtt-settings','evcc-settings','vehicle-settings','diagnostic-settings','maintenance','appearance-settings','expert-settings'];const page=anchor==='statistics'?'statistics':anchor==='settings'||groups.includes(anchor)?'settings':'overview';for(const id of ['overview','statistics','settings'])$(id).hidden=id!==page;document.querySelector('.status-wrap').hidden=page!=='overview';document.querySelectorAll('nav a').forEach(a=>{const active=a.getAttribute('href')==='#'+page;a.classList.toggle('active',active);if(active)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});if(page==='statistics'&&initialized){loadHistory();loadSessions();}if(groups.includes(anchor)){for(let section=$(anchor);section;section=section.parentElement)if(section.tagName==='DETAILS')section.open=true;}requestAnimationFrame(()=>{drawCharts();if(groups.includes(anchor))$(anchor).scrollIntoView({block:'start'});else window.scrollTo(0,0);});}
 
 const donateUrl=$('donate-link').href;
 let qrLoading=false;
@@ -850,6 +850,51 @@ loadDeviceTheme();
 
 window.addEventListener('hashchange',showPage);
 
+// Automatic update notice: checks only while the interface is open; never installs.
+(()=>{
+ const dialog=$('update-available-dialog'),text=$('update-available-text');
+ const interval=6*60*60*1000,retry=30*60*1000;
+ let next=0,checking=false,pending=null;
+ const dismissed=new Set();
+ function ready(){return online&&initialized&&state?.terms_accepted&&state.telemetry_decided!==false&&!busy&&!uploading&&!state.firmware_check_pending&&!document.hidden&&!document.querySelector('dialog[open]');}
+ function offer(result){
+  if(!result?.ok||!result.newer||!result.version||dismissed.has(result.version))return;
+  pending=result;
+  if(!ready())return;
+  text.textContent=`TeeNet ${result.version} ist verfügbar. Installiert ist Version ${state.version}. Du kannst das Update unter „Firmware & Sicherung“ ansehen und selbst starten.`;
+  dialog.showModal();
+ }
+ function dismiss(){if(pending)dismissed.add(pending.version);pending=null;dialog.close();}
+ $('update-available-later').addEventListener('click',dismiss);
+ dialog.addEventListener('cancel',event=>{event.preventDefault();dismiss();});
+ $('update-available-view').addEventListener('click',()=>{
+  const release=pending;dismiss();if(!release)return;
+  githubRelease=release;$('github-install').hidden=false;$('github-install').textContent=`TeeNet ${release.version} installieren`;
+  $('github-status').textContent=`TeeNet ${release.version} verfügbar. Vor der Installation erneut prüfen, falls die Prüfung länger zurückliegt.`;
+  window.location.hash='#firmware-update';$('firmware-update').open=true;showPage();$('firmware-update').scrollIntoView({block:'center',behavior:'smooth'});
+ });
+ async function tick(){
+  if(checking||!ready())return;
+  if(pending){offer(pending);return;}
+  if(document.documentElement.dataset.demo==='true'||Date.now()<next)return;
+  checking=true;next=Date.now()+retry;
+  try{
+   let result=await api('/api/update/github');
+   if(result.installing)return;
+   if(!result.running&&(!result.ok||result.checked_age_s<0||!(result.checked_age_s<interval/1000))){
+    if(!ready())return;
+    await api('/api/update/github',{action:'check'});result={running:true};
+   }
+   const deadline=Date.now()+60000;
+   while(result.running){if(Date.now()>deadline||document.hidden)return;await new Promise(resolve=>setTimeout(resolve,1500));result=await api('/api/update/github');if(result.installing)return;}
+   if(result.ok){next=Date.now()+interval;offer(result);}
+  }catch(error){/* A failed background check must not interrupt the controls. */}
+  finally{checking=false;}
+ }
+ window.addEventListener('teenet-status',()=>setTimeout(tick,0));
+ window.addEventListener('teenet-release',event=>{next=Date.now()+interval;offer(event.detail);});
+ document.addEventListener('visibilitychange',()=>{if(!document.hidden)tick();});
+})();
 showPage();writes();poll();
 
 /* Separate Shelly actuator setup; meter searches keep their own results. */

@@ -1,0 +1,24 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "teenet-heartbeat",
+  "main": "worker/ingest.js",
+  "account_id": "44baeede39e17af128dee82f43ac507c",
+  "compatibility_date": "2026-10-16",
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": {
+    "enabled": false
+  },
+  "triggers": {
+    "crons": [
+      "17 3 * * *"
+    ]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "teennet-devices",
+      "database_id": "a802f93b-240f-4588-a458-51b1570fd82c"
+    }
+  ]
+}

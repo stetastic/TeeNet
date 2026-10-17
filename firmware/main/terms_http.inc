@@ -1,4 +1,4 @@
-/* Local consent only; no identity or external telemetry. */
+/* Local terms acceptance. Optional heartbeat consent is saved separately by telemetry_post. */
 static void terms_load(void) {
     nvs_handle_t handle;char revision[32];size_t size=sizeof(revision);
     if(config_storage_ok && nvs_open("wallbox_ems",NVS_READONLY,&handle)==ESP_OK){

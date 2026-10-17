@@ -116,6 +116,7 @@ static uint32_t evcc_poll_generation;
 static bool evcc_configuring;
 #define TERMS_REVISION "2026-10-09.2"
 static bool terms_accepted;
+static void telemetry_json(cJSON *o);
 static uint32_t loaded_settings_version;
 
 static energy_t energy;
@@ -1241,6 +1242,7 @@ static cJSON *status_json(bool include_token) {
 
     cJSON_AddBoolToObject(o,"terms_accepted",terms_accepted);
     cJSON_AddStringToObject(o,"terms_revision",TERMS_REVISION);
+    telemetry_json(o);
     cJSON_AddBoolToObject(o,"evcc_test_enabled",evcc_control.configured);
     cJSON_AddBoolToObject(o,"evcc_local_stop",evcc_control.inhibited);
     cJSON_AddBoolToObject(o,"evcc_lease_expired",evcc_control.expired);
@@ -3116,6 +3118,7 @@ static esp_err_t meter_preview_post(httpd_req_t *req) {
     return meter_preview_get(req);
 }
 #include "terms_http.inc"
+#include "telemetry_http.inc"
 #include "evcc_http.inc"
 #include "shell_limits.inc"
 
@@ -3156,6 +3159,7 @@ static void start_web(void) {
 
 
         {.uri="/api/status",.method=HTTP_GET,.handler=status_handler},
+        {.uri="/api/telemetry",.method=HTTP_POST,.handler=telemetry_post},
 
         {.uri="/api/theme",.method=HTTP_GET,.handler=theme_get},{.uri="/api/theme",.method=HTTP_POST,.handler=theme_post},
 
@@ -3493,7 +3497,7 @@ void app_main(void) {
 
     }
 
-    load_settings(); expert_load(); load_control_memory(); terms_load(); evcc_load(); load_energy(); load_plan(); load_diagnostics();
+    load_settings(); expert_load(); load_control_memory(); terms_load(); telemetry_load(); evcc_load(); load_energy(); load_plan(); load_diagnostics();
     if(evcc_control.configured&&charge_plan.active){charge_plan.active=false;plan_phase=PLAN_OFF;plan_dirty=true;plan_revision++;} phase_setup(); contact_setup(); setenv("TZ","CET-1CEST,M3.5.0,M10.5.0/3",1); tzset();
     LOCK();esp_reset_reason_t reset=esp_reset_reason();event_locked(reset==ESP_RST_TASK_WDT||reset==ESP_RST_INT_WDT||reset==ESP_RST_WDT?"boot_watchdog":reset==ESP_RST_BROWNOUT?"boot_brownout":"boot");UNLOCK();
 
@@ -3507,6 +3511,7 @@ void app_main(void) {
 
        operation must still permit local metering and manual control. */
 
+    telemetry_lock=xSemaphoreCreateMutex();
     start_wifi(); start_web();
 
     status_led_setup();
@@ -3532,6 +3537,7 @@ void app_main(void) {
     if(huawei_io)xTaskCreate(huawei_task,"huawei",4096,NULL,6,NULL);
     if(xTaskCreate(house_meter_task,"house_meter",6144,NULL,6,NULL)!=pdPASS) ESP_LOGE(TAG,"House meter task failed");
 
+    if(telemetry_lock&&xTaskCreate(telemetry_task,"device_stats",6144,NULL,2,NULL)!=pdPASS)ESP_LOGW(TAG,"Device statistics task unavailable");
     reset_clear_at=now_ms()+15000;
 
     if(xTaskCreate(status_task,"status",6144,NULL,5,NULL)!=pdPASS) abort();

@@ -1,0 +1,13 @@
+{
+  "name": "teennet-stetastic",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/worker.test.mjs",
+    "deploy:heartbeat": "wrangler deploy --config wrangler.ingest.json",
+    "deploy:statistics": "wrangler deploy --config wrangler.admin.json"
+  },
+  "devDependencies": {
+    "wrangler": "^4.151.1"
+  }
+}
