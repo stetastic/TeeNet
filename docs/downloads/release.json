@@ -1,67 +1,67 @@
 {
   "version": "1.23",
-  "build_id": "c51ed7670726",
+  "build_id": "88309cfd48db",
   "schema": 34,
   "hardware": "ESP32-S3 N16R8 \u00b7 Shell Recharge Advanced 3.0",
   "files": [
     {
       "name": "TeeNet-1.23-ota.bin",
-      "bytes": 1733600,
-      "sha256": "cfea8efae593bad469155067359db4253643b96192ad33a1994efd90f431f288"
+      "bytes": 1734128,
+      "sha256": "c563c092c086ecfcca85c2035e1150f3bc290a041ed1ad4a618998f3a7958575"
     },
     {
       "name": "TeeNet-1.23-usb.zip",
-      "bytes": 1329854,
-      "sha256": "f834c7e795565e850b0a274a456b9e135d8759ba6218970155457ac6d72bc1ef"
+      "bytes": 1330452,
+      "sha256": "c7bd2f3c5e581e940ea896f2925e1dbb204de5db8dc3a594085ba6bc4761d0e8"
     },
     {
       "name": "TeeNet-1.23-source.zip",
-      "bytes": 3237379,
-      "sha256": "c3df6c84b8bfe47591c6e7bb6947a2165f90b4f81c3f15c84bc0d74e85c0b3a4"
+      "bytes": 3238603,
+      "sha256": "81d3f8d74152f13d190e31df7a2ab2ab026e56f1ba49e2e56ce097711b1dad34"
     },
     {
       "name": "TeeNet-1.23-factory.bin",
       "bytes": 2236416,
-      "sha256": "2aaea5091207237646f6f7905cd04095766405bf92922b143c946ff65cadecd6"
+      "sha256": "2aca760d0e03e43a71dffd09297d7bd9044882876a4fa3febd2172535ff3e5b3"
     },
     {
       "name": "iobroker.teenet-0.1.3.tgz",
       "bytes": 169209,
-      "sha256": "8270c919ce295a0305fe9a18c5fdb3dcdd76b99229d684afbc63efa06a5e5dd8"
+      "sha256": "562419ab0165bf7e64c8db5ace9d10d970b79c798f6b88f1a70a1a5b80dfd513"
     },
     {
       "name": "TeeNet-1.23-andreas-testboard-ota.bin",
-      "bytes": 1733712,
-      "sha256": "537c48bd3e19b69283880f28306f7d15e753b3ffb8c7835d9645ecd04e4d4437"
+      "bytes": 1734240,
+      "sha256": "ee63a99fc9e65d0a7d4d1897d309103f13e07973dac71284b336c0557b66debb"
     },
     {
       "name": "TeeNet-1.23-andreas-testboard-usb.zip",
-      "bytes": 1329365,
-      "sha256": "da987aa7ffe90980d22be060f8f4573dc28007a124e79cd31235938cef6016bc"
+      "bytes": 1329939,
+      "sha256": "fdacb2b9212c30153b8261a3fac13f7febdb05e653ad35618179f2f243b12c3a"
     },
     {
       "name": "TeeNet-1.23-andreas-testboard-factory.bin",
       "bytes": 2236416,
-      "sha256": "2c61e06440e6f0c216affb6df28328c29a6dd09356c5a6db5fa356b21a18f3f1"
+      "sha256": "6b2bf024d9f6eec0536d79524f25c1f8e8592fe43ffbeacdb250bf54d4bdac54"
     },
     {
       "name": "TeeNet-1.23-demo.zip",
-      "bytes": 2099787,
-      "sha256": "47c0adc632cea2109281add730dbce54637e5a3c0c8bc748e37e3d40f214adcf"
+      "bytes": 2100438,
+      "sha256": "43dd8b948728bd8b6f0d429e41a8cd0c4e86dbcac0a316ec4769440de7b16c2a"
     }
   ],
   "profiles": {
     "esp32s3-n16r8": {
       "name": "ESP32-S3 N16R8",
       "flash_mb": 16,
-      "build_id": "c51ed7670726",
+      "build_id": "88309cfd48db",
       "ota": "TeeNet-1.23-ota.bin"
     },
     "andreas-testboard": {
       "name": "Andreas Testboard",
       "hardware": "M5Stack AtomS3 Lite",
       "flash_mb": 8,
-      "build_id": "0f18e9dbe4f0",
+      "build_id": "2ec7f453be28",
       "ota": "TeeNet-1.23-andreas-testboard-ota.bin",
       "hardware_tested": false
     }

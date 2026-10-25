@@ -182,6 +182,7 @@ function render(){if(!state)return;const s=state,valid=online;
   $('control-status').hidden=false;
   $('control-status-text').textContent=status.text;
   $('control-status').dataset.kind=status.kind;
+  $('control-status').dataset.charging=String(charging&&status.kind==='normal');
   const locked=s.charge_stop_latched||s.phase_state==='fehler';
   $('unlock-control').hidden=!locked;
   $('unlock-control').disabled=!valid||busy||s.can_unlock===false;

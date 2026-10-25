@@ -1217,46 +1217,50 @@ void manual_report_smooth(manual_report_filter_t *filter,const settings_t *s,flo
        and manual operation. The former bypass in PV made the compensated
        minimum undershoot; removing compensation instead left an overshoot. */
     if((s->mode!=MODE_MANUAL && !(s->mode==MODE_PV && s->charge_phases==1))||target<=0||!isfinite(target)) { filter->active=false; return; }
-    if(s->charge_phases==1) {
-        /* A lagging synthetic overload keeps lowering the Shell limit even
-           after measured L1 has fallen. Release an obsolete reduction at once;
-           only building a new reduction is ramped. Start from neutral load so
-           idle feedback cannot add a long climb from grid-limit minus target. */
-        if(!isfinite(report[0]) || report[0]>=s->grid_limit_a+s->max_charge_a+1.0f) {
+    unsigned phases=s->charge_phases==1?1:3;
+    /* A stop or invalid feedback must bypass the ramp on every active phase. */
+    for(unsigned p=0;p<phases;p++) {
+        if(!isfinite(report[p]) || report[p]>=s->grid_limit_a+s->max_charge_a+1.0f) {
             filter->active=false;return;
         }
-        if(!filter->active||now<=filter->last_ms||now-filter->last_ms>5000) {
-            filter->reported[0]=fmaxf(s->grid_limit_a,report[0]);
-            filter->last_ms=now;filter->active=true;report[0]=filter->reported[0];return;
-        }
-        float delta=report[0]-filter->reported[0];
-        if(delta<0 && filter->reported[0]>s->grid_limit_a) {
-            filter->reported[0]=fmaxf(s->grid_limit_a,report[0]);
-        } else {
-            float error=report[0]-s->grid_limit_a;
-            float rate=delta<0?0.3f:error>2.0f?0.5f:0.15f;
-            float max_delta=rate*(now-filter->last_ms)/1000.0f;
-            filter->reported[0]+=fminf(max_delta,fmaxf(-max_delta,delta));
-        }
-        report[0]=filter->reported[0];filter->last_ms=now;return;
     }
-    if(!filter->active||now<=filter->last_ms||now-filter->last_ms>5000) {
-        memcpy(filter->reported,report,sizeof(filter->reported));filter->last_ms=now;filter->active=true;return;
-    }
-    /* Near the proven 6 kW three-phase floor, approach the final limit particularly
-       gently. The car first starts with useful headroom; TeeNet then closes
-       the remaining error at 0.05 A/s. Mid-range changes stay responsive and
-       the upper range retains its calmer proven ramp. */
-    float rate=target<=8.8f?0.05f:target<9?0.15f:target<13?0.4f:0.2f;
-    for(int p=0;p<3;p++) {
+    bool seed=!filter->active||now<=filter->last_ms||now-filter->last_ms>5000;
+    for(unsigned p=0;p<phases;p++) {
+        /* Preserve the commissioned three-phase start permission: grant
+           headroom while the car is idle, then regulate from measured current.
+           One-phase operation retains its independently proven neutral seed. */
+        if(seed) {
+            filter->reported[p]=phases==1?fmaxf(s->grid_limit_a,report[p]):report[p];
+            report[p]=filter->reported[p];continue;
+        }
+        /* Once fresh feedback reaches the requested current, revoke all
+           remaining increase immediately. A start-up value below the grid
+           limit is obsolete here and would keep the Shell accelerating. */
+        if(phases==3 && report[p]>=s->grid_limit_a)
+            filter->reported[p]=fmaxf(s->grid_limit_a,filter->reported[p]);
         float delta=report[p]-filter->reported[p];
-        /* Lower simulated grid load grants MORE charging current. Only that
-           direction is accelerated; reductions keep the measured slow ramp. */
-        float max_delta=rate*(delta<0?2.0f:1.0f)*(now-filter->last_ms)/1000.0f;
-        filter->reported[p]+=fminf(max_delta,fmaxf(-max_delta,delta));
+        /* Release obsolete overload immediately as measured current falls.
+           Holding it would keep reducing the Shell limit below the car's
+           minimum, stopping and restarting the charge. */
+        if(delta<0 && filter->reported[p]>s->grid_limit_a) {
+            filter->reported[p]=fmaxf(s->grid_limit_a,report[p]);
+        } else {
+            /* Keep the commissioned one-/three-phase gains. The essential
+               correction is revoking obsolete start permission above, so the
+               gentle ramp starts at the grid limit instead of many amps below. */
+            float error=report[p]-s->grid_limit_a;
+            float rate;
+            if(phases==1)rate=delta<0?0.3f:error>2.0f?0.5f:0.15f;
+            else {
+                rate=target<=8.8f?0.05f:target<9?0.15f:target<13?0.4f:0.2f;
+                if(delta<0)rate*=2;
+            }
+            float max_delta=rate*(now-filter->last_ms)/1000.0f;
+            filter->reported[p]+=fminf(max_delta,fmaxf(-max_delta,delta));
+        }
         report[p]=filter->reported[p];
     }
-    filter->last_ms=now;
+    filter->last_ms=now;filter->active=true;
 }
 typedef struct {
     uint32_t date;

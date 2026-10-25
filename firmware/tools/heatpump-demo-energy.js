@@ -15,7 +15,9 @@
   const remainder=power!==null&&combined!==null?combined-power:null;
   // An unknown submeter must not look like zero, nor produce a fictitious remainder.
   const houseLoad=remainder!==null&&remainder>=0?remainder:null;
-  return {enabled,power,houseLoad,flow:power===null?'unknown':power>50?'forward':'idle'};
+  const houseVisible=!s.basic_mode&&!!(s.zero_feed_enabled||s.grid_guard_enabled);
+  const houseNote=houseLoad!==null?'ohne Wallbox und Wärmepumpe':remainder!==null?'Messwerte werden abgeglichen':'Messwerte fehlen';
+  return {enabled,power,houseLoad,houseVisible,houseNote,flow:power===null?'unknown':power>50?'forward':'idle'};
  }
  if(typeof module==='object'&&module.exports)module.exports={model};
  if(typeof document==='undefined'||!document.body||!window.TeeNetEnergy)return;
@@ -55,15 +57,15 @@
   node.querySelector('[data-heatpump-value]').textContent=power(m.power);
   node.querySelector('[data-heatpump-state]').textContent=state;
   if(document.documentElement.dataset.dashboardView!=='graphic')return;
-  const showHome=m.houseLoad!==null;
+  const showHome=m.houseVisible;
   root.querySelector('.en-home-node').hidden=!showHome;
   paths.querySelector('[data-route="home"]').toggleAttribute('hidden',!showHome);
   paths.querySelector('.en-home-junction').toggleAttribute('hidden',!showHome);
   root.querySelector('[data-house-load]').textContent=power(m.houseLoad);
-  root.querySelector('[data-house-note]').textContent='ohne Wallbox und Wärmepumpe';
+  root.querySelector('[data-house-note]').textContent=m.houseNote;
   consumers.style.setProperty('--en-consumer-count',showHome?'3':'2');
   const hpX=showHome?300:150,carX=showHome?500:450;
-  if(showHome)consumerRoute('home',100,m.houseLoad>50?'forward':'idle');
+  if(showHome)consumerRoute('home',100,m.houseLoad===null?'unknown':m.houseLoad>50?'forward':'idle');
   consumerRoute('heatpump',hpX,m.flow);
   const carFlow=paths.querySelector('[data-route="car"]').dataset.flow;
   consumerRoute('car',carX,carFlow);

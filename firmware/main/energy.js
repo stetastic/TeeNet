@@ -16,6 +16,10 @@
   // the home's own consumption, so every displayed flow closes the balance.
   const balance=grid!==null&&pv!==null&&battery!==null&&carPower!==null?pv+grid-battery-carPower:null;
   const houseLoad=balance!==null&&balance>=0?balance:null;
+  // Asynchronous meters can briefly disagree when charging starts. Keep the
+  // configured house in place; unknown power is neither zero nor absent equipment.
+  const houseVisible=gridVisible;
+  const houseNote=houseLoad!==null?'ohne Wallbox':balance!==null?'Messwerte werden abgeglichen':'Messwerte fehlen';
   const soc=extended&&s.battery_protect&&online&&(s.battery_soc_ok??s.battery_ok)&&finite(s.battery_soc_pct)?Math.max(0,Math.min(100,s.battery_soc_pct)):null;
   const carSoc=extended&&s.vehicle_soc_enabled&&online&&finite(s.car_soc_pct)?Math.max(0,Math.min(100,s.car_soc_pct)):null;
   const gridFlow=grid===null?'unknown':grid>50?'import':grid< -50?'export':'idle';
@@ -28,10 +32,10 @@
   const solarDominant=supply>50&&pv/supply>=.6;
   const gridDominant=supply>50&&Math.max(0,grid)/supply>=.6;
   const houseMood=solarDominant?'happy':gridDominant?'sad':'neutral';
-  return {grid,pv,battery,carPower,houseLoad,soc,carSoc,gridVisible,gridFlow,batteryFlow,scene,houseMood,charging,measured,
+  return {grid,pv,battery,carPower,houseLoad,houseVisible,houseNote,soc,carSoc,gridVisible,gridFlow,batteryFlow,scene,houseMood,charging,measured,
    phaseCurrents:measured?currents:null,currentsEstimated:measured&&!!s.power_is_extrapolated,
    solarVisible:pv!==null,batteryVisible:soc!==null||battery!==null,
-   pvFlow:pv!==null&&pv>50,
+   pvFlow:pv!==null&&pv>50,pvNight:pv!==null&&pv<100,
    // Presence and charge level are independent. Never infer presence from SOC.
    carVisible:charging||!(online&&s.vehicle_status_known&&s.vehicle_connection_state==='disconnected'),
    carHappy:charging&&solarDominant};
@@ -94,14 +98,14 @@
   const batterySoc=document.getElementById('compact-battery-soc'),socValue=text('battery-soc');
   batterySoc.textContent=socValue+' %'+(document.getElementById('battery-soc').dataset.stale==='true'&&socValue!=='—'?' · veraltet':'');
   if(document.documentElement.dataset.dashboardView!=='graphic')return;
-  Object.assign(root.dataset,{scene:m.scene,houseMood:m.houseMood,solarVisible:String(m.solarVisible),carVisible:String(m.carVisible),carHappy:String(m.carHappy),charging:String(m.charging),gridFlow:m.gridFlow,batteryFlow:m.batteryFlow,pvFlow:String(m.pvFlow),paused:String(document.hidden||!online)});
+  Object.assign(root.dataset,{scene:m.scene,houseMood:m.houseMood,solarVisible:String(m.solarVisible),carVisible:String(m.carVisible),carHappy:String(m.carHappy),charging:String(m.charging),gridFlow:m.gridFlow,batteryFlow:m.batteryFlow,pvFlow:String(m.pvFlow),pvNight:String(m.pvNight),paused:String(document.hidden||!online)});
   write('[data-number]',power(m.grid));
   write('[data-direction]',{unknown:'Keine Messwerte',import:'Bezug',export:'Einspeisung',idle:'Ausgeglichen'}[m.gridFlow]);
   write('[data-pv-value]',power(m.pv));
   write('[data-battery-label]',{charge:'Lädt',discharge:'Entlädt',idle:'Ruht',unknown:'Keine Messwerte'}[m.batteryFlow]);
   write('[data-battery-power]',power(m.battery));
   write('[data-house-load]',power(m.houseLoad));
-  write('[data-house-note]',m.houseLoad===null?'Nicht ermittelbar':'ohne Wallbox');
+  write('[data-house-note]',m.houseNote);
   write('.en-battery-soc',number(m.soc,0)+(m.soc===null?'':' %'));
   const fill=59*(m.soc??0)/100;
   find('.en-battery-level').setAttribute('height',String(fill));
@@ -116,13 +120,13 @@
   }
   hide('.en-roof-panel',!m.solarVisible);
   hide('.en-distribution',!shown.length);
-  const showHome=m.houseLoad!==null,carX=showHome?450:300;
+  const showHome=m.houseVisible,carX=showHome?450:300;
   hide('.en-home-node,[data-route="home"],.en-home-junction',!showHome);
   find('.en-consumers').style.setProperty('--en-consumer-count',showHome?'2':'1');
   find('.en-car-junction').setAttribute('cx',String(carX));
   const points=[carX,...(showHome?[150]:[]),...shown.map((_,i)=>(i+.5)*600/shown.length)];
   find('.en-bus').setAttribute('d','M'+Math.min(...points)+' 45H'+Math.max(...points));
-  route('home',m.houseLoad>50?'forward':'idle',150,true);
+  route('home',m.houseLoad===null?'unknown':m.houseLoad>50?'forward':'idle',150,true);
   route('car',m.charging?'forward':m.measured?'idle':'unknown',carX,true);
   hide('[data-car-part]',!m.carVisible);
   hide('[data-car-soc-block]',!m.carVisible||m.carSoc===null);
@@ -196,7 +200,9 @@
   const remainder=power!==null&&combined!==null?combined-power:null;
   // An unknown submeter must not look like zero, nor produce a fictitious remainder.
   const houseLoad=remainder!==null&&remainder>=0?remainder:null;
-  return {enabled,power,houseLoad,flow:power===null?'unknown':power>50?'forward':'idle'};
+  const houseVisible=!s.basic_mode&&!!(s.zero_feed_enabled||s.grid_guard_enabled);
+  const houseNote=houseLoad!==null?'ohne Wallbox und Wärmepumpe':remainder!==null?'Messwerte werden abgeglichen':'Messwerte fehlen';
+  return {enabled,power,houseLoad,houseVisible,houseNote,flow:power===null?'unknown':power>50?'forward':'idle'};
  }
 
  if(typeof document==='undefined'||!document.body||!window.TeeNetEnergy)return;
@@ -236,15 +242,15 @@
   node.querySelector('[data-heatpump-value]').textContent=power(m.power);
   node.querySelector('[data-heatpump-state]').textContent=state;
   if(document.documentElement.dataset.dashboardView!=='graphic')return;
-  const showHome=m.houseLoad!==null;
+  const showHome=m.houseVisible;
   root.querySelector('.en-home-node').hidden=!showHome;
   paths.querySelector('[data-route="home"]').toggleAttribute('hidden',!showHome);
   paths.querySelector('.en-home-junction').toggleAttribute('hidden',!showHome);
   root.querySelector('[data-house-load]').textContent=power(m.houseLoad);
-  root.querySelector('[data-house-note]').textContent='ohne Wallbox und Wärmepumpe';
+  root.querySelector('[data-house-note]').textContent=m.houseNote;
   consumers.style.setProperty('--en-consumer-count',showHome?'3':'2');
   const hpX=showHome?300:150,carX=showHome?500:450;
-  if(showHome)consumerRoute('home',100,m.houseLoad>50?'forward':'idle');
+  if(showHome)consumerRoute('home',100,m.houseLoad===null?'unknown':m.houseLoad>50?'forward':'idle');
   consumerRoute('heatpump',hpX,m.flow);
   const carFlow=paths.querySelector('[data-route="car"]').dataset.flow;
   consumerRoute('car',carX,carFlow);

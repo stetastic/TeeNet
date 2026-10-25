@@ -48,4 +48,4 @@ Die Geräteoberfläche prüft beim Öffnen und anschließend alle sechs Stunden 
 
 Gespeicherte HIGH-/LOW-Relaislogik und Einzelkontakt-Zuordnung bleiben erhalten. Versionsbezogene Konfigurationsspeicherung schützt ältere Rollback-Daten; beide OTA-Wege sperren bei Schütztest und unzureichenden Strommesswerten. Am Desktop sind Logo, Shell-Recharge-Hinweis und Seitenmenü wieder vorhanden. [Prüfbericht und Grenzen](docs/Pruefbericht-1.23-Kompatibilitaet.md).
 
-Die Korrektur wurde auf dem GPIO-ESP mit gestoppter Ladung und bestätigter Dreiphasenrückmeldung geprüft. Bereits installierte 1.23 aktualisiert man über „Update aus Datei“; die Versionsnummer bleibt 1.23.
+Zusätzlich sind die dreiphasige Abregelung und die grafische Anzeige bei kurzzeitig widersprüchlichen Messwerten korrigiert. Reale Prüfungen mit 6 kW, 9 kW und zurück auf 6 kW liefen ohne Ladeabbruch; anschließend wurde gestoppt. Desktop-Hilfe und Status sind übersichtlicher, unter 0,1 kW PV erscheint ein Mond. Bereits installierte 1.23 aktualisiert man über „Update aus Datei“; die Versionsnummer bleibt 1.23.

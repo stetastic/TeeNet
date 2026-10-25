@@ -23,5 +23,11 @@ assert.equal(model({...base,battery_power_ok:false},true).houseLoad,null);
 assert.equal(model({...base,pv_display_enabled:false},true).houseLoad,null);
 assert.equal(model({...base,house_meter_ok:false},true).houseLoad,null);
 assert.equal(model({...base,heatpump_w:20000},true).houseLoad,null,'inconsistent measurements never become a negative house load');
+for(const change of [{wallbox_w:20000},{heatpump_ok:false},{house_meter_ok:false},{feedback_ok:false}]){
+ const transient=model({...base,...change},true);
+ assert.equal(transient.houseLoad,null);assert.equal(transient.houseVisible,true,'house must not disappear during charging transients');
+}
+assert.equal(model({...base,heatpump_w:20000},true).houseNote,'Messwerte werden abgeglichen');
+assert.equal(model({...base,basic_mode:true},true).houseVisible,false);
 assert.equal(model({...base,actual_a:[0,0,0],wallbox_w:0},true).houseLoad,9450,'heat pump remains a consumer while the wallbox is stopped');
 console.log('Heat-pump demo energy: balance, disabled, stopped, zero, missing, stale/offline and inconsistent data passed.');

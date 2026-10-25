@@ -70,6 +70,30 @@ test('house demand balances generation, storage and the separate wallbox branch'
 test('inconsistent readings do not invent zero house consumption',()=>{
  const m=model({...live,pv_generation_w:1000,house_power_w:0,battery_charge_w:0,battery_discharge_w:0,wallbox_w:7000},true);
  assert.equal(m.houseLoad,null);
+ assert.equal(m.houseVisible,true);
+ assert.equal(m.houseNote,'Messwerte werden abgeglichen');
+});
+
+test('house position survives charging transients and missing samples',()=>{
+ for(const values of [{wallbox_w:12000},{feedback_ok:false},{house_meter_ok:false}]){
+  const m=model({...live,...values},true);
+  assert.equal(m.houseLoad,null);assert.equal(m.houseVisible,true);
+ }
+ assert.equal(model(live,false).houseVisible,true);
+ assert.equal(model({...live,basic_mode:true},true).houseVisible,false);
+ assert.equal(model({...live,zero_feed_enabled:false,grid_guard_enabled:false},true).houseVisible,false);
+});
+
+test('moon replaces the sun only below a known 0.1 kW PV reading',()=>{
+ for(const pv of [0,6.6,99.9]){
+  const m=model({...live,pv_generation_w:pv},true);
+  assert.equal(m.pvNight,true);assert.equal(m.solarVisible,true);
+ }
+ for(const pv of [100,100.1,1000])assert.equal(model({...live,pv_generation_w:pv},true).pvNight,false);
+ for(const extra of [{pv_generation_w:null},{pv_display_enabled:false},{basic_mode:true}]){
+  const m=model({...live,...extra},true);assert.equal(m.pvNight,false);assert.equal(m.solarVisible,false);
+ }
+ assert.equal(model(live,false).pvNight,false);
 });
 
 test('phase detail preserves zero readings and marks estimates, never stale currents',()=>{

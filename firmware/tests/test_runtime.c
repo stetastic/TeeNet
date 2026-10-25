@@ -125,21 +125,26 @@ int main(void) {
     assert(!g.stop_count&&!g.latched); /* short current with no car is not a charge */
     settings_defaults(&saved);saved.mode=MODE_MANUAL;
     manual_report_filter_t filter={0};float report[3]={24,24,24};
-    manual_report_smooth(&filter,&saved,8,1000,report);near(report[0],24);
-    report[0]=report[1]=report[2]=32;
-    manual_report_smooth(&filter,&saved,8,2000,report);near(report[0],24.05f);
-    report[0]=report[1]=report[2]=32;
-    manual_report_smooth(&filter,&saved,11,3000,report);near(report[0],24.45f);
-    report[0]=report[1]=report[2]=32;
-    manual_report_smooth(&filter,&saved,14,4000,report);near(report[0],24.65f);
-    report[0]=report[1]=report[2]=20;
-    manual_report_smooth(&filter,&saved,8,5000,report);near(report[0],24.55f);
-    report[0]=report[1]=report[2]=20;
-    manual_report_smooth(&filter,&saved,11,6000,report);near(report[0],23.75f);
-    report[0]=report[1]=report[2]=20;
-    manual_report_smooth(&filter,&saved,14,7000,report);near(report[0],23.35f);
-    report[0]=report[1]=report[2]=23.2f;
-    manual_report_smooth(&filter,&saved,14,8000,report);near(report[0],23.2f);
+    manual_report_smooth(&filter,&saved,8.7f,1000,report);
+    for(int p=0;p<3;p++)near(report[p],24); /* original idle start permission */
+    /* Replay the captured 6 kW target / 15.624 A measured overshoot. The
+       wire value must ask for a reduction now, not stay below 32 A for minutes. */
+    for(int t=2000;t<=5000;t+=1000){
+        for(int p=0;p<3;p++)report[p]=39.724f;
+        manual_report_smooth(&filter,&saved,8.7f,t,report);
+        for(int p=0;p<3;p++)assert(report[p]>saved.grid_limit_a);
+    }
+    /* A falling measured current releases obsolete overload on every phase. */
+    report[0]=32;report[1]=32.2f;report[2]=31.8f;
+    manual_report_smooth(&filter,&saved,8.7f,6000,report);
+    near(report[0],32);near(report[1],32.2f);near(report[2],32);
+    report[0]=report[1]=report[2]=49;
+    manual_report_smooth(&filter,&saved,8.7f,7000,report);near(report[0],49);assert(!filter.active);
+    report[0]=report[1]=report[2]=24;
+    manual_report_smooth(&filter,&saved,8.7f,8000,report);near(report[0],24);
+    for(int p=0;p<3;p++){filter.reported[p]=25;report[p]=32.8f;}
+    manual_report_smooth(&filter,&saved,8.7f,8500,report);
+    for(int p=0;p<3;p++)assert(report[p]>=32); /* no obsolete start-up acceleration */
     report[0]=report[1]=report[2]=47;
     manual_report_smooth(&filter,&saved,0,9000,report);near(report[0],47);assert(!filter.active);
     puts("PASS: tariff without charging interruption, v6/v7 calibration, idle without car, retry and rolling anti-cycle lock");
