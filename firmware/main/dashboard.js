@@ -17,6 +17,9 @@ async function loadDeviceTheme(){
   try{
     const result=await api('/api/theme',undefined,4000);
     if(result?.theme==='dark'||result?.theme==='light')setTheme(result.theme);
+    if(result?.view)window.TeeNetEnergy?.loadView(result.view);
+    if(result?.density)window.TeeNetEnergy?.loadDensity(result.density);
+    window.TeeNetEnergy?.loadNotice(result?.graphic_notice_pending===true);
   }catch(error){}
 }
 
@@ -140,6 +143,20 @@ function chargeButtonLabel(s,online,charging){
   return 'Startet · Stoppen';
 }
 
+function vehicleStatusView(s){
+  const labels={
+    disconnected:'Nicht angeschlossen',
+    connected:'Angeschlossen',
+    charging:'Lädt',
+    finished:'Ladung beendet',
+    fault:'Störung',
+    unknown:'Status nicht verfügbar'
+  };
+  const enabled=!!s?.vehicle_status_enabled;
+  const state=s?.vehicle_status_known&&labels[s.vehicle_connection_state]?s.vehicle_connection_state:'unknown';
+  return {visible:enabled,state,text:labels[state]};
+}
+
 function render(){if(!state)return;const s=state,valid=online;
 
   $('system-version').textContent=s.version?`V${s.version}`:'—';
@@ -151,6 +168,8 @@ function render(){if(!state)return;const s=state,valid=online;
   let message='';
 
   if(!['none','off','manual_stop','below_minimum','pv_waiting','pv_starting','pv_cooldown','pv_stopping','battery_reserve','evcc_waiting','evcc_local_stop','evcc_status'].includes(s.block_reason))message=reasons[s.block_reason]||'Status unbekannt.';
+
+  if(!message&&s.mode==='manual'&&powerSteps().length<=1)message='Keine gültige Ladestufe. Ladegrenzen prüfen.';
 
   if(s.reboot_required)message='Einstellungen gespeichert. Bitte neu starten.';
 
@@ -185,6 +204,9 @@ function render(){if(!state)return;const s=state,valid=online;
 
 
   $('charging').textContent=!measured?'Messung fehlt':charging?'Lädt':s.charge_stop_latched?'Start gesperrt':s.charge_retry_s>0?'Wiederanlaufpause':s.enabled&&s.target_current_a>0?'Start angefordert':s.mode==='pv'&&s.enabled?'Wartet auf Leistung':'Bereit';$('charging').classList.toggle('muted-pill',!charging);
+
+  const vehicle=vehicleStatusView(s),vehicleRow=$('vehicle-state-row');
+  vehicleRow.hidden=!vehicle.visible;vehicleRow.dataset.state=vehicle.state;$('vehicle-state').textContent=vehicle.text;
 
   $('today').textContent=format(energy.today_kwh,2);$('total').textContent=format(energy.total_kwh,2);$('coverage').textContent=`${format(energy.today_charging_s/3600,1)} h`;
   const resetDate=String(energy.total_reset_date||'');$('total-reset-date').textContent=resetDate.length===8?`seit ${resetDate.slice(6,8)}.${resetDate.slice(4,6)}.${resetDate.slice(0,4)}`:'seit Aufzeichnung';
@@ -226,9 +248,6 @@ function render(){if(!state)return;const s=state,valid=online;
   $('battery-start-toggle').textContent=!s.battery_protect?'Einrichtung nötig':s.battery_start_use?'Akku-Laden an':'Akku-Laden aus';
   $('battery-start-toggle').setAttribute('aria-pressed',String(!!s.battery_start_use));
   $('battery-start-note').textContent=`Bis ${format(s.battery_discharge_limit_w/1000,1)} kW · Hausakku bis ${format(s.battery_reserve_soc,0)} % nutzen`;
-  const steps=powerSteps();
-  $('target').textContent=$('mode').value==='manual'?(steps.length>1?'':'Keine gültige Ladestufe. Ladegrenzen prüfen.'):s.mode==='pv'&&s.enabled?(reasons[s.block_reason]==reasons.none?(charging?'Überschussladung läuft.':'Warte auf Ladeleistung vom Fahrzeug.'):(reasons[s.block_reason]||'Überschussladung')+(s.pv_wait_s>0?` Noch ${s.pv_wait_s} s.`:'')):'Starten, um PV-Überschuss zu nutzen.';
-  $('target').hidden=!$('target').textContent||!!s.charge_plan?.active;
 
   $('apply-control').textContent=chargeButtonLabel(s,valid,charging);
   $('apply-control').classList.toggle('primary-button',!!s.enabled);
@@ -250,19 +269,22 @@ function render(){if(!state)return;const s=state,valid=online;
   $('house-battery-power').dataset.direction=batteryFlow;
   $('house-battery-label').textContent={charging:'Akku lädt',discharging:'Akku entlädt',idle:'Akku bereit',unknown:'Akkuleistung'}[batteryFlow];
   $('house-battery-value').textContent=`${format(batteryFlow==='unknown'?null:Math.max(0,Math.abs(charge-discharge))/1000,2)} kW`;
-  const mqttSource=s.mqtt_input_source==='opendtu'?'OpenDTU':'Smart Home';
-  const signal=Number.isFinite(s.wifi_rssi_dbm)?` · ${s.wifi_rssi_dbm} dBm`:'';
-  const diagnostics=[diagnostic('Hardware',s.hardware||'ESP32-S3'),diagnostic('Heimnetz',s.wifi_ok?`${s.station_ip}${signal}`:'Nicht verbunden'),diagnostic('Uhrzeit',s.clock_ok?'Synchronisiert':'Warte auf Internetzeit'),diagnostic('MQTT',s.mqtt_ok?`Verbunden · ${mqttSource}`:`Nicht verbunden · ${mqttSource}`),diagnostic('Wallbox',s.wallbox_ok?'Kommunikation OK':'Keine aktuellen Abfragen'),diagnostic('Wallbox-Zähler',s.feedback_ok?'Daten aktuell':'Daten fehlen'),diagnostic('Hauszähler',s.house_meter_ok?'Daten aktuell':s.zero_feed_enabled||s.grid_guard_enabled?'Daten fehlen':'Nicht benötigt'),diagnostic('Speicherung',s.storage_ok?'Bereit':'Fehler'),...(s.huawei_enabled?[diagnostic('Huawei',s.huawei_ok?s.huawei_model:'Keine aktuellen Daten')]:[])];
-  diagnostics.push(diagnostic('Laufzeit seit Reset',window.TeeNetHealth?.uptimeText(s.uptime_s)||'—'));
-  if(typeof s.firmware_check_ok==='boolean')diagnostics.push(diagnostic('Firmware-Selbsttest',s.firmware_check_ok?'Bestanden':s.firmware_check_failed?'Fehlgeschlagen · Ladung gesperrt':'Prüfung läuft'));
-  if(s.runtime_watchdog_failed){const names=['Steuerung','Shell-Kommunikation','Wallbox-Zähler','Hauszähler','Phasenaktor'];diagnostics.push(diagnostic('Interne Aufgaben',names.filter((_,i)=>Number(s.runtime_watchdog_tasks)&(1<<i)).join(', ')+' reagiert nicht · Neustart erforderlich'));}
-  if([s.free_heap,s.min_free_heap,s.largest_free_block].every(Number.isFinite))diagnostics.push(diagnostic('Arbeitsspeicher',`${format(s.free_heap/1024,0)} KiB frei · Minimum ${format(s.min_free_heap/1024,0)} KiB · größter Block ${format(s.largest_free_block/1024,0)} KiB`));
-  if(s.external_mode_input_enabled)diagnostics.push(diagnostic('Betriebsart-Kontakt',s.external_mode_contact?'PV-Überschuss':'Manuell'));
-  if(s.evu_input_enabled)diagnostics.push(diagnostic('Extern Start / Stopp / EVU-Kontakt',s.evu_active?'Aktiv':'Frei'));
-  if(s.huawei_enabled&&s.house_meter_type==='huawei')diagnostics.push(diagnostic('Hausströme',s.house_current_ok&&Array.isArray(s.house_a)?s.house_a.map((a,i)=>`L${i+1} ${format(a,2)} A`).join(' · '):'Keine gültige dreiphasige Messung'));
-  if(s.grid_guard_enabled)diagnostics.push(diagnostic('Hausanschlussschutz',s.grid_guard_ok?'Messung OK':'Phasenwerte fehlen · maximal 8 kW'));
-  $('diagnostics').replaceChildren(...diagnostics);
+  if(lastStatusPath==='/api/status'&&statusRequestPath()==='/api/status'){
+    const mqttSource=s.mqtt_input_source==='opendtu'?'OpenDTU':'Smart Home';
+    const signal=Number.isFinite(s.wifi_rssi_dbm)?` · ${s.wifi_rssi_dbm} dBm`:'';
+    const diagnostics=[diagnostic('Hardware',s.hardware||'ESP32-S3'),diagnostic('Heimnetz',s.wifi_ok?`${s.station_ip}${signal}`:'Nicht verbunden'),diagnostic('Uhrzeit',s.clock_ok?'Synchronisiert':'Warte auf Internetzeit'),diagnostic('MQTT',s.mqtt_ok?`Verbunden · ${mqttSource}`:`Nicht verbunden · ${mqttSource}`),diagnostic('Wallbox',s.wallbox_ok?'Kommunikation OK':'Keine aktuellen Abfragen'),diagnostic('Wallbox-Zähler',s.feedback_ok?'Daten aktuell':'Daten fehlen'),diagnostic('Hauszähler',s.house_meter_ok?'Daten aktuell':s.zero_feed_enabled||s.grid_guard_enabled?'Daten fehlen':'Nicht benötigt'),diagnostic('Speicherung',s.storage_ok?'Bereit':'Fehler'),...(s.huawei_enabled?[diagnostic('Huawei',s.huawei_ok?s.huawei_model:'Keine aktuellen Daten')]:[])];
+    diagnostics.push(diagnostic('Laufzeit seit Reset',window.TeeNetHealth?.uptimeText(s.uptime_s)||'—'));
+    if(typeof s.firmware_check_ok==='boolean')diagnostics.push(diagnostic('Firmware-Selbsttest',s.firmware_check_ok?'Bestanden':s.firmware_check_failed?'Fehlgeschlagen · Ladung gesperrt':'Prüfung läuft'));
+    if(s.runtime_watchdog_failed){const names=['Steuerung','Shell-Kommunikation','Wallbox-Zähler','Hauszähler','Phasenaktor'];diagnostics.push(diagnostic('Interne Aufgaben',names.filter((_,i)=>Number(s.runtime_watchdog_tasks)&(1<<i)).join(', ')+' reagiert nicht · Neustart erforderlich'));}
+    if([s.min_free_heap,s.largest_free_block].every(Number.isFinite))diagnostics.push(diagnostic('Arbeitsspeicher',`${Number.isFinite(s.free_heap)?`${format(s.free_heap/1024,0)} KiB frei · `:''}Minimum ${format(s.min_free_heap/1024,0)} KiB · größter Block ${format(s.largest_free_block/1024,0)} KiB`));
+    if(s.external_mode_input_enabled)diagnostics.push(diagnostic('Betriebsart-Kontakt',s.external_mode_contact?'PV-Überschuss':'Manuell'));
+    if(s.evu_input_enabled)diagnostics.push(diagnostic('Extern Start / Stopp / EVU-Kontakt',s.evu_active?'Aktiv':'Frei'));
+    if(s.huawei_enabled&&s.house_meter_type==='huawei')diagnostics.push(diagnostic('Hausströme',s.house_current_ok&&Array.isArray(s.house_a)?s.house_a.map((a,i)=>`L${i+1} ${format(a,2)} A`).join(' · '):'Keine gültige dreiphasige Messung'));
+    if(s.grid_guard_enabled)diagnostics.push(diagnostic('Hausanschlussschutz',s.grid_guard_ok?'Messung OK':'Phasenwerte fehlen · maximal 8 kW'));
+    $('diagnostics').replaceChildren(...diagnostics);
+  }
 
+  window.TeeNetEnergy?.update(s,valid);
   window.teennetFeatures?.render();
   if(typeof window!=='undefined' && window.dispatchEvent && typeof CustomEvent==='function')window.dispatchEvent(new CustomEvent('teenet-status',{detail:s}));
 
@@ -290,18 +312,27 @@ function renderSessions(data){
   $('session-grid').textContent=sessionShare(data.grid_kwh,total,data.grid_cost_eur);
   $('session-solar').textContent=sessionShare(data.solar_kwh,total,data.solar_cost_eur);
   $('session-cost').textContent=`${format(data.cost_eur,2)} €`;
+  const list=$('session-rows');
+  const expanded=new Set(Array.from(list.querySelectorAll('details[open]'),node=>node.dataset.day));
+  const focused=list.contains(document.activeElement)?document.activeElement.closest('details')?.dataset.day:null;
   const rows=data.days.map(s=>{
-    const row=document.createElement('tr');
-    function cell(main,detail){const td=document.createElement('td');td.dataset.label=['Tag','Energie','Netz','Solar / Akku','Kosten'][row.children.length];const content=document.createElement('span');content.textContent=main;if(detail){const small=document.createElement('small');small.textContent=detail;content.append(small);}td.append(content);row.append(td);}
     const day=String(s.date),dayLabel=day.length===8?`${day.slice(6,8)}.${day.slice(4,6)}.${day.slice(0,4)}`:'Datum unbekannt';
-    cell(dayLabel,`${s.sessions} ${s.sessions===1?'Ladesitzung':'Ladesitzungen'} · ${format(s.charging_s/60,0)} Min. Ladezeit${s.active?' · Läuft / kurze Pause':''}`);
-    cell(`${format(s.energy_kwh,2)} kWh`);
-    cell(`${format(s.grid_kwh,2)} kWh · ${format(s.grid_cost_eur,2)} €`,`${format(s.energy_kwh?s.grid_kwh/s.energy_kwh*100:0,0)} %`);
-    cell(`${format(s.solar_kwh,2)} kWh · ${format(s.solar_cost_eur,2)} €`,`${format(s.energy_kwh?s.solar_kwh/s.energy_kwh*100:0,0)} %`);
-    cell(`${format(s.cost_eur,2)} €`);
-    return row;
+    const row=document.createElement('details');row.className='session-day';row.dataset.day=day;row.open=expanded.has(day);
+    const summary=document.createElement('summary'),heading=document.createElement('span'),date=document.createElement('b'),subtitle=document.createElement('small');
+    date.textContent=dayLabel;
+    subtitle.textContent=`${s.sessions} ${s.sessions===1?'Ladesitzung':'Ladesitzungen'} · ${format(s.charging_s/60,0)} Min. Ladezeit${s.active?' · Läuft / kurze Pause':''}`;
+    heading.append(date,subtitle);summary.append(heading);row.append(summary);
+    const facts=document.createElement('dl');
+    function detail(label,value,note){const pair=document.createElement('div'),term=document.createElement('dt'),description=document.createElement('dd');term.textContent=label;description.textContent=value;if(note){const small=document.createElement('small');small.textContent=note;description.append(small);}pair.append(term,description);facts.append(pair);}
+    detail('Energie',`${format(s.energy_kwh,2)} kWh`);
+    detail('Netz',`${format(s.grid_kwh,2)} kWh · ${format(s.grid_cost_eur,2)} €`,`${format(s.energy_kwh?s.grid_kwh/s.energy_kwh*100:0,0)} %`);
+    detail('Solar / Akku',`${format(s.solar_kwh,2)} kWh · ${format(s.solar_cost_eur,2)} €`,`${format(s.energy_kwh?s.solar_kwh/s.energy_kwh*100:0,0)} %`);
+    detail('Kosten',`${format(s.cost_eur,2)} €`);
+    row.append(facts);return row;
   });
-  $('session-rows').replaceChildren(...rows);$('session-empty').hidden=data.days.length>0;
+  list.replaceChildren(...rows);
+  if(focused)rows.find(row=>row.dataset.day===focused)?.querySelector('summary').focus({preventScroll:true});
+  $('session-empty').hidden=data.days.length>0;
   $('session-empty').textContent='Noch keine Ladesitzungen in diesem Zeitraum.';
   $('session-page').textContent=data.count?`${sessionOffset+1}–${Math.min(sessionOffset+20,data.count)} von ${data.count} Tagen`:'0 Tage';
   $('sessions-prev').disabled=sessionOffset===0;$('sessions-next').disabled=sessionOffset+20>=data.count;
@@ -382,7 +413,7 @@ function updateShellPins(){
 }
 $('shell-pins-default').addEventListener('click',()=>{const f=$('config-form').elements,tx=Number(state?.default_shell_tx_pin||17),rx=Number(state?.default_shell_rx_pin||18);f.wallbox_tx_pin.value=String(tx);f.wallbox_rx_pin.value=String(rx);updateShellPins();toast(`TX ${tx} / RX ${rx} ausgewählt. Zum Übernehmen speichern.`);});
 
-const additionalFeatureFields=['evcc_feature_enabled','pv_allocation_enabled','zero_feed_enabled','charge_plan_enabled','battery_protect','vehicle_soc_enabled','pv_display_enabled','relay_board_enabled','external_mode_input_enabled','evu_input_enabled','grid_guard_enabled','phase_switch_enabled','huawei_enabled','huawei_battery','huawei_pv'];
+const additionalFeatureFields=['heatpump_enabled','evcc_feature_enabled','pv_allocation_enabled','zero_feed_enabled','charge_plan_enabled','battery_protect','vehicle_soc_enabled','pv_display_enabled','relay_board_enabled','external_mode_input_enabled','evu_input_enabled','grid_guard_enabled','phase_switch_enabled','huawei_enabled','huawei_battery','huawei_pv'];
 function normalizeBasicFields(){
  const f=$('config-form').elements;if(f.basic_mode.value!=='true')return;
  for(const name of additionalFeatureFields)f[name].checked=false;
@@ -530,7 +561,38 @@ $('config-form').addEventListener('change',e=>{
  if(name==='pv_display_enabled'&&f[name].checked&&!(f.huawei_enabled.checked&&f.huawei_pv.checked))f.mqtt_enabled.checked=true;
  updateEquipment();
 });
-async function loadConfig(){const cfg=await api('/api/config');if(Number(cfg.mqtt_input_source)===1)cfg.mqtt_input_source=0;if(typeof cfg.phase_switch_enabled==='boolean')cfg.relay_board_enabled=cfg.phase_switch_enabled;configBaseline=cfg;for(const [name,value] of Object.entries(cfg)){const el=$('config-form').elements.namedItem(name);if(!el)continue;if(el.type==='checkbox')el.checked=value;else if(el.hasAttribute('data-boolean'))el.value=String(!!value);else if(el.type==='number'){const scale=Number(el.dataset.scale)||1;el.value=Number((Number(value)/scale).toFixed(4));}else if(!el.hasAttribute('data-secret')){if(el.tagName==='SELECT'&&!Array.from(el.options).some(option=>option.value===String(value))){const option=document.createElement('option');option.value=String(value);option.textContent=name==='phase_actuator_type'&&Number(value)===2?'Schaltaktor auswählen':String(value);option.hidden=name==='phase_actuator_type'&&Number(value)===2;option.disabled=option.hidden;el.append(option);}el.value=value;}}batterySliderDirty=false;$('battery-reserve-slider').value=String(Math.round(cfg.battery_reserve_soc/5)*5);updateBatterySlider();updateMeterFields();updateExpertMode();updateEquipment();secretPlaceholders();}
+async function loadConfig(preserveDraft=false){
+ const cfg=await api('/api/config'),previous=configBaseline;
+ const sameValue=(a,b)=>typeof a==='number'&&typeof b==='number'?Math.abs(a-b)<.0001:a===b;
+ // Protected phase changes refresh saved settings without discarding unrelated
+ // edits, including edits made while the request was in flight.
+ const drafts=preserveDraft?Array.from($('config-form').elements).filter(input=>{
+  if(!input.name||!(input.name in previous)||input.hasAttribute('data-secret'))return false;
+  const value=input.type==='checkbox'?input.checked:input.hasAttribute('data-boolean')?input.value==='true':input.type==='number'||input.hasAttribute('data-number')?Number(input.value)*(Number(input.dataset.scale)||1):input.value;
+  return !sameValue(value,previous[input.name]);
+ }).map(input=>({input,value:input.value,checked:input.checked})):[];
+ const authDraft=preserveDraft?$('phase-shelly-auth').value:null;
+ if(Number(cfg.mqtt_input_source)===1)cfg.mqtt_input_source=0;
+ if(typeof cfg.phase_switch_enabled==='boolean')cfg.relay_board_enabled=cfg.phase_switch_enabled;
+ configBaseline=cfg;
+ for(const [name,value] of Object.entries(cfg)){
+  const el=$('config-form').elements.namedItem(name);if(!el)continue;
+  if(el.type==='checkbox')el.checked=value;
+  else if(el.hasAttribute('data-boolean'))el.value=String(!!value);
+  else if(el.type==='number'){const scale=Number(el.dataset.scale)||1;el.value=Number((Number(value)/scale).toFixed(4));}
+  else if(!el.hasAttribute('data-secret')){
+   if(el.tagName==='SELECT'&&!Array.from(el.options).some(option=>option.value===String(value))){const option=document.createElement('option');option.value=String(value);option.textContent=name==='phase_actuator_type'&&Number(value)===2?'Schaltaktor auswählen':String(value);option.hidden=name==='phase_actuator_type'&&Number(value)===2;option.disabled=option.hidden;el.append(option);}
+   el.value=value;
+  }
+ }
+ for(const {input,value,checked} of drafts)if(sameValue(cfg[input.name],previous[input.name])){input.value=value;if(input.type==='checkbox')input.checked=checked;}
+ batterySliderDirty=false;$('battery-reserve-slider').value=String(Math.round(cfg.battery_reserve_soc/5)*5);
+ updateBatterySlider();updateMeterFields();updateExpertMode();updateEquipment();secretPlaceholders();
+ if(preserveDraft){
+  if(cfg.phase_shelly_password_set===previous.phase_shelly_password_set)$('phase-shelly-auth').value=authDraft;
+  window.teenetShellyPhase?.update();updateUnsavedFunctions();
+ }
+}
 function updateBatterySlider(){$('battery-reserve-view').textContent=`${format(Number($('battery-reserve-slider').value),0)} %`;}
 function powerFactor(phases=state?.charge_phases??3){const single=state?.single_power_per_amp_kw;return Number.isFinite(single)?single*phases:.23*phases;}
 function phaseForPower(kw){return state?.phase_switch_enabled?(kw>0&&kw<=3.5?1:3):(state?.fixed_charge_phases??3);}
@@ -802,8 +864,50 @@ $('ota-file').addEventListener('change',()=>{
   finally{uploading=false;$('ota-file').value='';if(accepted)schedulePoll(2000);}
  });
 });
-let statusPromise=null,loadedBuild='';
-async function pollStatus(){if(statusPromise)return statusPromise;statusPromise=(async()=>{const next=await api('/api/status',undefined,12000);if(loadedBuild&&next.build_id&&loadedBuild!==next.build_id){window.location.reload();return;}loadedBuild=next.build_id||loadedBuild;window.TeeNetHealth?.observe(next);state=next;settingsRebootPending=!!next.reboot_required;if(!settingsRebootPending)settingsRebootDeferred=false;updateUnsavedFunctions();token=state.token;statusFailures=0;showConnection(true);render();const updateMessage=window.TeeNetFirmware?.checkBoot(next);if(updateMessage){$('github-status').textContent=updateMessage;toast(updateMessage);}})();try{return await statusPromise;}finally{statusPromise=null;}}
+let statusPromise=null,loadedBuild='',lastStatusPath='';
+function statusRequestPath(){
+  const detail=$('diagnostic-settings');
+  if($('settings').hidden||!detail?.open)return '/api/status?profile=dashboard';
+  for(let section=detail.parentElement;section;section=section.parentElement)
+    if(section.tagName==='DETAILS'&&!section.open)return '/api/status?profile=dashboard';
+  return '/api/status';
+}
+async function pollStatus(){
+  if(statusPromise){
+    await statusPromise;
+    if(lastStatusPath!==statusRequestPath())return pollStatus();
+    return;
+  }
+  const path=statusRequestPath();
+  statusPromise=(async()=>{
+    const next=await api(path,undefined,12000);
+    // A closed/opened diagnosis must not render a response for the old view.
+    if(path!==statusRequestPath())return;
+    lastStatusPath=path;
+    if(loadedBuild&&next.build_id&&loadedBuild!==next.build_id){window.location.reload();return;}
+    loadedBuild=next.build_id||loadedBuild;
+    window.TeeNetHealth?.observe(next);
+    state=next;
+    settingsRebootPending=!!next.reboot_required;
+    if(!settingsRebootPending)settingsRebootDeferred=false;
+    updateUnsavedFunctions();token=state.token;statusFailures=0;showConnection(true);render();
+    const updateMessage=window.TeeNetFirmware?.checkBoot(next);
+    if(updateMessage){$('github-status').textContent=updateMessage;toast(updateMessage);}
+  })();
+  try{await statusPromise;}finally{statusPromise=null;}
+  if(path!==statusRequestPath())return pollStatus();
+}
+function refreshStatusProfile(){
+  if(!initialized||document.hidden)return;
+  const path=statusRequestPath();
+  if(lastStatusPath===path)return;
+  if(path==='/api/status')$('diagnostics').replaceChildren(diagnostic('Diagnose',online?'Wird geladen …':'Keine Verbindung zum Gerät.'));
+  if(online&&!busy&&!uploading)pollStatus().catch(()=>{
+    if(statusRequestPath()==='/api/status')$('diagnostics').replaceChildren(diagnostic('Diagnose','Diagnose derzeit nicht erreichbar.'));
+  });
+}
+for(let section=$('diagnostic-settings');section;section=section.parentElement)
+  if(section.tagName==='DETAILS')section.addEventListener?.('toggle',refreshStatusProfile);
 
 async function loadHistory(){if(historyBusy||!online||document.hidden)return;historyBusy=true;lastHistoryAt=Date.now();try{history=await api('/api/history',undefined,15000);drawCharts();}catch(error){}finally{historyBusy=false;}}
 
@@ -828,7 +932,7 @@ window.addEventListener('resize',()=>{drawCharts();updateHeaderOffset();});
 if(typeof ResizeObserver!=='undefined')new ResizeObserver(updateHeaderOffset).observe(document.querySelector('.app-header'));
 updateHeaderOffset();
 
-function showPage(){const anchor=location.hash.slice(1),groups=['firmware-update','equipment-settings','opendtu-settings','huawei-settings','relay-settings','connection-settings','shell-settings','meter-settings','house-settings','hardware-settings','consumption-settings','mqtt-settings','evcc-settings','vehicle-settings','diagnostic-settings','maintenance','appearance-settings','expert-settings'];const page=anchor==='statistics'?'statistics':anchor==='settings'||groups.includes(anchor)?'settings':'overview';for(const id of ['overview','statistics','settings'])$(id).hidden=id!==page;document.querySelector('.status-wrap').hidden=page!=='overview';document.querySelectorAll('nav a').forEach(a=>{const active=a.getAttribute('href')==='#'+page;a.classList.toggle('active',active);if(active)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});if(page==='statistics'&&initialized){loadHistory();loadSessions();}if(groups.includes(anchor)){for(let section=$(anchor);section;section=section.parentElement)if(section.tagName==='DETAILS')section.open=true;}requestAnimationFrame(()=>{drawCharts();if(groups.includes(anchor))$(anchor).scrollIntoView({block:'start'});else window.scrollTo(0,0);});}
+function showPage(){const anchor=location.hash.slice(1),groups=['firmware-update','equipment-settings','opendtu-settings','huawei-settings','relay-settings','connection-settings','shell-settings','meter-settings','house-settings','hardware-settings','consumption-settings','mqtt-settings','evcc-settings','vehicle-settings','diagnostic-settings','maintenance','appearance-settings','expert-settings'];const page=anchor==='statistics'?'statistics':anchor==='settings'||groups.includes(anchor)?'settings':'overview';for(const id of ['overview','statistics','settings'])$(id).hidden=id!==page;document.querySelector('.status-wrap').hidden=page!=='overview';document.querySelectorAll('nav a').forEach(a=>{const active=a.getAttribute('href')==='#'+page;a.classList.toggle('active',active);if(active)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});if(page==='statistics'&&initialized){loadHistory();loadSessions();}if(groups.includes(anchor)){for(let section=$(anchor);section;section=section.parentElement)if(section.tagName==='DETAILS')section.open=true;}requestAnimationFrame(()=>{drawCharts();if(groups.includes(anchor))$(anchor).scrollIntoView({block:'start'});else window.scrollTo(0,0);});refreshStatusProfile();}
 
 const donateUrl=$('donate-link').href;
 let qrLoading=false;
@@ -844,6 +948,22 @@ function showDonate(){
 $('donate-open').addEventListener('click',showDonate);
 $('donate-close').addEventListener('click',()=>$('donate-dialog').close());
 $('donate-dialog').addEventListener('click',e=>{if(e.target===$('donate-dialog'))$('donate-dialog').close();});
+function setUsageNoticeHidden(hidden,persist=true){
+  $('usage-notice').hidden=hidden;
+  $('usage-notice-hide').checked=hidden;
+  $('usage-notice-toggle').textContent=hidden?'Einblenden':'Ausblenden';
+  document.documentElement.dataset.usageNotice=hidden?'hidden':'visible';
+  if(persist)try{localStorage.setItem('teenet-usage-notice-hidden',hidden?'1':'0');}catch(error){}
+}
+$('usage-notice-hide').addEventListener('change',event=>setUsageNoticeHidden(event.target.checked));
+$('usage-notice-toggle').addEventListener('click',()=>setUsageNoticeHidden(!$('usage-notice').hidden));
+window.addEventListener('storage',event=>{
+  if(event.key==='teenet-usage-notice-hidden'||event.key===null)setUsageNoticeHidden(event.newValue==='1',false);
+});
+let usageNoticeHidden=false;
+try{usageNoticeHidden=localStorage.getItem('teenet-usage-notice-hidden')==='1';}catch(error){}
+setUsageNoticeHidden(usageNoticeHidden,false);
+
 $('theme-light').addEventListener('click',()=>selectTheme('light'));
 $('theme-dark').addEventListener('click',()=>selectTheme('dark'));
 setTheme(document.documentElement.dataset.theme);
@@ -961,6 +1081,7 @@ showPage();writes();poll();
  /* Status polling must not rewrite unsaved configuration fields. */
  function updateLive(){
   const kind=Number(f.phase_actuator_type.value),none=kind===2,baseline=typeof configBaseline==='undefined'?null:configBaseline;
+  if(kind===3||$('phase-shelly-auth').value!=='1')f.phase_shelly_password.disabled=true;
   const runtimeAllowed=!!state?.phase_mqtt_allowed,configured=runtimeAllowed||baseline?.phase_mqtt_output_enabled===true;
   $('phase-actuator-label').hidden=none&&configured;
   const outputNote=$('phase-mqtt-profile-note');outputNote.hidden=!none;
@@ -1257,7 +1378,7 @@ showPage();writes();poll();
   if(enabled&&phaseMqttDraft.transport===3)request.password=phaseMqttDraft.password;
   if(enabled&&Number.isInteger(phaseMqttDraft.shelly_model))request.shelly_model=phaseMqttDraft.shelly_model;
   const result=await api('/api/expert',request);
-  await loadConfig();
+  await loadConfig(true);
   await pollStatus();
   if(pin&&snapshot){const previous=phaseSettings(),updated={...(snapshot.settings||{}),...(configBaseline||{})};
    if(enabled)Object.assign(updated,{phase_mqtt_topic:request.topic,phase_mqtt_true_three_phase:request.true_three_phase,

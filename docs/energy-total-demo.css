@@ -1,0 +1,2 @@
+/* Preserve the uninterrupted energy bus without a summary box. */
+#teenet-house-mood .en-bus-label{display:none}

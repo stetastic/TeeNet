@@ -1,0 +1,46 @@
+/* Demo-only heat-pump consumer. Main firmware assets remain untouched. */
+#teenet-house-mood{--en-heatpump:#a66a38}
+:root[data-theme="dark"] #teenet-house-mood{--en-heatpump:#e0ac7b}
+#teenet-house-mood .en-route[data-route="heatpump"]{color:var(--en-heatpump)}
+#teenet-house-mood .en-heatpump-fan{transform-origin:64px 70px}
+#teenet-house-mood[data-heatpump-running="true"] .en-heatpump-fan{animation:en-heatpump-fan 3s linear infinite}
+#teenet-house-mood[data-paused="true"] .en-heatpump-fan,:root:not([data-dashboard-view="graphic"]) #teenet-house-mood .en-heatpump-fan{animation-play-state:paused}
+@keyframes en-heatpump-fan{to{transform:rotate(360deg)}}
+#teenet-house-mood[data-heatpump-enabled="true"] .en-consumers{gap:14px;align-items:stretch}
+#teenet-house-mood[data-heatpump-enabled="true"] .en-consumers .en-node{min-width:0}
+#teenet-house-mood[data-heatpump-enabled="true"] .en-consumers .en-art{width:140px;height:108px;max-width:100%}
+#teenet-house-mood[data-heatpump-enabled="true"] .en-consumers .en-label{overflow-wrap:normal}
+#teenet-house-mood[data-heatpump-enabled="true"] .en-consumers .en-detail{overflow-wrap:break-word}
+#teenet-house-mood[data-heatpump-enabled="true"] .en-wallbox-today dl>div{gap:3px}
+#teenet-house-mood[data-heatpump-enabled="true"] .en-wallbox-today dd{font-size:13px}
+:root[data-dashboard-view="graphic"] #teenet-house-mood[data-heatpump-enabled="true"] .en-consumers .en-art{width:92px;height:68px}
+:root[data-dashboard-view="graphic"] #teenet-house-mood[data-heatpump-enabled="true"] .en-heatpump-node{align-self:start;min-height:0;border:0!important;background:none;padding:14px 4px}
+@container(max-width:420px){
+ #teenet-house-mood[data-heatpump-enabled="true"] .en-consumers{gap:8px}
+ #teenet-house-mood[data-heatpump-enabled="true"] .en-consumers .en-node{padding:12px 5px;min-height:205px}
+ #teenet-house-mood[data-heatpump-enabled="true"] .en-consumers .en-art{width:98px;height:83px}
+ #teenet-house-mood[data-heatpump-enabled="true"] .en-consumers .en-power{font-size:22px;gap:2px}
+ #teenet-house-mood[data-heatpump-enabled="true"] .en-consumers .en-power small{font-size:10px}
+ #teenet-house-mood[data-heatpump-enabled="true"] .en-consumers .en-label{font-size:12px}
+ #teenet-house-mood[data-heatpump-enabled="true"] .en-consumers .en-detail{font-size:10px;line-height:1.45}
+ #teenet-house-mood[data-heatpump-enabled="true"] .en-wallbox-today{padding-left:0;padding-right:0}
+ #teenet-house-mood[data-heatpump-enabled="true"] .en-wallbox-today dd{font-size:11px}
+ :root[data-dashboard-view="graphic"] #teenet-house-mood[data-heatpump-enabled="true"] .en-consumers .en-art{width:78px;height:60px}
+ :root[data-dashboard-view="graphic"] #teenet-house-mood[data-heatpump-enabled="true"] .en-consumers .en-node{min-height:0;padding:10px 4px}
+}
+@container(max-width:300px){
+ #teenet-house-mood[data-heatpump-enabled="true"] .en-consumers{gap:6px}
+ #teenet-house-mood[data-heatpump-enabled="true"] .en-consumers .en-node{padding:10px 3px}
+ #teenet-house-mood[data-heatpump-enabled="true"] .en-consumers .en-power{font-size:19px;letter-spacing:-.5px}
+ #teenet-house-mood[data-heatpump-enabled="true"] .en-consumers .en-art{height:72px}
+ #teenet-house-mood[data-heatpump-enabled="true"] .en-consumers .en-label{font-size:11px}
+}
+@media(prefers-reduced-motion:reduce){#teenet-house-mood .en-heatpump-fan{animation:none!important}}
+#heatpump-settings .heatpump-demo-divider{margin-top:20px;padding-top:18px;border-top:1px solid var(--line)}
+#heatpump-settings .heatpump-demo-test{margin-top:20px;padding:16px;border:1px solid var(--line);border-radius:12px;background:var(--raised,#f2f7f9)}
+#heatpump-settings .heatpump-demo-test>strong{display:block;font-size:13px;margin-bottom:8px;color:var(--ink,#244a62)}
+#heatpump-settings .heatpump-demo-test>p:last-child{margin-bottom:0}
+#heatpump-settings .heatpump-demo-test .check-label{align-self:center}
+#heatpump-settings code{overflow-wrap:anywhere;white-space:normal}
+#heatpump-settings #heatpump-demo-output{line-height:1.6}
+:root[data-theme="dark"] #heatpump-settings .heatpump-demo-test{background:var(--surface,#192933)}

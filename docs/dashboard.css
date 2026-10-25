@@ -230,19 +230,23 @@ html[data-expert="false"] .expert-only,html[data-expert="false"] #settings detai
 
 #shell-pin-settings select option:disabled{color:#8a96a0}#shell-pin-warning{color:#8a4d13;background:#fff4e2}
 a[aria-disabled="true"]{opacity:.5;cursor:not-allowed}
-@media(max-width:600px){
-  #statistics .table-wrap{overflow:visible}
-  #statistics .table-wrap table,#session-rows{display:block;width:100%;min-width:0}
-  #statistics .table-wrap thead{display:none}
-  #session-rows tr{display:block;margin:0 0 14px;border:1px solid var(--line);border-radius:12px;padding:12px}
-  #session-rows td{display:grid;grid-template-columns:78px minmax(0,1fr);gap:10px;padding:9px 0;border:0;white-space:normal;font-size:12px}
-  #session-rows td::before{content:attr(data-label);color:var(--muted);font-weight:500;text-align:left}
-  #session-rows td>span{min-width:0;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
-  #session-rows td:first-child{display:block;border-bottom:1px solid var(--line);padding:0 0 10px;margin:0 0 3px;font-size:14px;font-weight:650}
-  #session-rows td:first-child::before{display:none}
-  #session-rows td small{white-space:normal;font-weight:400;line-height:1.5}
-  #session-rows td:last-child{padding-bottom:0;font-weight:650}
-}
+/* Daily details stay closed until the date is selected. */
+.session-days{display:grid;gap:12px;margin-top:18px}
+.session-day{margin:0;padding:0;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.session-day>summary{display:flex;align-items:center;justify-content:space-between;gap:14px;min-height:64px;margin:0;padding:14px 16px;list-style:none;cursor:pointer;color:var(--ink);font-weight:400}
+.session-day>summary::-webkit-details-marker{display:none}
+.session-day>summary::after{content:'›';flex:none;font-size:24px;line-height:1;color:var(--muted);transform:rotate(0deg)}
+.session-day[open]>summary::after{transform:rotate(90deg)}
+.session-day>summary b{display:block;font-size:15px;font-weight:650}
+.session-day>summary small{display:block;margin-top:6px;color:var(--muted);font-size:11px;line-height:1.5}
+.session-day>summary:focus-visible{outline:2px solid var(--green);outline-offset:-3px;border-radius:10px}
+.session-day>dl{margin:0 16px 14px;padding-top:12px;border-top:1px solid var(--line)}
+.session-day>dl>div{display:grid;grid-template-columns:minmax(75px,1fr) minmax(0,2fr);gap:12px;padding:9px 0;font-size:13px;line-height:1.5}
+.session-day dt{color:var(--muted)}
+.session-day dd{margin:0;text-align:right;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+.session-day dd small{display:block;margin-top:5px;color:var(--muted);font-size:11px}
+.session-day>dl>div:last-child dd{font-weight:650}
+
 .control-status{display:flex;align-items:center;gap:10px;padding:11px 15px;margin:0 0 20px;border:1px solid #dce6ee;border-radius:10px;background:#f8fbfd;color:#405e72;font-size:12px;min-height:42px}.status-indicator{flex:none;width:7px;height:7px;border-radius:50%;background:#246fa0}.control-status[data-kind="waiting"] .status-indicator{background:#af7a26}.control-status[data-kind="fault"]{color:#994533;border-color:#edcfc5;background:#fff5f1}.control-status[data-kind="fault"] .status-indicator{background:#b94f37}.phase-choice{display:block;margin-top:5px;color:var(--muted);font-size:11px}.phase-option{margin-top:17px;padding:14px;border:1px solid var(--line);border-radius:11px;background:#f8fafb}.phase-option p{font-size:11px;line-height:1.55;margin-top:7px}.settings-mode .check-label{margin-top:10px}
 
 #control-status-text{flex:1;min-width:0}.control-status .button{flex:none;min-height:28px;padding:4px 10px;font-size:11px;border-color:#d5dfE6}.control-status[data-kind="fault"] .button{border-color:#e0b8a9;color:#8c3927}
@@ -277,6 +281,19 @@ html[data-theme="dark"] :is(.panel,.metric,.house-card[data-direction],.battery-
 html[data-theme="dark"] :is(h1,h2,h3,.scene-heading h2,.house-card h2,.scene-detail strong,.target-reading strong,.battery-summary strong,.pv-reading b,.house-battery-power b,.session-totals b,.firmware-info strong,.phase b,#desired-power,#battery-settings>summary){color:var(--ink)}
 html[data-theme="dark"] :is(label,small,.muted,.footnote,.control-caption,.scene-reading span,.scene-reading small,.scene-detail span,.scene-detail small,.battery-summary span,.battery-choice small,.battery-limits,.battery-heading #battery-mode-note,.slider-bounds,.target-reading,.energy-summary small,.session-totals>span,.sessions-panel td small,.history-reset small,.pv-reading small,.house-card[data-direction] #house-caption,.signal,.signal small,.event-list time,.event-list small,.donate-dialog p,.donate-dialog small,.brand-caption,.unit,.metric-label,.metric-foot,th,footer){color:var(--muted)}
 html[data-theme="dark"] :is(.scene-detail,.scene-detail>div+div,.battery-choice,.battery-power-row,.target-reading,.session-totals,.session-totals>span,.stat-footer,.history-reset,.maintenance-block,.maintenance-subheading,.event-list li,td,th,footer){border-color:var(--line)}
+
+.vehicle-state{display:flex;align-items:center;gap:9px;padding:9px 12px;border-radius:11px;background:#f2f6f8;color:#6b8290;font-size:11px}
+.vehicle-state>span{display:flex;align-items:center;gap:8px}
+.vehicle-state>span::before{content:"";width:8px;height:8px;border-radius:50%;background:#9cacb5;box-shadow:0 0 0 4px #9cacb51b}
+.vehicle-state strong{margin-left:auto;color:#38586a;font-size:13px;font-weight:650}
+.vehicle-state[data-state="connected"]>span::before{background:#168eb2;box-shadow:0 0 0 4px #168eb21b}
+.vehicle-state[data-state="charging"]>span::before{background:#25a57a;box-shadow:0 0 0 4px #25a57a1e}
+.vehicle-state[data-state="finished"]>span::before{background:#7b77c7;box-shadow:0 0 0 4px #7b77c71d}
+.vehicle-state[data-state="fault"]{background:#fff2ee;color:#974b3d}.vehicle-state[data-state="fault"]>span::before{background:#d46c54}.vehicle-state[data-state="fault"] strong{color:#974b3d}
+html[data-theme="dark"] .vehicle-state{background:#132a36;color:var(--muted)}
+html[data-theme="dark"] .vehicle-state strong{color:var(--ink)}
+html[data-theme="dark"] .vehicle-state[data-state="fault"]{background:#3b2223;color:#efaaa0}
+html[data-theme="dark"] .vehicle-state[data-state="fault"] strong{color:#ffc3b9}
 html[data-theme="dark"] :is(.bus-card,.info-box,.diagnostics div,.meter-preview,.feature-box,.phase-option,.charge-plan,.firmware-info,.setup-check-row,.equipment-checks .check-label,.relay-readings>div,code,.pv-reading,.house-battery-power){background:var(--raised);border-color:var(--line);color:var(--ink)}
 html[data-theme="dark"] .equipment-panel label:has(input:checked){background:#1b3c4c}
 html[data-theme="dark"] :is(.advanced summary,.maintenance-block summary,.charge-plan summary,.bus-card>strong,.bus-card a,.battery-slider-label output,.text-button){color:var(--accent)}
@@ -371,37 +388,6 @@ html[data-theme="dark"] .terms-dialog{background:#152a38;color:#dce8ef;border-co
 .unsaved-banner{position:fixed;z-index:40;left:50%;right:auto;bottom:20px;transform:translateX(-50%);width:min(570px,calc(100vw - 48px));display:flex;align-items:center;gap:12px;margin:0;padding:13px 16px;border:1px solid #b9d6e2;border-radius:14px;background:#f7fcff;color:#244a62;box-shadow:0 8px 26px #17394f24}.unsaved-banner[hidden]{display:none}.unsaved-banner>div:not(.notice-restart-actions){flex:1;min-width:0}.unsaved-banner strong,.unsaved-banner span:not(.unsaved-symbol){display:block}.unsaved-banner strong{font-size:.95rem;margin-bottom:2px}.unsaved-banner span:not(.unsaved-symbol){font-size:.8rem;color:var(--muted)}.unsaved-symbol{display:grid;place-items:center;flex:0 0 36px;width:36px;height:36px;font-size:1.3rem;border-radius:10px;background:#e1f1f8;color:#087da0}.unsaved-banner .button{margin-left:auto;white-space:nowrap;min-height:40px}.notice-restart-actions{display:flex;align-items:center;gap:8px;margin-left:auto}.notice-restart-actions .button{margin-left:0}.unsaved-banner[data-kind="restart"]{flex-wrap:wrap}.unsaved-banner[data-kind="restart"] .notice-restart-actions{width:100%;justify-content:flex-end}.notice-restart-actions #settings-notice-later{white-space:normal;color:inherit;border-color:#b9d6e2;background:transparent}#config-form:has(.unsaved-banner:not([hidden])){padding-bottom:130px}html[data-theme="dark"] .unsaved-banner{background:var(--surface);color:var(--ink);border-color:#456579}html[data-theme="dark"] .unsaved-symbol{background:#203e50;color:#74d7ed}@media(max-width:600px){.unsaved-banner{bottom:12px;width:calc(100vw - 24px);gap:10px;padding:12px}.unsaved-banner strong{font-size:.88rem}.unsaved-banner span:not(.unsaved-symbol){font-size:.75rem}.unsaved-banner .button{font-size:.8rem;padding:9px 12px}.notice-restart-actions .button{flex:1}}
 #expert-unsaved{z-index:41}
 
-/* Keep status and navigation together; match the settings column width. */
-.app-header{display:contents}
-html{scroll-padding-top:var(--header-offset,24px)}
-main>#overview,main>#statistics,main>#settings{scroll-margin-top:100px}
-.status-wrap{max-width:1500px;margin-left:220px;padding:28px 44px 20px}
-.status-wrap .control-status{margin:0;background:#fff}
-main{padding-top:0}
-body:has(#settings:not([hidden])) .status-wrap .control-status{max-width:960px}
-html[data-theme="dark"] .status-wrap .control-status{background:#172530}
-.status-wrap .control-status[data-kind="fault"]{background:#fff5f1}
-html[data-theme="dark"] .status-wrap .control-status[data-kind="fault"]{background:#3b282d}
-@media(min-width:1600px){.status-wrap{padding-left:65px;padding-right:65px}}
-@media(max-width:1150px){.status-wrap{margin-left:180px;padding:28px 24px 20px}}
-@media(max-width:850px){
-  .app-header{display:block;position:sticky;top:0;z-index:30;margin:0;background:#fff;border-bottom:1px solid var(--line);box-shadow:0 3px 14px #17394f0a}
-  .app-header .rail{position:static}
-  .status-wrap{margin:0;padding:0 22px 12px;max-width:none}
-  .status-wrap .control-status{border:0;border-top:1px solid var(--line);border-radius:0;padding:10px 0 0;background:transparent;min-height:36px}
-  .status-wrap .control-status[data-kind="fault"]{border:1px solid #edcfc5;border-radius:8px;padding:9px 10px}
-  main{padding-top:18px}
-  html{scroll-padding-top:var(--header-offset,190px)}
-  main>#overview,main>#statistics,main>#settings{scroll-margin-top:0}
-  html[data-theme="dark"] .app-header,html[data-theme="dark"] .status-wrap .control-status{background:#101e29}
-  html[data-theme="dark"] .status-wrap .control-status[data-kind="fault"]{background:#3b282d;border-color:#85504d}
-}
-@media(max-width:600px){.status-wrap{padding:0 16px 10px}.app-header .rail{padding-bottom:10px}}
-
-/* The status row belongs to overview only. */
-.app-header:has(.status-wrap[hidden])+main{padding-top:28px}
-@media(max-width:850px){.app-header:has(.status-wrap[hidden])+main{padding-top:18px}}
-
 /* Actual charging split stays distinct from configured PV priorities. */
 .battery-distribution{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:16px 0;padding:14px;border:1px solid var(--line);border-radius:12px;background:#f6fafb}.battery-distribution>p,.battery-distribution>small{grid-column:1/-1;margin:0;color:var(--muted);font-size:11px}.battery-distribution>p{font-weight:650;color:var(--ink)}.battery-distribution>div{display:grid;gap:2px}.battery-distribution span,.battery-distribution small{font-size:11px;color:var(--muted)}.battery-distribution strong{font-size:22px;color:var(--ink);font-variant-numeric:tabular-nums}.allocation-preview{padding:12px 14px;background:#f0f7fb;border:1px solid var(--line);border-radius:9px;color:var(--ink);font-size:12px;line-height:1.6}html[data-theme="dark"] :is(.battery-distribution,.allocation-preview){background:var(--raised)}
 
@@ -457,3 +443,390 @@ html[data-theme="dark"] .unsaved-banner[data-error="true"]{background:#431c25;bo
 #expert-phase-output-message{margin:12px 0}
 #phase-hardware-test .actions .button{flex:1;min-width:150px}
 #phase-test-block{font-weight:600}
+
+/* Energy overview: sources connect to the house bus, consumers have separate branches. */
+#teenet-house-mood{--en-bg:light-dark(#fff,#192933);--en-text:light-dark(#193e55,#e4f2f7);--en-muted:light-dark(#5e7685,#aec5d1);--en-line:light-dark(#d5e1e7,#3e5563);--en-surface:light-dark(#f2f7f9,#233843);--en-shadow:light-dark(#d6e6e94d,#061c283d);--en-solar:light-dark(#bf841f,#e9ba5d);--en-grid:light-dark(#697fa3,#a9bddf);--en-battery:light-dark(#279379,#69c8aa);--en-car:light-dark(#137fa2,#6ed4ec);--en-house:light-dark(#658193,#adc2d0);--en-sun-fill:light-dark(#ffe3a0,#eac66c);--en-cloud-fill:light-dark(#c8d7df,#8ca6b5);--en-battery-fill:light-dark(#b5e5d2,#367e6f);--en-home:light-dark(#b9dfd1,#3b7c70);--en-roof:light-dark(#4b9888,#86c6b7);--en-face:light-dark(#2b514f,#d4ede7);--en-car-paint:light-dark(#9cc7dc,#4c87a6);--en-wheel:light-dark(#3e596b,#a6bdcc);color-scheme:inherit;color:var(--en-text);background:var(--en-bg);display:none;padding:24px;container-type:inline-size}
+#teenet-house-mood *{box-sizing:border-box}
+#teenet-house-mood [hidden]{display:none!important}
+#teenet-house-mood .en-overview{width:100%;max-width:680px;margin:auto}
+#teenet-house-mood .en-sources{display:grid;grid-template-columns:repeat(var(--en-source-count,3),minmax(0,1fr));gap:0}
+#teenet-house-mood .en-node{display:flex;flex-direction:column;align-items:center;text-align:center;min-width:0}
+#teenet-house-mood .en-solar{color:var(--en-solar)}
+#teenet-house-mood .en-grid{color:var(--en-grid)}
+#teenet-house-mood .en-storage{color:var(--en-battery)}
+#teenet-house-mood .en-art{display:block;width:104px;height:82px;overflow:visible;flex:none}
+#teenet-house-mood .en-label{color:var(--en-text);font-size:14px;font-weight:650;line-height:1.35;margin-top:8px}
+#teenet-house-mood .en-power{color:var(--en-text);display:flex;align-items:baseline;justify-content:center;gap:4px;font-size:30px;font-weight:750;letter-spacing:-.7px;line-height:1.3;font-variant-numeric:tabular-nums;white-space:nowrap;margin-top:3px}
+#teenet-house-mood .en-power small{font-size:13px;font-weight:500;letter-spacing:0;color:var(--en-muted)}
+#teenet-house-mood .en-detail{font-size:12px;line-height:1.5;color:var(--en-muted);min-height:18px;margin-top:2px}
+#teenet-house-mood .en-battery-soc{fill:var(--en-text);font:700 15px system-ui,sans-serif}
+#teenet-house-mood .en-battery-level{transition:y .4s,height .4s}
+#teenet-house-mood .en-cloud,#teenet-house-mood .en-smile,#teenet-house-mood .en-frown,#teenet-house-mood .en-neutral,#teenet-house-mood .en-car-smile{display:none}
+#teenet-house-mood[data-house-mood="sad"]{--en-home:light-dark(#efd7b7,#916e4b);--en-roof:light-dark(#c19560,#dcbb8b)}
+#teenet-house-mood[data-scene="grid"] .en-cloud{display:block}
+#teenet-house-mood[data-house-mood="sad"] .en-pupils{transform:translate(4px,1px)}
+#teenet-house-mood[data-house-mood="happy"] .en-smile{display:block}
+#teenet-house-mood[data-house-mood="neutral"] .en-neutral{display:block}
+#teenet-house-mood[data-house-mood="sad"] .en-frown{display:block}
+#teenet-house-mood[data-house-mood="happy"] .en-pupils{transform:translate(-2px,-2px)}
+#teenet-house-mood[data-house-mood="neutral"][data-scene="battery"] .en-pupils{transform:translate(4px,-2px)}
+#teenet-house-mood[data-car-happy="true"]{--en-car-paint:light-dark(#8fcdb4,#469780)}
+#teenet-house-mood[data-car-happy="true"] .en-car-mouth{display:none}
+#teenet-house-mood[data-car-happy="true"] .en-car-smile{display:block}
+#teenet-house-mood .en-distribution{height:86px;position:relative;margin-top:8px}
+#teenet-house-mood .en-paths{display:block;width:100%;height:100%;overflow:visible}
+#teenet-house-mood .en-paths path{fill:none;stroke-linecap:round;stroke-linejoin:round;vector-effect:non-scaling-stroke}
+#teenet-house-mood .en-bus,#teenet-house-mood .en-wire{stroke:var(--en-line);stroke-width:2}
+#teenet-house-mood .en-junction{fill:var(--en-bg);stroke:var(--en-line);stroke-width:2}
+#teenet-house-mood .en-route[data-route="solar"]{color:var(--en-solar)}
+#teenet-house-mood .en-route[data-route="grid"]{color:var(--en-grid)}
+#teenet-house-mood .en-route[data-route="battery"]{color:var(--en-battery)}
+#teenet-house-mood .en-route[data-route="home"]{color:var(--en-house)}
+#teenet-house-mood .en-route[data-route="car"]{color:var(--en-car)}
+#teenet-house-mood .en-motion{stroke:currentColor;stroke-width:3;stroke-dasharray:1 23;animation:en-travel 2.8s linear infinite}
+#teenet-house-mood .en-arrow{stroke:currentColor;stroke-width:2}
+#teenet-house-mood .en-route[data-flow="reverse"] .en-motion{animation-direction:reverse}
+#teenet-house-mood .en-route[data-flow="idle"] .en-motion,#teenet-house-mood .en-route[data-flow="idle"] .en-arrow,#teenet-house-mood .en-route[data-flow="unknown"] .en-motion,#teenet-house-mood .en-route[data-flow="unknown"] .en-arrow{display:none}
+#teenet-house-mood .en-bus-label{position:absolute;top:calc(45% - 10px);left:50%;transform:translateX(-50%);background:var(--en-bg);border:1px solid var(--en-line);border-radius:20px;padding:1px 11px;font-size:11px;line-height:18px;color:var(--en-muted);white-space:nowrap}
+#teenet-house-mood .en-consumers{display:grid;grid-template-columns:repeat(var(--en-consumer-count,2),minmax(0,1fr));gap:18px}
+#teenet-house-mood .en-consumers .en-node{position:relative;background:var(--en-surface);border:1px solid var(--en-line);border-radius:18px;padding:14px 8px 15px;min-height:238px}
+#teenet-house-mood .en-consumers .en-art{width:150px;height:112px}
+#teenet-house-mood .en-consumers .en-label{margin-top:0}
+#teenet-house-mood .en-car-soc{font-size:12px;line-height:18px;margin-top:7px;color:var(--en-muted)}
+#teenet-house-mood .en-car-soc b{color:var(--en-text);font-weight:650}
+#teenet-house-mood .en-wallbox-state{display:flex;align-items:center;gap:5px}
+#teenet-house-mood .en-wallbox-state::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--en-muted)}
+#teenet-house-mood[data-charging="true"] .en-wallbox-state::before{background:var(--en-battery)}
+#teenet-house-mood .en-wallbox-today{align-self:stretch;margin-top:12px;padding:10px 4px 0;border-top:1px solid var(--en-line);text-align:left}
+#teenet-house-mood .en-daily-title{display:block;font-size:11px;font-weight:650;color:var(--en-text);margin-bottom:5px}
+#teenet-house-mood .en-wallbox-today dl{display:grid;gap:4px;margin:0}
+#teenet-house-mood .en-wallbox-today dl>div{display:flex;align-items:baseline;justify-content:space-between;gap:5px;flex-wrap:wrap}
+#teenet-house-mood .en-wallbox-today dt{font-size:11px;color:var(--en-muted)}
+#teenet-house-mood .en-wallbox-today dd{font-size:14px;font-weight:650;margin:0;color:var(--en-text);font-variant-numeric:tabular-nums;white-space:nowrap}
+#teenet-house-mood .en-note{display:block;font-size:11px;color:var(--en-muted);margin-top:8px;line-height:1.4}
+#teenet-house-mood .en-note:empty{display:none}
+#teenet-house-mood[data-paused="true"] *, :root:not([data-dashboard-view="graphic"]) #teenet-house-mood *{animation-play-state:paused!important}
+@keyframes en-travel{to{stroke-dashoffset:-48}}
+@media(prefers-reduced-motion:reduce){#teenet-house-mood *{animation:none!important;transition:none!important}#teenet-house-mood .en-motion{display:none}}
+@container(max-width:420px){
+ #teenet-house-mood .en-art{width:80px;height:68px}
+ #teenet-house-mood .en-label{font-size:12px}
+ #teenet-house-mood .en-power{font-size:24px;gap:3px}
+ #teenet-house-mood .en-power small{font-size:11px}
+ #teenet-house-mood .en-detail{font-size:11px}
+ #teenet-house-mood .en-distribution{height:72px}
+ #teenet-house-mood .en-consumers{gap:12px}
+ #teenet-house-mood .en-consumers .en-node{padding:12px 5px;min-height:215px;border-radius:14px}
+ #teenet-house-mood .en-consumers .en-art{width:126px;height:98px;max-width:100%}
+}
+@container(max-width:320px){#teenet-house-mood .en-art{width:65px;height:58px}#teenet-house-mood .en-power{font-size:21px}#teenet-house-mood .en-detail{font-size:10px}#teenet-house-mood .en-consumers .en-art{height:90px}}
+/* Controls and status polling remain shared with the standard dashboard. */
+:root[data-dashboard-view="graphic"] #overview{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(300px,1fr);gap:20px;align-items:start}
+:root[data-dashboard-view="graphic"] #overview .charge-layout,:root[data-dashboard-view="graphic"] #overview .home-grid{display:contents}
+:root[data-dashboard-view="graphic"] #overview .scene-panel,:root[data-dashboard-view="graphic"] #house-card{display:none}
+:root[data-dashboard-view="graphic"] #teenet-house-mood{display:flex;flex-direction:column;justify-content:center;align-self:stretch;grid-column:1;grid-row:1 / span 2;margin:0}
+:root[data-dashboard-view="graphic"] #overview:has(#battery-card[hidden]) #teenet-house-mood{grid-row:1}
+:root[data-dashboard-view="graphic"] #overview .control-panel{grid-column:2;grid-row:1;margin:0}
+:root[data-dashboard-view="graphic"] #battery-card{grid-column:2;grid-row:2;margin:0}
+.appearance-options{display:grid;gap:20px}.appearance-options h3{font-size:13px;margin:0 0 8px}.view-picker{display:flex;gap:8px}.view-picker button[aria-pressed="true"]{background:var(--green);border-color:var(--green);color:#fff}
+#view-save-status{margin-top:9px}
+@media(max-width:1200px){:root[data-dashboard-view="graphic"] #overview{grid-template-columns:1fr}:root[data-dashboard-view="graphic"] #overview .control-panel,:root[data-dashboard-view="graphic"] #battery-card,:root[data-dashboard-view="graphic"] #overview #teenet-house-mood{grid-column:1;grid-row:auto}}
+@media(max-width:600px){#teenet-house-mood{padding:18px 12px}}
+
+/* Shared sticky navigation; branding and help stay in the page footer. */
+html{scroll-padding-top:var(--header-offset,76px)}
+main{width:100%;max-width:1500px;margin:0 auto;padding:24px 44px calc(28px + env(safe-area-inset-bottom))}
+main>#overview,main>#statistics,main>#settings{scroll-margin-top:0}
+main:has(.unsaved-banner:not([hidden])){padding-bottom:calc(176px + env(safe-area-inset-bottom))}
+.app-header{position:sticky;top:0;z-index:30;display:block;margin:0;background:#fff;border-bottom:1px solid var(--line);box-shadow:0 2px 10px #17394f08}
+.app-header .rail{position:static;inset:auto;display:flex;flex-direction:row;align-items:center;width:100%;max-width:1500px;margin:0 auto;padding:6px 44px;gap:0;border:0;background:transparent}
+.app-header .rail nav{display:flex;align-items:center;gap:8px;width:auto;min-width:0;max-width:none;margin:0}
+.app-header .rail nav a{display:flex;align-items:center;justify-content:center;gap:7px;min-width:0;min-height:40px;padding:8px 14px;border-radius:8px;color:var(--muted);font-size:12px;line-height:1.35}
+.app-header .rail nav a span{display:inline;font-size:12px;font-weight:600;white-space:nowrap}
+.app-header .rail nav :is(a.active,a:hover){background:#e9f5fa;color:#086d94}
+.app-header .nav-icon{display:block;width:17px;height:17px;flex:none}
+.app-header .status-wrap{width:100%;max-width:1500px;margin:0 auto;padding:0 44px 6px}
+.app-header .status-wrap .control-status{min-height:30px;margin:0;padding:4px 0;gap:8px;border:0;border-radius:0;background:transparent;font-size:12px;line-height:1.45}
+.app-header .status-wrap .control-status .button{min-height:40px;padding:6px 9px;font-size:11px}
+.app-header .status-wrap .control-status[data-kind="fault"]{padding:6px 10px;border:1px solid #edcfc5;border-radius:8px;background:#fff5f1}
+.app-header .status-indicator{width:6px;height:6px}
+.app-footer{display:grid;grid-template-columns:112px minmax(0,1fr) auto;align-items:center;gap:10px 20px;width:100%;margin:18px 0 0;padding:16px 0 4px;border-top:1px solid var(--line);color:var(--muted);font-size:12px}
+main:has(>#settings:not([hidden]))>.app-footer{max-width:960px}
+.app-footer>.brand{display:flex;align-items:center;justify-content:flex-start;min-width:0;min-height:40px;width:112px;margin:0;padding:0;gap:0;border:0;background:transparent;letter-spacing:normal;border-radius:7px}
+.app-footer .brand-logo{display:block;width:112px;max-width:100%;height:auto;max-height:40px;object-fit:contain;margin:0;padding:0;border:0;border-radius:0;background:transparent;box-shadow:none}
+.app-footer .brand-caption{min-width:0;max-width:none;margin:0;text-align:left;color:var(--muted);font-size:11px;line-height:1.5;letter-spacing:normal}
+.app-footer .footer-help{display:inline-flex;align-items:center;justify-content:center;min-height:40px;padding:8px 12px;border:1px solid var(--line);border-radius:8px;color:#087fa4;font-size:12px;font-weight:600;line-height:1.35;white-space:nowrap}
+.app-footer .footer-help:hover{background:#e9f5fa}
+.app-header .rail nav a:focus-visible,.app-footer :is(.brand,.footer-help):focus-visible{outline:3px solid var(--green);outline-offset:3px}
+html[data-theme="dark"] .app-header{background:#101e29}
+html[data-theme="dark"] .app-header .rail,html[data-theme="dark"] .app-header .status-wrap .control-status{background:transparent}
+html[data-theme="dark"] .app-header .rail nav :is(a.active,a:hover){background:#1b3d50;color:#b0edfa}
+html[data-theme="dark"] .app-header .status-wrap .control-status[data-kind="fault"]{background:#3b282d;border-color:#85504d}
+html[data-theme="dark"] .app-footer .footer-help{color:#9bd9ed}
+html[data-theme="dark"] .app-footer .footer-help:hover{background:#1b3d50}
+@media(max-width:1150px){
+ main{padding-left:24px;padding-right:24px}
+ .app-header .rail,.app-header .status-wrap{padding-left:24px;padding-right:24px}
+}
+@media(max-width:600px){
+ main{padding:18px 16px calc(24px + env(safe-area-inset-bottom))}
+ .app-header .rail{padding:5px 16px}
+ .app-header .rail nav{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;width:100%}
+ .app-header .rail nav a{padding:8px 4px;gap:5px}
+ .app-header .rail nav a span{font-size:11px}
+ .app-header .nav-icon{width:16px;height:16px}
+ .app-header .status-wrap{padding:0 16px 5px}
+ .app-header .status-wrap .control-status{font-size:11px;gap:6px}
+ .app-footer{grid-template-columns:112px minmax(0,1fr);gap:7px 12px;margin-top:14px;padding-top:12px}
+ .app-footer>.brand{grid-column:1;grid-row:1}
+ .app-footer .footer-help{grid-column:2;grid-row:1;justify-self:end;padding:8px 10px;font-size:11px}
+ .app-footer .brand-caption{grid-column:1/-1;grid-row:2;max-width:min(100%,36ch);font-size:11px;line-height:1.5}
+ .app-footer .brand-caption span{display:block}
+}
+@media(max-width:380px){.app-header .nav-icon{display:none}}
+
+
+/* Keep the familiar dashboard unless compact layout is selected. */
+.compact-charge-head,.standard-only{display:none}
+.battery-options-body{display:grid;gap:12px}
+:root:not([data-dashboard-density="compact"]) #battery-options>summary{display:none}
+.appearance-hint{margin:8px 0 0}
+/* Compact layout applies independently to standard and graphical views. */
+:root[data-dashboard-density="compact"] #battery-options>summary{display:none}
+:root[data-dashboard-density="compact"] .battery-options-body{display:grid;grid-template-columns:110px minmax(0,1fr);gap:8px 14px;margin-top:0}
+:root[data-dashboard-density="compact"][data-dashboard-view="graphic"] #overview{grid-template-rows:max-content 1fr}
+:root[data-dashboard-density="compact"] #overview .control-panel{padding:18px 20px;height:auto;align-self:start}
+:root[data-dashboard-density="compact"] #overview .control-panel h2{font-size:18px;margin:0 0 10px}
+:root[data-dashboard-density="compact"] #overview .compact-charge-head{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:16px;margin-bottom:10px}
+:root[data-dashboard-density="compact"] .compact-mode{margin:0;min-width:0}
+:root[data-dashboard-density="compact"] .compact-mode>span,:root[data-dashboard-density="compact"] .compact-live-power>span{display:block;color:var(--muted);font-size:11px;margin-bottom:4px}
+:root[data-dashboard-density="compact"] .compact-mode select{width:100%;min-height:42px;padding:8px 26px 8px 10px;font-size:13px;border-radius:9px}
+:root[data-dashboard-density="compact"] .compact-live-power{text-align:right}
+:root[data-dashboard-density="compact"] .compact-live-power strong{display:block;font-size:32px;letter-spacing:-.7px;line-height:1.1;font-variant-numeric:tabular-nums;white-space:nowrap}
+:root[data-dashboard-density="compact"] .compact-live-power strong small{margin-left:4px;font-size:12px;font-weight:500;letter-spacing:0;color:var(--muted)}
+:root[data-dashboard-density="compact"] .compact-live-power .compact-target{display:block;font-size:10px;color:var(--muted);margin-top:4px}
+:root[data-dashboard-density="compact"] #overview .control-panel .mode-picker,:root[data-dashboard-density="compact"] #overview .control-panel>.target-reading{display:none!important}
+:root[data-dashboard-density="compact"] #overview .control-panel .actions{margin-top:10px}
+:root[data-dashboard-density="compact"] #overview .control-panel .control-caption{margin:8px 0 0;font-size:11px}
+:root[data-dashboard-density="compact"] #overview .control-panel.evcc-controlled .compact-mode{display:none}
+:root[data-dashboard-density="compact"] #overview .control-panel.evcc-controlled .compact-charge-head{grid-template-columns:1fr}
+:root[data-dashboard-density="compact"] #overview #battery-card{padding:14px 18px;height:auto;align-self:start;display:block;background:var(--en-bg,var(--bg));box-shadow:none}
+:root[data-dashboard-density="compact"] #battery-card .battery-heading{display:flex;grid-column:1/-1;align-items:center}
+:root[data-dashboard-density="compact"] #battery-card .battery-summary{grid-template-columns:1fr}
+:root[data-dashboard-density="compact"] #battery-card .battery-summary>div:first-child{display:none}
+/* Always-open compact battery controls. */
+:root[data-dashboard-density="compact"] #battery-card .battery-heading h2{font-size:15px;margin:0;line-height:1.5}
+:root[data-dashboard-density="compact"] #battery-card .battery-summary{gap:0;align-self:center}
+:root[data-dashboard-density="compact"] #battery-card .battery-summary>div:last-child{flex-direction:column;align-items:flex-start;gap:2px}
+:root[data-dashboard-density="compact"] #battery-card .battery-summary strong{font-size:22px}
+:root[data-dashboard-density="compact"] #battery-card .battery-summary span{font-size:10px}
+:root[data-dashboard-density="compact"] #battery-card .battery-gauge{align-self:center}
+:root[data-dashboard-density="compact"] #battery-card .battery-choice{grid-column:1/-1;padding:7px 0 0;margin:0;gap:12px;border-color:var(--line)}
+:root[data-dashboard-density="compact"] #battery-card .battery-choice small{display:none}
+:root[data-dashboard-density="compact"] #battery-card .battery-choice strong{font-size:12px;line-height:1.4}
+:root[data-dashboard-density="compact"] #battery-card .battery-choice button{min-height:40px;min-width:126px;padding:7px 10px;font-size:12px;border-radius:10px}
+:root[data-dashboard-density="compact"] #battery-card #compact-battery-soc{display:block;font-size:12px;color:var(--muted);font-weight:550;margin:0;white-space:nowrap}
+:root[data-dashboard-view="graphic"] #teenet-house-mood .en-storage{font:inherit;background:none;border:1px solid transparent;border-radius:12px;padding:0;cursor:pointer;transition:background .15s}
+:root[data-dashboard-view="graphic"] #teenet-house-mood .en-storage:hover,:root[data-dashboard-view="graphic"] #teenet-house-mood .en-storage:focus-visible{background:var(--en-surface)}
+:root[data-dashboard-view="graphic"] #teenet-house-mood .en-battery-edit{font-size:10px;color:var(--en-car);line-height:1.5;margin-top:4px}
+:root[data-dashboard-view="graphic"] #teenet-house-mood .en-battery-edit>span{font-size:14px;line-height:1}
+:root[data-dashboard-view="graphic"] #teenet-house-mood .en-consumers .en-home-node{align-self:start;min-height:0;border:0!important;background:none;border-radius:0;padding:14px 4px}
+:root[data-dashboard-view="graphic"] #teenet-house-mood .en-home-node .en-art{width:110px;height:84px}
+:root[data-dashboard-view="graphic"] #teenet-house-mood .en-home-node .en-label{font-size:12px}
+:root[data-dashboard-view="graphic"] #teenet-house-mood .en-home-node .en-power{font-size:24px}
+@container(max-width:320px){:root[data-dashboard-view="graphic"] #teenet-house-mood .en-home-node .en-art{width:90px;height:72px}
+}
+@media(max-width:380px){:root[data-dashboard-density="compact"] #overview .compact-charge-head{gap:8px}
+:root[data-dashboard-density="compact"] .compact-live-power strong{font-size:28px}
+:root[data-dashboard-density="compact"] .compact-mode select{font-size:12px;padding:8px 24px 8px 8px}
+}
+@media(max-width:1200px){:root[data-dashboard-density="compact"][data-dashboard-view="graphic"] #overview{grid-template-rows:none}
+}
+:root[data-dashboard-density="compact"] .control-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
+:root[data-dashboard-density="compact"] #overview .control-heading h2{margin:0}
+:root[data-dashboard-density="compact"] .standard-only{display:none}
+:root[data-dashboard-density="compact"]:not([data-dashboard-view="graphic"]) .standard-only{display:block}
+:root[data-dashboard-density="compact"] #compact-charge-state{font-size:11px;white-space:nowrap}
+:root[data-dashboard-density="compact"] .standard-charge-details{border-top:1px solid var(--line);margin-top:14px;padding-top:12px}
+:root[data-dashboard-density="compact"] .standard-charge-details dl{display:flex;flex-wrap:wrap;gap:12px 20px;margin:0}
+:root[data-dashboard-density="compact"] .standard-charge-details dl>div{min-width:0}
+:root[data-dashboard-density="compact"] .standard-charge-details dt{font-size:11px;color:var(--muted)}
+:root[data-dashboard-density="compact"] .standard-charge-details dd{margin:3px 0 0;font-size:17px;font-weight:650;white-space:nowrap;font-variant-numeric:tabular-nums}
+:root[data-dashboard-density="compact"] .standard-charge-details>small{font-size:11px;line-height:1.45;color:var(--muted);margin-top:7px}
+:root[data-dashboard-density="compact"] #compact-battery-soc{float:right;font-size:12px;color:var(--muted);font-weight:550;margin-left:10px}
+:root[data-dashboard-density="compact"]:not([data-dashboard-view="graphic"]) #overview{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);grid-template-rows:max-content 1fr;gap:18px;align-items:start}
+:root[data-dashboard-density="compact"]:not([data-dashboard-view="graphic"]) #overview .charge-layout,:root[data-dashboard-density="compact"]:not([data-dashboard-view="graphic"]) #overview .home-grid{display:contents}
+:root[data-dashboard-density="compact"]:not([data-dashboard-view="graphic"]) #overview .scene-panel{display:none}
+:root[data-dashboard-density="compact"]:not([data-dashboard-view="graphic"]) #overview .control-panel{grid-column:1;grid-row:1 / span 2}
+:root[data-dashboard-density="compact"]:not([data-dashboard-view="graphic"]) #overview #house-card{grid-column:2;grid-row:1;display:grid;grid-template-columns:repeat(auto-fit,minmax(86px,1fr));align-items:start;gap:12px;min-height:0;height:auto;padding:16px;margin:0;border-left-width:3px}
+:root[data-dashboard-density="compact"]:not([data-dashboard-view="graphic"]) #overview #battery-card{grid-column:2;grid-row:2;margin:0}
+:root[data-dashboard-density="compact"]:not([data-dashboard-view="graphic"]) #house-card h2{font-size:11px;font-weight:500;color:var(--muted);margin:0}
+:root[data-dashboard-density="compact"]:not([data-dashboard-view="graphic"]) #house-card #house-power{font-size:21px;letter-spacing:-.3px;margin:5px 0 4px;line-height:1.25;white-space:nowrap}
+:root[data-dashboard-density="compact"]:not([data-dashboard-view="graphic"]) #house-card #house-caption{font-size:11px;font-weight:500;line-height:1.4}
+:root[data-dashboard-density="compact"]:not([data-dashboard-view="graphic"]) #house-card .pv-reading,:root[data-dashboard-density="compact"]:not([data-dashboard-view="graphic"]) #house-card .house-battery-power{display:flex;flex-direction:column;align-items:start;justify-content:start;gap:4px;padding:0;border:0;background:none;box-shadow:none;min-width:0;margin:0}
+:root[data-dashboard-density="compact"]:not([data-dashboard-view="graphic"]) #house-card .pv-sun,:root[data-dashboard-density="compact"]:not([data-dashboard-view="graphic"]) #house-card .battery-symbol{display:none}
+:root[data-dashboard-density="compact"]:not([data-dashboard-view="graphic"]) #house-card .pv-reading>span,:root[data-dashboard-density="compact"]:not([data-dashboard-view="graphic"]) #house-card .battery-power-reading{display:grid;gap:5px}
+:root[data-dashboard-density="compact"]:not([data-dashboard-view="graphic"]) #house-card small{font-size:11px;color:var(--muted);line-height:1.4}
+:root[data-dashboard-density="compact"]:not([data-dashboard-view="graphic"]) #house-card b{font-size:21px;letter-spacing:-.3px;line-height:1.25;white-space:nowrap}
+:root[data-dashboard-density="compact"]:not([data-dashboard-view="graphic"]) #overview:has(#house-card[hidden]):has(#battery-card[hidden]){grid-template-columns:minmax(0,1fr);max-width:700px}
+@media(max-width:900px){:root[data-dashboard-density="compact"]:not([data-dashboard-view="graphic"]) #overview{grid-template-columns:minmax(0,1fr);grid-template-rows:none;gap:14px}
+:root[data-dashboard-density="compact"]:not([data-dashboard-view="graphic"]) #overview .control-panel,:root[data-dashboard-density="compact"]:not([data-dashboard-view="graphic"]) #overview #house-card,:root[data-dashboard-density="compact"]:not([data-dashboard-view="graphic"]) #overview #battery-card{grid-column:1;grid-row:auto}
+}
+
+:root[data-dashboard-density="compact"]:not([data-dashboard-view="graphic"]) #house-card .pv-reading>.pv-sun{display:none}
+
+/* The battery shortcut is available in either layout. */
+#teenet-house-mood .en-storage{font:inherit;color:inherit;background:none;border:1px solid transparent;border-radius:12px;padding:0;cursor:pointer}
+#teenet-house-mood .en-storage:hover,#teenet-house-mood .en-storage:focus-visible{background:var(--en-surface)}
+#teenet-house-mood .en-battery-edit{font-size:10px;color:var(--en-car);line-height:1.5;margin-top:4px}
+#teenet-house-mood .en-battery-edit>span{font-size:14px;line-height:1}
+
+/* Both graphical layouts use the same compact energy diagram. */
+:root[data-dashboard-view="graphic"] #teenet-house-mood{align-self:start;justify-content:flex-start;height:auto;padding:18px}
+:root[data-dashboard-view="graphic"] #teenet-house-mood .en-art{width:68px;height:52px}
+:root[data-dashboard-view="graphic"] #teenet-house-mood .en-label{font-size:12px;margin-top:4px}
+:root[data-dashboard-view="graphic"] #teenet-house-mood .en-power{font-size:24px;line-height:1.2;margin-top:3px;gap:3px}
+:root[data-dashboard-view="graphic"] #teenet-house-mood .en-power small{font-size:11px}
+:root[data-dashboard-view="graphic"] #teenet-house-mood .en-detail{font-size:11px;min-height:16px}
+:root[data-dashboard-view="graphic"] #teenet-house-mood .en-battery-edit{display:none}
+:root[data-dashboard-view="graphic"] #teenet-house-mood .en-distribution{height:52px;margin-top:6px}
+:root[data-dashboard-view="graphic"] #teenet-house-mood .en-consumers{gap:12px;align-items:start}
+:root[data-dashboard-view="graphic"] #teenet-house-mood .en-consumers .en-node{min-height:0;padding:10px 8px;border-radius:12px}
+:root[data-dashboard-view="graphic"] #teenet-house-mood .en-consumers .en-art{width:92px;height:68px;max-width:100%}
+:root[data-dashboard-view="graphic"] #teenet-house-mood .en-car-soc{margin-top:4px;font-size:11px}
+:root[data-dashboard-view="graphic"] #teenet-house-mood .en-wallbox-today{margin-top:8px;padding-top:8px}
+:root[data-dashboard-view="graphic"] #teenet-house-mood .en-wallbox-today dd{font-size:12px}
+:root[data-dashboard-view="graphic"] #teenet-house-mood .en-wallbox-today dt{font-size:10px}
+@container(max-width:320px){
+ :root[data-dashboard-view="graphic"] #teenet-house-mood .en-art{width:58px;height:46px}
+ :root[data-dashboard-view="graphic"] #teenet-house-mood .en-power{font-size:21px}
+ :root[data-dashboard-view="graphic"] #teenet-house-mood .en-consumers .en-art{width:78px;height:58px}
+}
+
+:root[data-usage-notice="hidden"] #usage-notice{display:none}
+.risk-notice .usage-notice-hide{display:flex;align-items:center;gap:9px;margin:12px 0 0;color:inherit;font-size:12px;font-weight:400;cursor:pointer}
+.risk-notice .usage-notice-hide input{width:16px;height:16px;min-height:16px;margin:0;flex:none;accent-color:var(--green)}
+
+/* Compact phone dashboard: prioritize the controls within a short browser viewport.
+   Keep natural page overflow for larger text, faults and expanded extra controls. */
+@media (max-width:600px) {
+ :root[data-dashboard-density="compact"] main:has(>#overview:not([hidden])){padding:8px 12px calc(8px + env(safe-area-inset-bottom))}
+ :root[data-dashboard-density="compact"] body:has(#overview:not([hidden])) .app-header .rail{padding:2px 12px}
+ :root[data-dashboard-density="compact"] body:has(#overview:not([hidden])) .app-header .status-wrap{padding:0 12px 2px}
+ :root[data-dashboard-density="compact"] body:has(#overview:not([hidden])) .app-header .control-status{min-height:23px;padding:1px 0}
+ :root[data-dashboard-density="compact"] #overview{gap:8px!important;margin-bottom:0}
+ :root[data-dashboard-density="compact"] #overview .panel{margin-bottom:0;border-radius:16px}
+ :root[data-dashboard-density="compact"] #overview .control-panel{padding:8px 12px}
+ :root[data-dashboard-density="compact"] #overview .control-heading{display:none}
+ :root[data-dashboard-density="compact"] #overview .compact-charge-head{gap:14px;margin:0;align-items:center}
+ :root[data-dashboard-density="compact"] #overview .compact-mode{margin:0}
+ :root[data-dashboard-density="compact"] #overview .compact-mode>span{display:none}
+ :root[data-dashboard-density="compact"] #overview .compact-mode select{min-height:44px;margin:0;font-size:16px;padding:8px 25px 8px 9px}
+ :root[data-dashboard-density="compact"] #overview .compact-live-power>span{font-size:10px;margin:0}
+ :root[data-dashboard-density="compact"] #overview .compact-live-power strong{font-size:27px;line-height:1.15}
+ :root[data-dashboard-density="compact"] #overview .compact-target{display:none}
+ :root[data-dashboard-density="compact"] #overview .control-panel>.actions{margin-top:4px}
+ :root[data-dashboard-density="compact"] #overview #apply-control{min-height:44px;padding:8px 12px;font-size:14px}
+ :root[data-dashboard-density="compact"] #overview .standard-charge-details{margin-top:8px;padding-top:8px}
+ :root[data-dashboard-density="compact"] #overview .standard-charge-details dl{gap:8px 16px}
+ :root[data-dashboard-density="compact"] #overview .standard-charge-details dd{font-size:16px;margin-top:0}
+ :root[data-dashboard-density="compact"][data-dashboard-view="graphic"] #overview #teenet-house-mood{padding:8px 12px}
+ :root[data-dashboard-density="compact"][data-dashboard-view="graphic"] #overview #teenet-house-mood .en-art{width:48px;height:34px}
+ :root[data-dashboard-density="compact"][data-dashboard-view="graphic"] #teenet-house-mood .en-label{font-size:12px;margin-top:2px;line-height:1.3}
+ :root[data-dashboard-density="compact"][data-dashboard-view="graphic"] #teenet-house-mood .en-power{font-size:23px;margin-top:2px;line-height:1.15}
+ :root[data-dashboard-density="compact"][data-dashboard-view="graphic"] #teenet-house-mood .en-detail{font-size:11px;line-height:1.3;min-height:15px;margin-top:2px}
+ :root[data-dashboard-density="compact"][data-dashboard-view="graphic"] #overview #teenet-house-mood .en-distribution{height:24px;margin-top:3px}
+ :root[data-dashboard-density="compact"][data-dashboard-view="graphic"] #teenet-house-mood .en-consumers{gap:6px}
+ :root[data-dashboard-density="compact"][data-dashboard-view="graphic"] #overview #teenet-house-mood .en-consumers .en-art{width:64px;height:42px}
+ :root[data-dashboard-density="compact"][data-dashboard-view="graphic"] #teenet-house-mood .en-consumers .en-node{padding:0;min-height:0}
+ :root[data-dashboard-density="compact"][data-dashboard-view="graphic"] #teenet-house-mood .en-picture-button{padding:2px 4px;min-height:48px;border-radius:8px}
+ :root[data-dashboard-density="compact"] #overview #battery-card{padding:9px 12px}
+ :root[data-dashboard-density="compact"] #battery-card .battery-options-body{gap:4px 10px;grid-template-columns:repeat(2,minmax(0,1fr))}
+ :root[data-dashboard-density="compact"] #battery-card .battery-heading h2{font-size:14px;line-height:1.4}
+ :root[data-dashboard-density="compact"] #battery-card .battery-summary>div:last-child{gap:5px;flex-direction:row;align-items:baseline}
+ :root[data-dashboard-density="compact"] #battery-card .battery-summary strong{font-size:20px;line-height:1.15}
+ :root[data-dashboard-density="compact"] #battery-card .battery-choice{grid-column:auto;flex-direction:column;align-items:stretch;padding:5px 0 0;gap:3px}
+ :root[data-dashboard-density="compact"] #battery-card .battery-choice button{min-height:44px;width:100%;padding:6px 8px;min-width:0}
+ :root[data-dashboard-density="compact"] #battery-card .battery-choice strong{display:flex;align-items:center;font-size:11px;line-height:1.3;min-height:29px}
+ :root[data-dashboard-density="compact"] #overview #manual-current-label{display:grid;grid-template-columns:1fr auto;align-items:center;gap:0 8px;margin:6px 0 0}
+ :root[data-dashboard-density="compact"] #overview #manual-current-label label{margin:0;font-size:11px}
+ :root[data-dashboard-density="compact"] #overview #manual-current-label output{font-size:16px;line-height:1.3}
+ :root[data-dashboard-density="compact"] #overview #manual-current-label input{grid-column:1/-1;margin:0;height:24px;min-height:24px}
+ :root[data-dashboard-density="compact"] #overview #manual-current-label .slider-bounds{display:none}
+ :root[data-dashboard-density="compact"] #overview #phase-choice{grid-column:1/-1}
+ :root[data-dashboard-density="compact"] main:has(>#overview:not([hidden])) .app-footer{grid-template-columns:64px minmax(0,1fr) auto;gap:8px;margin-top:7px;padding:5px 0 0}
+ :root[data-dashboard-density="compact"] main:has(>#overview:not([hidden])) .app-footer>.brand{grid-column:1;grid-row:1;width:64px;min-height:44px}
+ :root[data-dashboard-density="compact"] main:has(>#overview:not([hidden])) .app-footer .brand-logo{width:64px;max-height:30px}
+ :root[data-dashboard-density="compact"] main:has(>#overview:not([hidden])) .app-footer .brand-caption{grid-column:2;grid-row:1;font-size:9px;line-height:1.35}
+ :root[data-dashboard-density="compact"] main:has(>#overview:not([hidden])) .app-footer .footer-help{grid-column:3;grid-row:1;padding:7px;font-size:10px;min-height:44px}
+}
+
+/* Consumer picture details. */
+/* Keep names and live power visible; additional details open on the pictures. */
+#teenet-house-mood .en-consumers .en-node.en-clickable{min-height:0!important;align-self:start;background:transparent!important;border:0!important;box-shadow:none;padding:0!important}
+#teenet-house-mood .en-clickable>:not(.en-picture-button):not(.en-label):not(.en-power){display:none!important}
+#teenet-house-mood .en-picture-button{display:flex;align-items:center;justify-content:center;width:100%;min-width:0;padding:12px 4px;margin:0;border:1px solid transparent;border-radius:14px;background:transparent;box-shadow:none;color:inherit;cursor:pointer;touch-action:manipulation}
+#teenet-house-mood .en-picture-button:hover{background:var(--en-surface);border-color:var(--en-line)}
+#teenet-house-mood .en-picture-button:focus-visible{outline:2px solid var(--en-car);outline-offset:2px;background:var(--en-surface)}
+#teenet-house-mood .en-picture-button:active{background:var(--en-surface)}
+#teenet-house-mood .en-picture-button .en-art{pointer-events:none}
+#consumer-details{width:min(410px,calc(100vw - 32px));padding:26px}
+#consumer-details h2{margin:0 0 22px;font-size:23px;line-height:1.3}
+#consumer-details .consumer-detail-current{display:grid;gap:7px}
+#consumer-details .consumer-detail-current>span,#consumer-details .consumer-detail-current>small{color:var(--muted);font-size:13px;line-height:1.5}
+#consumer-details .consumer-detail-current>strong{font-size:36px;line-height:1.2;font-weight:750;font-variant-numeric:tabular-nums}
+#consumer-details dl{display:grid;gap:14px;margin:22px 0 0;padding-top:18px;border-top:1px solid var(--line)}
+#consumer-details dl[hidden]{display:none}
+#consumer-details dl>div{display:flex;justify-content:space-between;align-items:baseline;gap:16px}
+#consumer-details dt{color:var(--muted);font-size:14px}
+#consumer-details dd{margin:0;font-size:17px;font-weight:650;white-space:nowrap;font-variant-numeric:tabular-nums}
+#consumer-details-close{width:100%;min-height:44px;margin-top:26px}
+
+#teenet-house-mood .en-bus-label{display:none}
+
+/* Optional measured heat-pump consumer. */
+#teenet-house-mood{--en-heatpump:#a66a38}
+:root[data-theme="dark"] #teenet-house-mood{--en-heatpump:#e0ac7b}
+#teenet-house-mood .en-route[data-route="heatpump"]{color:var(--en-heatpump)}
+#teenet-house-mood .en-heatpump-fan{transform-origin:64px 70px}
+#teenet-house-mood[data-heatpump-running="true"] .en-heatpump-fan{animation:en-heatpump-fan 3s linear infinite}
+#teenet-house-mood[data-paused="true"] .en-heatpump-fan,:root:not([data-dashboard-view="graphic"]) #teenet-house-mood .en-heatpump-fan{animation-play-state:paused}
+@keyframes en-heatpump-fan{to{transform:rotate(360deg)}}
+#teenet-house-mood[data-heatpump-enabled="true"] .en-consumers{gap:14px;align-items:stretch}
+#teenet-house-mood[data-heatpump-enabled="true"] .en-consumers .en-node{min-width:0}
+#teenet-house-mood[data-heatpump-enabled="true"] .en-consumers .en-art{width:140px;height:108px;max-width:100%}
+#teenet-house-mood[data-heatpump-enabled="true"] .en-consumers .en-label{overflow-wrap:normal}
+#teenet-house-mood[data-heatpump-enabled="true"] .en-consumers .en-detail{overflow-wrap:break-word}
+#teenet-house-mood[data-heatpump-enabled="true"] .en-wallbox-today dl>div{gap:3px}
+#teenet-house-mood[data-heatpump-enabled="true"] .en-wallbox-today dd{font-size:13px}
+:root[data-dashboard-view="graphic"] #teenet-house-mood[data-heatpump-enabled="true"] .en-consumers .en-art{width:92px;height:68px}
+:root[data-dashboard-view="graphic"] #teenet-house-mood[data-heatpump-enabled="true"] .en-heatpump-node{align-self:start;min-height:0;border:0!important;background:none;padding:14px 4px}
+@container(max-width:420px){
+ #teenet-house-mood[data-heatpump-enabled="true"] .en-consumers{gap:8px}
+ #teenet-house-mood[data-heatpump-enabled="true"] .en-consumers .en-node{padding:12px 5px;min-height:205px}
+ #teenet-house-mood[data-heatpump-enabled="true"] .en-consumers .en-art{width:98px;height:83px}
+ #teenet-house-mood[data-heatpump-enabled="true"] .en-consumers .en-power{font-size:22px;gap:2px}
+ #teenet-house-mood[data-heatpump-enabled="true"] .en-consumers .en-power small{font-size:10px}
+ #teenet-house-mood[data-heatpump-enabled="true"] .en-consumers .en-label{font-size:12px}
+ #teenet-house-mood[data-heatpump-enabled="true"] .en-consumers .en-detail{font-size:10px;line-height:1.45}
+ #teenet-house-mood[data-heatpump-enabled="true"] .en-wallbox-today{padding-left:0;padding-right:0}
+ #teenet-house-mood[data-heatpump-enabled="true"] .en-wallbox-today dd{font-size:11px}
+ :root[data-dashboard-view="graphic"] #teenet-house-mood[data-heatpump-enabled="true"] .en-consumers .en-art{width:78px;height:60px}
+ :root[data-dashboard-view="graphic"] #teenet-house-mood[data-heatpump-enabled="true"] .en-consumers .en-node{min-height:0;padding:10px 4px}
+}
+@container(max-width:300px){
+ #teenet-house-mood[data-heatpump-enabled="true"] .en-consumers{gap:6px}
+ #teenet-house-mood[data-heatpump-enabled="true"] .en-consumers .en-node{padding:10px 3px}
+ #teenet-house-mood[data-heatpump-enabled="true"] .en-consumers .en-power{font-size:19px;letter-spacing:-.5px}
+ #teenet-house-mood[data-heatpump-enabled="true"] .en-consumers .en-art{height:72px}
+ #teenet-house-mood[data-heatpump-enabled="true"] .en-consumers .en-label{font-size:11px}
+}
+@media(prefers-reduced-motion:reduce){#teenet-house-mood .en-heatpump-fan{animation:none!important}}
+#heatpump-settings .heatpump-demo-divider{margin-top:20px;padding-top:18px;border-top:1px solid var(--line)}
+#heatpump-settings .heatpump-demo-test{margin-top:20px;padding:16px;border:1px solid var(--line);border-radius:12px;background:var(--raised,#f2f7f9)}
+#heatpump-settings .heatpump-demo-test>strong{display:block;font-size:13px;margin-bottom:8px;color:var(--ink,#244a62)}
+#heatpump-settings .heatpump-demo-test>p:last-child{margin-bottom:0}
+#heatpump-settings .heatpump-demo-test .check-label{align-self:center}
+#heatpump-settings code{overflow-wrap:anywhere;white-space:normal}
+#heatpump-settings #heatpump-demo-output{line-height:1.6}
+:root[data-theme="dark"] #heatpump-settings .heatpump-demo-test{background:var(--surface,#192933)}

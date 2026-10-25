@@ -6,6 +6,8 @@
 typedef struct { const char *name; size_t offset; char type; bool restart; } change_t;
 #define FIELD(name,type,restart) {#name,offsetof(settings_t,name),type,restart}
 static const change_t changes[]={
+    FIELD(heatpump_enabled,'b',true),FIELD(heatpump_publish_enabled,'b',true),
+    FIELD(heatpump_source,'s',true),FIELD(heatpump_host,'s',true),FIELD(heatpump_input_topic,'s',true),FIELD(heatpump_output_topic,'s',true),
     FIELD(wifi_ssid,'s',true),FIELD(wifi_password,'s',true),
     FIELD(mqtt_enabled,'b',true),FIELD(mqtt_uri,'s',true),FIELD(mqtt_username,'s',true),
     FIELD(mqtt_password,'s',true),FIELD(mqtt_prefix,'s',true),

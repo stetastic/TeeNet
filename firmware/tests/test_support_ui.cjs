@@ -14,7 +14,16 @@ assert(!JSON.stringify(sanitized).includes('private'));assert(!JSON.stringify(sa
  data.set(crypto.createHash('sha256').update(data.slice(0,-32)).digest(),data.length-32);
  const file=()=>({name:'TeeNet.bin',size:data.length,arrayBuffer:async()=>data.slice().buffer});
  const info=await f.inspect(file());assert.equal(info.version,'1.10');assert.equal(info.integrity,true);assert(f.compare('1.10','1.9')>0);
- f.remember(info,'old');assert.equal(f.checkBoot({version:'1.10',build_id:'new',app_elf_sha256:'wrong'}),null);assert.match(f.checkBoot({version:'1.10',build_id:'new',app_elf_sha256:info.appHash}),/installiert/);
+ f.remember(info,'old');assert.equal(f.checkBoot({version:'1.10',build_id:'new',app_elf_sha256:'wrong'}),null);
+ const updated={version:'1.10',build_id:'new',app_elf_sha256:info.appHash};
+ assert.equal(f.checkBoot({...updated,firmware_check_pending:true,firmware_check_ok:false}),null,'reachability alone does not confirm an update before its startup test');
+ assert(memory.has('teenet-update'),'keep the pending update while the firmware validates');
+ assert.equal(f.checkBoot({...updated,firmware_check_pending:false,firmware_check_ok:false}),null,'an unconfirmed startup must not be reported as success');
+ assert.match(f.checkBoot({...updated,firmware_check_pending:false,firmware_check_ok:true}),/installiert/);
+ assert(!memory.has('teenet-update'));
+ f.remember(info,'old');assert.match(f.checkBoot({...updated,firmware_check_failed:true}),/Startprüfung fehlgeschlagen/);
+ assert(!memory.has('teenet-update'),'report a failed startup only once');
+ f.remember(info,'old');assert.match(f.checkBoot(updated),/installiert/,'older firmware without self-test fields remains supported');
  data[400]^=1;await assert.rejects(f.inspect(file()),/beschädigt/);data[12]=0;await assert.rejects(f.inspect(file()),/ESP32-S3/);
  console.log('PASS: stale display never changes control inputs, optional setup checks, redacted diagnostics, firmware checksum and boot identity');
 })().catch(e=>{console.error(e);process.exitCode=1;});

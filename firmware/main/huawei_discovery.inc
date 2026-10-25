@@ -1,3 +1,4 @@
+#include "json_owned.h"
 static esp_err_t huawei_scan_get(httpd_req_t *req){
     cJSON *o=cJSON_CreateObject();if(!o)return send_json(req,NULL);
     cJSON *list=cJSON_AddArrayToObject(o,"devices");LOCK();
@@ -6,7 +7,7 @@ static esp_err_t huawei_scan_get(httpd_req_t *req){
     for(unsigned i=0;i<huawei_found_count;i++){
         cJSON *d=cJSON_CreateObject();cJSON_AddStringToObject(d,"host",huawei_found[i].host);
         cJSON_AddStringToObject(d,"model",huawei_found[i].model);cJSON_AddNumberToObject(d,"unit_id",huawei_found[i].unit);
-        cJSON_AddItemToArray(list,d);
+        json_add_owned_to_array(list,d);
     }
     UNLOCK();return send_json(req,o);
 }
@@ -54,7 +55,7 @@ static esp_err_t huawei_preview_get(httpd_req_t *req){
     cJSON_AddBoolToObject(o,"running",running);cJSON_AddStringToObject(o,"model",r.model);cJSON_AddStringToObject(o,"host",r.host);cJSON_AddNumberToObject(o,"unit_id",r.unit);
     cJSON_AddBoolToObject(o,"connected",r.connected);nullable(o,"house_power_w",r.grid_w,r.grid_ok);
     cJSON_AddBoolToObject(o,"house_current_ok",r.current_ok);
-    cJSON_AddItemToObject(o,"house_a",number_array(r.grid_a,3,r.current_ok));
+    json_add_owned_to_object(o,"house_a",number_array(r.grid_a,3,r.current_ok));
     nullable(o,"pv_generation_w",r.pv_w,r.pv_ok);nullable(o,"battery_soc_pct",r.soc,r.battery_ok);
     nullable(o,"battery_charge_w",r.charge_w,r.battery_ok);nullable(o,"battery_discharge_w",r.discharge_w,r.battery_ok);
     return send_json(req,o);

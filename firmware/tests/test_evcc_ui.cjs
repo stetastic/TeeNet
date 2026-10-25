@@ -25,6 +25,11 @@ const submit=events.get('control-form:submit');assert.equal(submit.capture,true)
  assert.equal(node('apply-control').disabled,false);
  submit.fn({preventDefault(){},stopImmediatePropagation(){}});
  await pending;assert.equal(calls.length,2);assert.equal(calls[1].path,'/api/evcc/local_release');assert.equal(calls[1].body.release,true);
+ context.state.phase_idle_inhibit=true;context.state.evcc_local_stop=true;
+ context.window.teenetEvccTest.updateWrites(context.state);
+ assert.equal(node('apply-control').textContent,'evcc freigeben','An idle one-phase attempt offers the existing explicit local release');
+ submit.fn({preventDefault(){},stopImmediatePropagation(){}});
+ await pending;assert.equal(calls.length,3);assert.equal(calls[2].path,'/api/evcc/local_release');assert.equal(calls[2].body.release,true);
  context.window.teenetEvccTest.updateWrites({basic_mode:true});
  assert.equal(node('evcc-owner-banner').hidden,true);
  assert.equal(node('mqtt-evcc-note').hidden,true);

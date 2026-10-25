@@ -17,6 +17,18 @@ static bool unique_keys(const cJSON *value) {
     return true;
 }
 
+static char shell_state(const char *value) {
+    if (!value || !value[0]) return '?';
+    if (!strcmp(value,"Available")) return 'A';
+    if (!strcmp(value,"Preparing") || !strcmp(value,"SuspendedEV") ||
+        !strcmp(value,"SuspendedEVSE")) return 'B';
+    if (!strcmp(value,"Charging")) return 'C';
+    if (!strcmp(value,"Finishing")) return 'D';
+    if (!strcmp(value,"Faulted") || !strcmp(value,"ERROR") ||
+        !strcmp(value,"Unavailable") || !strcmp(value,"OFF")) return 'F';
+    return '?';
+}
+
 bool evcc_shell_parse(const char *body, evcc_shell_t *out) {
     if (!out) return false;
     *out=(evcc_shell_t){.state='?'};
@@ -33,33 +45,48 @@ bool evcc_shell_parse(const char *body, evcc_shell_t *out) {
         }
     }
     if (!found) {strcpy(out->reason,"connector_missing");cJSON_Delete(root);return false;}
+    const cJSON *connector_status=cJSON_GetObjectItemCaseSensitive(found,"status");
     const cJSON *transaction=cJSON_GetObjectItemCaseSensitive(found,"transaction");
-    const cJSON *status=cJSON_GetObjectItemCaseSensitive(transaction,"statusCar");
-    if (!cJSON_IsObject(transaction)) strcpy(out->reason,"transaction_missing");
-    else if (!cJSON_IsString(status) || !status->valuestring[0]) strcpy(out->reason,"statuscar_missing");
-    else {
-        snprintf(out->raw,sizeof(out->raw),"%s",status->valuestring);
-        /* These states are handled by the actual Shell user.js. Do not infer A
-           from an absent session, current=0, connector ON, or stale data. */
-        if (!strcmp(status->valuestring,"Charging")) out->state='C';
-        else if (!strcmp(status->valuestring,"SuspendedEV") || !strcmp(status->valuestring,"SuspendedEVSE")) out->state='B';
-        else if (!strcmp(status->valuestring,"Faulted")) out->state='F';
-        else if (!strcmp(status->valuestring,"idle")) {
-            /* Observed on this Shell with a plugged-in, authorised vehicle.
-               Only an active transaction qualifies as a waiting session;
-               idle alone or an absent transaction does not prove connection. */
-            const cJSON *session=cJSON_GetObjectItemCaseSensitive(transaction,"status");
-            if(cJSON_IsString(session)&&!strcmp(session->valuestring,"CHARGING"))out->state='B';
+    const cJSON *status=cJSON_IsObject(transaction)?cJSON_GetObjectItemCaseSensitive(transaction,"statusCar"):NULL;
+    const cJSON *session=cJSON_IsObject(transaction)?cJSON_GetObjectItemCaseSensitive(transaction,"status"):NULL;
+    const char *raw=cJSON_IsString(status)&&status->valuestring[0]?status->valuestring:
+        cJSON_IsString(connector_status)?connector_status->valuestring:"";
+    snprintf(out->raw,sizeof(out->raw),"%s",raw);
+
+    /* statusCar is the strongest signal. The connector state is a fallback for
+       the moments before and after a transaction. An absent transaction is a
+       useful display signal, but evcc_shell_fresh deliberately does not accept
+       state A, so it can never enable charging from that inference. */
+    if (cJSON_IsString(status) && status->valuestring[0]) {
+        out->state=shell_state(status->valuestring);
+        out->evcc_usable=!strcmp(status->valuestring,"Charging") ||
+            !strcmp(status->valuestring,"SuspendedEV") ||
+            !strcmp(status->valuestring,"SuspendedEVSE") ||
+            !strcmp(status->valuestring,"Faulted");
+        if (!strcmp(status->valuestring,"idle")) {
+            if(cJSON_IsString(session)&&!strcmp(session->valuestring,"CHARGING")){out->state='B';out->evcc_usable=true;}
+            else if(cJSON_IsString(session)&&!strcmp(session->valuestring,"FINISHED"))out->state='D';
         }
-        strcpy(out->reason,out->state=='?'?"statuscar_unverified":"ok");
     }
+    if(out->state=='?' && cJSON_IsString(connector_status))out->state=shell_state(connector_status->valuestring);
+    if(!cJSON_IsObject(transaction) && out->state=='?')out->state='A';
+
+    if(out->state!='?')strcpy(out->reason,"ok");
+    else if(!cJSON_IsObject(transaction))strcpy(out->reason,"transaction_missing");
+    else if(!cJSON_IsString(status)||!status->valuestring[0])strcpy(out->reason,"statuscar_missing");
+    else strcpy(out->reason,"statuscar_unverified");
     cJSON_Delete(root);
     return true;
 }
 
 bool evcc_shell_fresh(const evcc_shell_t *sample,int64_t at,int64_t now) {
-    return sample && at>0 && now>=at && now-at<EVCC_SHELL_TTL_MS &&
+    return sample && sample->evcc_usable && at>0 && now>=at && now-at<EVCC_SHELL_TTL_MS &&
         (sample->state=='B' || sample->state=='C' || sample->state=='F');
+}
+bool shell_vehicle_fresh(const evcc_shell_t *sample,int64_t at,int64_t now) {
+    return sample && at>0 && now>=at && now-at<EVCC_SHELL_TTL_MS &&
+        (sample->state=='A' || sample->state=='B' || sample->state=='C' ||
+         sample->state=='D' || sample->state=='F');
 }
 void evcc_configure(evcc_control_t *control,bool configured) {
     *control=(evcc_control_t){.configured=configured};

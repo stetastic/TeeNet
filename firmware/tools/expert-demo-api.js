@@ -64,6 +64,16 @@ function gpioRemember(schema,cfg,next){
   if(testUntil>Date.now()&&url.pathname==='/api/control'&&options.method==='POST'){
    const body=JSON.parse(options.body||'{}');if(body.enabled===true)return plain('Schuetztest laeuft. Ladung gesperrt.',409);if(body.enabled===false)testUntil=testGoal=0;
   }
+  if(url.origin===location.origin&&url.pathname==='/api/theme'){
+   if(options.method==='POST'){
+    const body=JSON.parse(options.body||'{}');
+    if(['light','dark'].includes(body.theme))localStorage.setItem('teennet-theme',body.theme);
+    if(['standard','graphic'].includes(body.view))localStorage.setItem('teennet-view',body.view);
+    if(['standard','compact'].includes(body.density))localStorage.setItem('teennet-density',body.density);
+    if(body.graphic_notice_ack===true)localStorage.setItem('teennet-graphic-notice','1');
+   }
+   return json({theme:localStorage.getItem('teennet-theme')||'unset',view:localStorage.getItem('teennet-view')||'standard',density:localStorage.getItem('teennet-density')||'standard',graphic_notice_pending:localStorage.getItem('teennet-graphic-notice')!=='1'});
+  }
   if(url.origin===location.origin&&url.pathname==='/api/meters/scan'){
    if(options.method==='POST'){
     let request;try{request=JSON.parse(options.body||'{}');}catch(e){return plain('JSON ungueltig.',400);}

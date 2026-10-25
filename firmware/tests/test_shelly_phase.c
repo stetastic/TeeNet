@@ -13,7 +13,7 @@ static int64_t phase_candidate_at,phase_stop_at,phase_zero_at,phase_move_at,phas
 static bool phase_startup,phase_idle_inhibit,phase_gpio_ready=true,restarting,ota_in_progress,wifi_online=true,relay_on[1];
 static float actual_a[3];
 static int64_t actual_at,meter_at,wallbox_at,last_sent_current_at;
-static struct {bool configured,enabled,preparing;unsigned phases;} evcc_control;
+static struct {bool configured,enabled,preparing,inhibited;unsigned phases;} evcc_control;
 static struct {float target_a;} pv_control;
 static current_calibration_t manual_filter;
 static unsigned pulses;

@@ -183,7 +183,13 @@ static esp_err_t evcc_release_post(httpd_req_t *req) {
     cJSON *value=cJSON_GetObjectItemCaseSensitive(o,"release");
     bool shape=cJSON_IsTrue(value) && o->child==value && !value->next;
     LOCK();bool ok=shape && evcc_local_release(&evcc_control,now_ms());
-    if(ok){settings.enabled=false;settings.mode=MODE_OFF;event_locked("evcc_released");}
+    if(ok){
+        settings.enabled=false;settings.mode=MODE_OFF;
+        /* Only this explicit local action rearms an idle one-phase attempt.
+           Polls and automatic evcc commands must retain the idle lock. */
+        phase_idle_inhibit=false;phase_attempt_at=phase_no_load_since=phase_hold_until=0;
+        event_locked("evcc_released");
+    }
     UNLOCK();cJSON_Delete(o);
     if(!ok){httpd_resp_set_status(req,"409 Conflict");return httpd_resp_sendstr(req,"Keine lokale evcc-Sperre aktiv.");}
     return ok_json(req);

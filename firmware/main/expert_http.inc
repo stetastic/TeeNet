@@ -1,3 +1,4 @@
+#include "json_owned.h"
 /* Expert values are immutable during operation and activated only at boot. */
 static int64_t expert_wrong_until;
 static void expert_load(void) {
@@ -27,8 +28,8 @@ static cJSON *expert_values_snapshot(void){
     cJSON *values=cJSON_AddArrayToObject(root,"values"),*active=cJSON_AddArrayToObject(root,"active");
     if(!values||!active){cJSON_Delete(root);return NULL;}
     for(unsigned p=0;p<EP_COUNT;p++){
-        cJSON_AddItemToArray(values,cJSON_CreateNumber(expert_saved.values[p]));
-        cJSON_AddItemToArray(active,cJSON_CreateNumber(ems_param(p)));
+        json_add_owned_to_array(values,cJSON_CreateNumber(expert_saved.values[p]));
+        json_add_owned_to_array(active,cJSON_CreateNumber(ems_param(p)));
     }
     bool pending=false;for(unsigned p=0;p<EP_COUNT;p++)pending|=fabsf(expert_saved.values[p]-ems_param(p))>.00001f;
     cJSON_AddBoolToObject(root,"pending",pending);

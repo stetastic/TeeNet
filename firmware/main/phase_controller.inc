@@ -31,7 +31,7 @@ static void phase_step_locked(int64_t now) {
                        one bounded attempt. Keep the coil off until a new
                        explicit Start or a changed command arrives. */
                     phase_idle_inhibit=true; phase_goal=3;
-                    if(evcc_control.configured){evcc_control.enabled=false;evcc_control.preparing=false;settings.enabled=false;settings.mode=MODE_OFF;}
+                    if(evcc_control.configured){evcc_control.enabled=false;evcc_control.preparing=false;evcc_control.inhibited=true;settings.enabled=false;settings.mode=MODE_OFF;}
                     phase_state=PHASE_STOPPING; phase_stop_at=now; phase_zero_at=0;
                     return;
                 }

@@ -1,6 +1,6 @@
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
 const source=fs.readFileSync('tools/phase_shelly_ui.js','utf8'),dashboard=fs.readFileSync('main/dashboard.js','utf8');
-const nodes={},f={phase_actuator_type:{value:'1'}},feedback={value:'2'};
+const nodes={},f={phase_actuator_type:{value:'1'},phase_shelly_password:{disabled:false}},feedback={value:'2'};
 const state={phase_switch_enabled:true,phase_actuator_type:1,phase_feedback_count:2,
  phase_contact1_closed:true,phase_contact2_closed:false,phase_feedback:3};
 const context={state,f,feedback,Number,$:id=>nodes[id]??={hidden:false,textContent:''}};

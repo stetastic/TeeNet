@@ -1,3 +1,4 @@
+#include "json_owned.h"
 /* Shared, bounded diagnostic response. No credentials or network scanning. */
 static cJSON *event_json(const ems_event_t *e) {
     cJSON *row=cJSON_CreateObject();if(!row)return NULL;
@@ -13,7 +14,7 @@ static esp_err_t events_handler(httpd_req_t *req) {
     cJSON *o=cJSON_CreateObject();if(!o){free(copy);free(faults);return send_json(req,NULL);}
     cJSON *rows=cJSON_AddArrayToObject(o,"events"),*retained=cJSON_AddArrayToObject(o,"persisted_faults");
     if(!rows||!retained){free(copy);free(faults);cJSON_Delete(o);return send_json(req,NULL);}
-    for(unsigned i=0;i<copy->count;i++)cJSON_AddItemToArray(rows,event_json(ems_event_recent(copy,i)));
-    for(unsigned i=0;i<faults->count;i++)cJSON_AddItemToArray(retained,event_json(diagnostic_store_recent(faults,i)));
+    for(unsigned i=0;i<copy->count;i++)json_add_owned_to_array(rows,event_json(ems_event_recent(copy,i)));
+    for(unsigned i=0;i<faults->count;i++)json_add_owned_to_array(retained,event_json(diagnostic_store_recent(faults,i)));
     cJSON_AddBoolToObject(o,"storage_ok",saved);free(copy);free(faults);return send_json(req,o);
 }

@@ -4,13 +4,16 @@ static esp_err_t ota_handler(httpd_req_t *req) {
     const esp_partition_t *partition=esp_ota_get_next_update_partition(NULL);
     if(!partition||req->content_len<1024||req->content_len>partition->size)
         return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Passende TeeNet-OTA-Datei bis 2 MB auswaehlen.");
-    uint8_t prefix[EMS_FIRMWARE_PREFIX];int received=0,timeouts=0;
-    while(received<EMS_FIRMWARE_PREFIX) {
+    uint8_t prefix[EMS_FIRMWARE_PREFIX];size_t received=0;int timeouts=0;
+    int64_t prefix_deadline=now_ms()+4000;
+    while(received<EMS_FIRMWARE_PREFIX&&now_ms()<prefix_deadline) {
         int n=httpd_req_recv(req,(char *)prefix+received,EMS_FIRMWARE_PREFIX-received);
         if(n==HTTPD_SOCK_ERR_TIMEOUT&&++timeouts<=2)continue;
         if(n<=0)return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Firmware-Kopf unvollstaendig.");
         received+=n;
     }
+    if(received!=EMS_FIRMWARE_PREFIX||now_ms()>prefix_deadline)
+        return httpd_resp_send_err(req,HTTPD_408_REQ_TIMEOUT,"Firmware-Kopf zu langsam. Erneut versuchen.");
     char version[32];
     if(!firmware_prefix_check(prefix,sizeof(prefix),version))
         return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Datei ist keine TeeNet-Anwendung fuer ESP32-S3. Keine USB-/Factory-Datei verwenden.");

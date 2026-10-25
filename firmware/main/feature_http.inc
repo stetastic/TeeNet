@@ -1,3 +1,4 @@
+#include "json_owned.h"
 /* HTTP handlers share the application's validated configuration and state lock. */
 static esp_err_t config_get(httpd_req_t *req){return send_json(req,config_json(false));}
 static esp_err_t config_post(httpd_req_t *req) {
@@ -12,7 +13,7 @@ static esp_err_t backup_handler(httpd_req_t *req) {
     config_remove_readonly(config);
     cJSON_AddStringToObject(root,"format","TeeNet-settings");cJSON_AddNumberToObject(root,"schema",1);
     cJSON_AddStringToObject(root,"build_id",EMS_BUILD_ID);cJSON_AddBoolToObject(root,"includes_passwords",secrets);
-    cJSON_AddItemToObject(root,"settings",config);
+    json_add_owned_to_object(root,"settings",config);
     httpd_resp_set_hdr(req,"Content-Disposition","attachment; filename=\"TeeNet-Einstellungen.json\"");
     return send_json(req,root);
 }

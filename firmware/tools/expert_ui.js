@@ -225,7 +225,7 @@
   if(enabled&&phaseMqttDraft.transport===3)request.password=phaseMqttDraft.password;
   if(enabled&&Number.isInteger(phaseMqttDraft.shelly_model))request.shelly_model=phaseMqttDraft.shelly_model;
   const result=await api('/api/expert',request);
-  await loadConfig();
+  await loadConfig(true);
   await pollStatus();
   if(pin&&snapshot){const previous=phaseSettings(),updated={...(snapshot.settings||{}),...(configBaseline||{})};
    if(enabled)Object.assign(updated,{phase_mqtt_topic:request.topic,phase_mqtt_true_three_phase:request.true_three_phase,

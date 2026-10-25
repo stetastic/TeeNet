@@ -1,0 +1,17 @@
+{
+  "name": "TeeNet \u00b7 Andreas Testboard",
+  "version": "1.23",
+  "new_install_prompt_erase": false,
+  "new_install_improv_wait_time": 0,
+  "builds": [
+    {
+      "chipFamily": "ESP32-S3",
+      "parts": [
+        {
+          "path": "TeeNet-1.23-andreas-testboard-factory.bin",
+          "offset": 0
+        }
+      ]
+    }
+  ]
+}

@@ -16,7 +16,7 @@ const ctx=vm.createContext({Number,String,Object,Math,Error,
   action(work){const p=work();pending.push(p);return p;},
   async api(path,data){assert.equal(path,'/api/config');if(data===undefined)return {...backend};if(fail)throw Error('offline');requests.push(data);Object.assign(backend,data);return {reboot_required:false};}
 });
-vm.runInContext(part('async function loadConfig(){','function updateBatterySlider()'),ctx);
+vm.runInContext(part('async function loadConfig(','function updateBatterySlider()'),ctx);
 vm.runInContext(part('function applyReserveOnRelease(){',"$('battery-reserve-slider').addEventListener('change'"),ctx);
 vm.runInContext(part('function validateConfigForm()',"$('reboot').addEventListener"),ctx);
 async function complete(){await Promise.all(pending.splice(0));}

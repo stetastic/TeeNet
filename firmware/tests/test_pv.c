@@ -55,6 +55,15 @@ int main(void) {
     assert(pv_ramp_available(16,8.1f,slow)==8.1f);
     assert(pv_ramp_available(6,8.1f,slow)==6);
     assert(pv_ramp_available(16,0,idle)==16);
+    /* Live limits override the adjustment interval and deadband. Otherwise a
+       0.1 A maximum reduction can leave an out-of-range target indefinitely,
+       which the Shell report correctly treats as a stop request. */
+    pv_control_t limited={0};advance(&limited,0,100000,16,true);
+    assert(limited.target_a==16);
+    pv_control_step(&limited,true,15.9f,8,15.9f,101000);
+    assert(fabsf(limited.target_a-15.9f)<.001f&&limited.phase==PV_RUNNING);
+    pv_control_step(&limited,true,12,8,12,102000);
+    assert(limited.target_a==12&&limited.phase==PV_RUNNING);
     puts("PASS: PV start delay, cloud bridging, stop delay, cooldown, ramp limit, threshold noise, immediate stop/fault, clock and scheduler faults");
     return 0;
 }

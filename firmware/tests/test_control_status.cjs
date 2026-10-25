@@ -21,12 +21,16 @@ assert.match(status({battery_buffer_active:true,battery_buffer_remaining_s:121})
 assert.equal(status({block_reason:'battery_reserve'}).kind,'waiting');
 assert.equal(status({block_reason:'battery_reserve'}).help,null,'reserve reached needs no repair link');
 const statusNodes={};ctx.$=id=>statusNodes[id]||=({dataset:{}});
-ctx.valid=true;ctx.charging=false;
+ctx.valid=true;ctx.charging=false;ctx.powerSteps=()=>[0,6];
 const renderStatus=source.slice(source.indexOf("  let message='';",source.indexOf('function render(){')),source.indexOf('  const locked=',source.indexOf('function render(){')));
 function rendered(extra={}){ctx.s={...base,storage_ok:true,block_reason:'battery_reserve',...extra};vm.runInContext('{'+renderStatus+'}',ctx);return statusNodes['control-status'].dataset.kind;}
 assert.equal(rendered(),'waiting','render does not promote normal reserve wait to fault');
 assert.equal(rendered({storage_ok:false}),'fault','real storage fault remains visible');
 assert.equal(rendered({block_reason:'meter'}),'fault','meter failure remains visible');
+ctx.powerSteps=()=>[0];
+assert.equal(rendered({block_reason:'none',mode:'manual'}),'fault','invalid charge levels remain in the main status bar');
+assert.match(statusNodes['control-status-text'].textContent,/Keine gültige Ladestufe/);
+ctx.powerSteps=()=>[0,6];
 assert(!fs.readFileSync('main/dashboard.html','utf8').includes('relay-card'));
 let unlock,request;
 const ui=vm.createContext({$:()=>({addEventListener:(event,callback)=>{unlock=callback;}}),

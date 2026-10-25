@@ -1,4 +1,6 @@
 #include "ems_core.h"
+#include "evcc_bridge.h"
+#include "cJSON.h"
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
@@ -18,11 +20,10 @@ static float actual_a[3],solar_w=3300;
 static bool relay_on[1],fresh_meter=true;
 static pv_control_t pv_control;
 static manual_report_filter_t manual_filter;
-static struct {bool configured,enabled,preparing;unsigned phases;} evcc_control;
+static evcc_control_t evcc_control;
 static int64_t meter_ttl=5000;
 static int64_t wallbox_meter_ttl(void){return meter_ttl;}
 static unsigned phase_observed(void){return observed;}
-static unsigned evcc_desired_phases(const void *unused,unsigned active){(void)unused;return evcc_control.enabled||evcc_control.preparing?evcc_control.phases:active;}
 static float phase_surplus_w_locked(int64_t now){(void)now;return solar_w;}
 static void relay_set(unsigned index,bool on){
     assert(index==0 && actual_a[0]<1 && actual_a[1]<1 && actual_a[2]<1);
@@ -36,6 +37,33 @@ static bool phase_actuator_begin_locked(uint8_t goal,int64_t now){(void)now;rela
 static bool phase_test_active;static bool phase_config_saving,reboot_required;static uint8_t phase_test_goal;
 static void phase_test_end_locked(void){phase_test_active=false;}
 #include "phase_controller.inc"
+static bool terms_accepted=true,evcc_configuring,phase_mqtt_saving,wallbox_ready=true;
+static charge_guard_t charge_guard;
+static struct {bool active;} charge_plan;
+static struct {bool stable;} evu_contact;
+enum {PLAN_CLOCK=1};
+static unsigned plan_phase;
+static evcc_shell_t evcc_shell;
+static int64_t evcc_shell_at;
+static bool restart_pending(void){return false;}
+static bool unsupported_meter(void){return false;}
+static bool feedback_ready(int64_t now){(void)now;return true;}
+static bool pv_fresh_locked(int64_t now){(void)now;return true;}
+static bool house_currents_ready_locked(int64_t now){(void)now;return true;}
+typedef int esp_err_t;
+typedef struct {const char *body;int status;} httpd_req_t;
+#define ESP_OK 0
+static unsigned locks;
+#define LOCK() assert(locks++==0)
+#define UNLOCK() assert(--locks==0)
+static int64_t now_ms(void){return sample_at;}
+static bool authorized(httpd_req_t *req){(void)req;return true;}
+static cJSON *read_json(httpd_req_t *req){return cJSON_Parse(req->body);}
+static void httpd_resp_set_status(httpd_req_t *req,const char *status){(void)status;req->status=409;}
+static int httpd_resp_sendstr(httpd_req_t *req,const char *body){(void)req;(void)body;return ESP_OK;}
+static int ok_json(httpd_req_t *req){req->status=200;return ESP_OK;}
+static void event_locked(const char *event){(void)event;}
+#include "phase_control_actual.inc"
 static void fixture(unsigned phases){
     settings_defaults(&settings);settings.phase_switch_enabled=settings.relay_board_enabled=settings.phase_feedback_enabled=true;
     settings.charge_phases=phases;settings.enabled=settings.zero_feed_enabled=true;settings.mode=MODE_PV;
@@ -43,12 +71,82 @@ static void fixture(unsigned phases){
     phase_candidate_at=phase_stop_at=phase_zero_at=phase_move_at=phase_hold_until=phase_attempt_at=phase_no_load_since=relay_changed_at=0;
     phase_idle_inhibit=phase_startup=restarting=ota_in_progress=false;fresh_meter=phase_gpio_ready=true;meter_ttl=5000;
     memset(&evcc_control,0,sizeof(evcc_control));memset(&pv_control,0,sizeof(pv_control));memset(&manual_filter,0,sizeof(manual_filter));solar_w=3300;
+    evcc_shell=(evcc_shell_t){.state='C',.evcc_usable=true};evcc_shell_at=1000;
 }
 static void step(int64_t now,float amps){
     sample_at=now;actual_at=fresh_meter?now:0;meter_at=wallbox_at=last_sent_current_at=now;
+    evcc_shell_at=now;
     actual_a[0]=amps;actual_a[1]=actual_a[2]=0;phase_step_locked(now);
 }
 int main(void){
+    /* An evcc attempt with no current needs an explicit local release. Polls,
+       automatic phase commands and enable retries cannot clear that lock. */
+    fixture(1);settings.mode=MODE_MANUAL;settings.manual_phases=1;
+    evcc_configure(&evcc_control,true);
+    assert(evcc_set_current(&evcc_control,10,settings.min_charge_a,settings.max_charge_a,1000));
+    assert(evcc_set_phases(&evcc_control,1,true,true,1000));
+    assert(evcc_set_enabled(&evcc_control,true,true,1000));phase_attempt_at=1000;
+    int64_t idle_end=ems_param_ms(EP_PHASE_IDLE)+30000;
+    for(int64_t t=1000;t<=idle_end;t+=1000){evcc_touch(&evcc_control,t);step(t,0);}
+    assert(phase_idle_inhibit&&evcc_control.inhibited&&!evcc_control.enabled);
+    assert(!settings.enabled&&phase_state==PHASE_READY&&settings.charge_phases==3);
+    for(unsigned retry=0;retry<3;retry++) {
+        evcc_touch(&evcc_control,idle_end);
+        assert(evcc_set_current(&evcc_control,10,settings.min_charge_a,settings.max_charge_a,idle_end));
+        assert(!evcc_set_enabled(&evcc_control,true,evcc_ready_locked(idle_end),idle_end));
+        assert(!evcc_set_phases(&evcc_control,1,true,evcc_ready_locked(idle_end),idle_end));
+        assert(unlatched_target_locked(idle_end)==0&&phase_idle_inhibit);
+    }
+    httpd_req_t release={.body="{\"release\":true}"};
+    assert(evcc_release_post(&release)==ESP_OK&&release.status==200&&!locks);
+    assert(!phase_idle_inhibit&&!evcc_control.inhibited&&!phase_attempt_at&&!phase_no_load_since);
+    assert(!settings.enabled&&!evcc_control.enabled&&unlatched_target_locked(idle_end)==0);
+    assert(evcc_ready_locked(idle_end));
+    assert(evcc_set_enabled(&evcc_control,true,evcc_ready_locked(idle_end),idle_end));
+
+    /* Live maximum changes must reach the Shell before the next controller
+       tick, including a reduction smaller than the PV deadband. */
+    fixture(3);step(1000,16);pv_control.target_a=16;pv_control.last_at=1000;
+    settings.max_charge_a=15.9f;
+    float limited=unlatched_target_locked(1000),report[3];
+    assert(fabsf(limited-15.9f)<.001f);
+    control_report(&settings,actual_a,limited,0,false,report);
+    assert(report[0]<settings.grid_limit_a+settings.max_charge_a+1);
+    assert(report[1]<settings.grid_limit_a+settings.max_charge_a+1);
+
+    /* A failed one-phase attempt parks the coil but must never start charging
+       on three phases while a one-phase/manual or PV request remains active. */
+    for(unsigned scenario=0;scenario<2;scenario++) {
+        control_mode_t mode=scenario?MODE_PV:MODE_MANUAL;
+        fixture(1);settings.mode=mode;settings.manual_phases=1;settings.manual_current_a=10;
+        settings.pv_surplus_a=12;phase_attempt_at=1000;
+        int64_t finished=ems_param_ms(EP_PHASE_IDLE)+30000;
+        for(int64_t t=1000;t<=finished;t+=1000)step(t,0);
+        assert(phase_state==PHASE_READY&&settings.charge_phases==3&&!relay_on[0]);
+        assert(phase_idle_inhibit&&settings.enabled);
+        pv_control.target_a=10;pv_control.last_at=finished;
+        for(unsigned request_mode=MODE_MANUAL;request_mode<=MODE_PV;request_mode++) {
+            settings.mode=request_mode;
+            assert(unlatched_target_locked(finished)==0);
+            assert(!pv_permitted_locked(finished));
+        }
+        settings.mode=mode;
+        settings_t next=settings;
+        idle_resume_command(next,false);assert(phase_idle_inhibit); /* polling/repeated request */
+        next.enabled=false;idle_resume_command(next,true);assert(phase_idle_inhibit); /* stop */
+        next=settings;idle_resume_command(next,true);assert(!phase_idle_inhibit); /* explicit Start */
+        if(mode==MODE_PV)assert(pv_permitted_locked(finished));
+        else assert(unlatched_target_locked(finished)>0);
+    }
+    /* Existing explicit changes rearm the attempt; an unchanged command does not. */
+    fixture(3);phase_idle_inhibit=true;settings_t next=settings;
+    next.mode=MODE_MANUAL;idle_resume_command(next,false);assert(!phase_idle_inhibit);
+    phase_idle_inhibit=true;next=settings;next.manual_phases=1;
+    idle_resume_command(next,false);assert(!phase_idle_inhibit);
+    phase_idle_inhibit=true;next=settings;next.manual_current_a+=1;
+    idle_resume_command(next,false);assert(!phase_idle_inhibit);
+    phase_idle_inhibit=true;settings.enabled=false;next=settings;next.enabled=true;
+    idle_resume_command(next,false);assert(!phase_idle_inhibit);
     /* Even evcc's ongoing one-phase request cannot bypass restart parking. */
     fixture(1);evcc_control.configured=evcc_control.enabled=true;evcc_control.phases=1;
     restarting=true;settings.enabled=false;step(1000,10);step(2000,10);assert(phase_state==PHASE_STOPPING&&phase_goal==3);
@@ -85,5 +183,5 @@ int main(void){
     step(1000,0);step(2000,0);
     sample_at=wallbox_at=last_sent_current_at=3000;actual_at=1000;phase_step_locked(3000);
     assert(phase_zero_at==0&&relay_on[0]);
-    puts("PASS: real phase state machine, evcc/OTA restart parking, uninterrupted zero interlock, cached and pre-stop measurements, idle PV phase choice and feedback fault");
+    puts("PASS: real phase/charge gates, idle lock in every mode, evcc retries remain locked until explicit local release, PV maximum, restart parking, zero interlock and feedback fault");
 }

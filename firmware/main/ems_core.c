@@ -13,6 +13,10 @@ void settings_defaults(settings_t *s) {
     s->version = EMS_SETTINGS_VERSION;
     s->huawei_unit_id=1;
     strcpy(s->mqtt_prefix, "wallbox-ems");
+    strcpy(s->heatpump_source,"shelly_gen2");
+    strcpy(s->heatpump_input_topic,"wallbox-ems/input/heatpump_power_w");
+    strcpy(s->heatpump_output_topic,"wallbox-ems/sensor/heatpump_power_w");
+    s->heatpump_publish_enabled=true;
     s->wallbox_tx_pin=EMS_DEFAULT_SHELL_TX_PIN; s->wallbox_rx_pin=EMS_DEFAULT_SHELL_RX_PIN; s->wallbox_rts_pin=-1;
     s->xemex_tx_pin=EMS_DEFAULT_METER_TX_PIN; s->xemex_rx_pin=EMS_DEFAULT_METER_RX_PIN; s->xemex_rts_pin=-1;
     s->wallbox_address=s->xemex_address=1;
@@ -55,6 +59,7 @@ void settings_basic_mode(settings_t *s) {
     s->charge_plan_enabled=s->external_mode_input_enabled=s->evu_input_enabled=s->grid_guard_enabled=false;
     s->phase_switch_enabled=s->relay_board_enabled=false;
     s->huawei_enabled=s->huawei_battery=s->huawei_pv=false;
+    s->heatpump_enabled=false;
     s->mqtt_input_source=0;
     /* An inactive Huawei/serial house meter must not reserve pins or require a host. */
     strcpy(s->house_meter_type,"tasmota");
@@ -156,7 +161,51 @@ bool phase_mqtt_output_topic(const settings_t *s,char *out,size_t capacity) {
     }
     return true;
 }
+bool heatpump_settings_valid(const settings_t *s) {
+    if(!s || !memchr(s->mqtt_prefix,0,sizeof(s->mqtt_prefix)) ||
+       !memchr(s->mqtt_uri,0,sizeof(s->mqtt_uri)) ||
+       !memchr(s->phase_mqtt_topic,0,sizeof(s->phase_mqtt_topic)) ||
+       !memchr(s->heatpump_source,0,sizeof(s->heatpump_source)) ||
+       !memchr(s->heatpump_host,0,sizeof(s->heatpump_host)) ||
+       !memchr(s->heatpump_input_topic,0,sizeof(s->heatpump_input_topic)) ||
+       !memchr(s->heatpump_output_topic,0,sizeof(s->heatpump_output_topic)))return false;
+    bool mqtt=!strcmp(s->heatpump_source,"mqtt");
+    if(!mqtt && strcmp(s->heatpump_source,"shelly_gen2") && strcmp(s->heatpump_source,"shelly_em1"))return false;
+    if(!s->heatpump_enabled)return true;
+    if(mqtt&&(!mqtt_topic_valid(s->heatpump_input_topic,sizeof(s->heatpump_input_topic),true)||s->heatpump_input_topic[0]=='$'))return false;
+    if(s->heatpump_publish_enabled&&(!mqtt_topic_valid(s->heatpump_output_topic,sizeof(s->heatpump_output_topic),true)||s->heatpump_output_topic[0]=='$'))return false;
+    if(s->basic_mode)return false;
+    if(mqtt && (!s->mqtt_enabled || !s->mqtt_uri[0] || !s->heatpump_input_topic[0]))return false;
+    if(mqtt && !strncmp(s->heatpump_input_topic,s->mqtt_prefix,strlen(s->mqtt_prefix)) &&
+       s->heatpump_input_topic[strlen(s->mqtt_prefix)]=='/') {
+        const char *tail=s->heatpump_input_topic+strlen(s->mqtt_prefix)+1;
+        if(!strncmp(tail,"command/",8)||!strncmp(tail,"output/",7)||
+           !strcmp(tail,"state")||!strcmp(tail,"availability"))return false;
+    }
+    if(!mqtt && !shelly_phase_endpoint_valid(s->heatpump_host,sizeof(s->heatpump_host)))return false;
+    if(s->heatpump_publish_enabled && (!s->heatpump_output_topic[0] ||
+       (mqtt&&!strcmp(s->heatpump_input_topic,s->heatpump_output_topic))))return false;
+    if(s->heatpump_publish_enabled&&s->phase_mqtt_topic[0]&&
+       !strcmp(s->heatpump_output_topic,s->phase_mqtt_topic))return false;
+    size_t prefix=strlen(s->mqtt_prefix);
+    if(s->heatpump_publish_enabled && !strncmp(s->heatpump_output_topic,s->mqtt_prefix,prefix) &&
+       s->heatpump_output_topic[prefix]=='/') {
+        const char *tail=s->heatpump_output_topic+prefix+1;
+        if(!strncmp(tail,"command/",8)||!strncmp(tail,"input/",6)||!strncmp(tail,"output/",7)||
+           !strcmp(tail,"state")||!strcmp(tail,"availability")||!strcmp(tail,"sensor/wallbox_power_w"))return false;
+    }
+    return true;
+}
+bool heatpump_parse_value(const char *payload,float *watts,bool *available) {
+    if(!payload||!watts||!available)return false;
+    *available=false;
+    if(!strcmp(payload,"unavailable")||!strcmp(payload,"unknown")||!strcmp(payload,"null"))return true;
+    double value;
+    if(!parse_number(payload,0,50000,&value))return false;
+    *watts=(float)value;*available=true;return true;
+}
 bool settings_valid(const settings_t *s) {
+    if(!heatpump_settings_valid(s))return false;
     if(s->phase_actuator_type>3 || s->phase_feedback_count<1||s->phase_feedback_count>2 ||
        s->phase_shelly_model>12 || !memchr(s->phase_output_password,0,sizeof(s->phase_output_password)) ||
        !memchr(s->phase_shelly_host,0,sizeof(s->phase_shelly_host)) ||
@@ -320,6 +369,7 @@ bool settings_decode(const void *blob,size_t length,settings_t *out) {
         case 30: prefix=offsetof(settings_t,phase_output_transport); break;
         case 31: prefix=offsetof(settings_t,phase_feedback_count); break;
         case 32: prefix=offsetof(settings_t,phase_feedback_pin); break;
+        case 33: prefix=offsetof(settings_t,heatpump_enabled); break;
         case EMS_SETTINGS_VERSION: prefix=sizeof(settings_t); break;
         default: return false;
     }
@@ -445,6 +495,8 @@ bool settings_apply_live(settings_t *runtime,const settings_t *before,const sett
     SAME(house_address); SAME(house_meter_baud); SAME(house_meter_format); SAME(house_xemex_coils);
     SAME(relay_board_enabled); SAME(relay_active_low); SAME(mqtt_enabled);
     SAME(relay1_pin); SAME(relay1_mode);
+    SAME(heatpump_enabled);SAME(heatpump_publish_enabled);TEXT_SAME(heatpump_source);TEXT_SAME(heatpump_host);
+    TEXT_SAME(heatpump_input_topic);TEXT_SAME(heatpump_output_topic);
     if(before->mqtt_input_source==2||after->mqtt_input_source==2){
         SAME(mqtt_input_source);TEXT_SAME(opendtu_prefix);TEXT_SAME(opendtu_pv_topic);TEXT_SAME(opendtu_pv_valid_topic);
         SAME(battery_protect);SAME(pv_display_enabled);
@@ -755,6 +807,9 @@ void pv_control_step_timed(pv_control_t *c,bool permitted,float available,float 
         if(was_running){c->stopped=false;c->stopped_at=0;}
         c->phase=PV_BLOCKED; return;
     }
+    /* A live ceiling takes effect even between adjustment intervals and when
+       its reduction is smaller than the normal regulation deadband. */
+    c->target_a=fminf(c->target_a,maximum);
     if(c->target_a<=0) {
         if(available+0.0001f<start_threshold)c->above_at=-1;
         else if(c->above_at<0)c->above_at=now;

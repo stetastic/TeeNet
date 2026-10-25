@@ -1,3 +1,4 @@
+#include "json_owned.h"
 /* One background worker: Shell configuration and optional vehicle status.
    chargingRate is never used as current or power feedback. */
 #include "shell_search_schedule.h"
@@ -54,7 +55,7 @@ static esp_err_t shell_scan_get(httpd_req_t *req) {
     cJSON_AddNumberToObject(o,"progress",shell_scan_progress);cJSON *rows=cJSON_AddArrayToObject(o,"devices");
     for(unsigned i=0;i<shell_found_count;i++){
         cJSON *row=cJSON_CreateObject();cJSON_AddStringToObject(row,"host",shell_found_host[i]);
-        cJSON_AddNumberToObject(row,"grid_limit_a",shell_found_grid[i]);cJSON_AddNumberToObject(row,"max_charge_a",shell_found_max[i]);cJSON_AddItemToArray(rows,row);
+        cJSON_AddNumberToObject(row,"grid_limit_a",shell_found_grid[i]);cJSON_AddNumberToObject(row,"max_charge_a",shell_found_max[i]);json_add_owned_to_array(rows,row);
     }UNLOCK();return send_json(req,o);
 }
 static esp_err_t shell_scan_post(httpd_req_t *req) {
@@ -63,35 +64,39 @@ static esp_err_t shell_scan_post(httpd_req_t *req) {
     return shell_scan_get(req);
 }
 static void shell_limits_task(void *arg) {
-    (void)arg;int64_t next_read=0,next_car=0,next_search=0;unsigned failures=0,car_failures=0,search_attempts=0;
+    (void)arg;int64_t next_read=0,next_vehicle=0,next_search=0;unsigned failures=0,vehicle_failures=0,search_attempts=0;
     uint32_t generation=UINT32_MAX;
     bool previous_limits=false;char previous_host[64]="";
     while(true) {
         LOCK();bool available=wifi_online && !restarting && !ota_in_progress;
-        bool car=evcc_control.configured,limits=settings.shell_limits_auto;
+        bool evcc=evcc_control.configured,limits=settings.shell_limits_auto;
         uint32_t turn=evcc_poll_generation;
         char configured_host[64];strcpy(configured_host,settings.shell_setup_host);
         char host[64];strcpy(host,shell_active_host[0]?shell_active_host:settings.shell_setup_host);
         if((!host[0] || failures>=3) && shell_found_count==1){strcpy(host,shell_found_host[0]);}
-        if(car)strcpy(host,evcc_host);
+        if(evcc)strcpy(host,evcc_host);
+        bool vehicle=(evcc||limits)&&host[0];
         UNLOCK();
-        if(turn!=generation){generation=turn;next_car=0;car_failures=0;}
+        if(turn!=generation){generation=turn;next_vehicle=0;vehicle_failures=0;}
         if(limits!=previous_limits || strcmp(configured_host,previous_host)){
-            previous_limits=limits;strcpy(previous_host,configured_host);next_read=next_search=0;failures=search_attempts=0;
+            previous_limits=limits;strcpy(previous_host,configured_host);next_read=next_vehicle=next_search=0;
+            failures=vehicle_failures=search_attempts=0;
         }
         int64_t now=now_ms();
-        bool limits_due=limits && now>=next_read,car_due=car && now>=next_car;
-        if(available && host[0] && (limits_due || car_due)) {
+        bool limits_due=limits && now>=next_read,vehicle_due=vehicle && now>=next_vehicle;
+        if(available && host[0] && (limits_due || vehicle_due)) {
             float grid=0,maximum=0;evcc_shell_t sample={.state='?',.reason="http_error"};
-            int code=shell_read_snapshot(host,&grid,&maximum,car?&sample:NULL);
+            int code=shell_read_snapshot(host,&grid,&maximum,vehicle?&sample:NULL);
             LOCK();float capped=fminf(16,maximum);
             bool valid=code==200 && grid>=capped && capped>=settings.min_charge_a;
             bool same=turn==evcc_poll_generation;
             bool same_limits=same && settings.shell_limits_auto==limits && !strcmp(settings.shell_setup_host,configured_host);
-            if(car && same && evcc_control.configured) {
+            bool same_vehicle=same && ((evcc && evcc_control.configured && !strcmp(host,evcc_host)) ||
+                (!evcc && limits && settings.shell_limits_auto && !strcmp(settings.shell_setup_host,configured_host)));
+            if(vehicle && same_vehicle) {
                 evcc_shell=sample;evcc_shell_http_code=code;
                 evcc_shell_at=code==200?now_ms():0;
-                car_failures=code==200?0:car_failures+1;
+                vehicle_failures=code==200?0:vehicle_failures+1;
             }
             if(limits_due && same_limits)shell_limits_code=valid?200:code==200?422:code;
             if(limits_due && same_limits && valid) {
@@ -103,9 +108,9 @@ static void shell_limits_task(void *arg) {
             }else if(limits_due && same_limits)failures++;
             UNLOCK();
             if(limits_due)next_read=now_ms()+(valid?300000:30000);
-            if(car)next_car=now_ms()+(car_failures>=3?15000:5000);
+            if(vehicle)next_vehicle=now_ms()+(vehicle_failures>=3?15000:5000);
         }
-        if(available && limits && !car && (!host[0] || failures>=3) && now>=next_search) {
+        if(available && limits && !evcc && (!host[0] || failures>=3) && now>=next_search) {
             if(shell_scan_start()){next_search=now+shell_search_pause(search_attempts);if(search_attempts<2)search_attempts++;}
             LOCK();if(shell_found_count==1 && strcmp(shell_found_host[0],host)){strcpy(shell_active_host,shell_found_host[0]);next_read=0;}UNLOCK();
         }

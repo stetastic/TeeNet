@@ -1,11 +1,11 @@
-# TeeNet 1.22
+# TeeNet 1.23
 
 Quellcode für Shell Recharge Advanced 3.0 mit zwei Hardwareprofilen:
 
 - **ESP32-S3 N16R8:** 16 MB Flash, Shell TX17/RX18, Zähler TX4/RX5.
 - **Andreas Testboard · AtomS3 Lite:** 8 MB Flash, Shell TX6/RX5, Zähler TX1/RX2, Betriebsartkontakt optional auf GPIO1.
 
-Standard-Build: `16bfa195a342`.
+Standard-Build: `cbf0e66c7468`.
 
 ## Bauen
 
@@ -17,13 +17,18 @@ Das Skript erzeugt beide Varianten getrennt in `build` und `build-atoms3-lite`.
 
 Am eingerichteten TeeNet unter **System & Hilfe** nach Updates suchen und die Installation dort starten. Ladung vorher stoppen.
 
-Erstinstallation über den [USB-Webinstaller](https://teennet-demo.stetastic.chatgpt.site/install.html) oder mit `idf.py -p PORT flash` (`PORT` ersetzen).
+Erstinstallation über den [USB-Webinstaller](https://teenet-demo.stetastic.chatgpt.site/install.html) oder mit `idf.py -p PORT flash` (`PORT` ersetzen).
 
 ## Einrichten
 
 Mit **Wallbox-EMS-Setup** verbinden, `192.168.4.1` öffnen und WLAN sowie Wallbox-Zähler einrichten.
 
 Automatische RS485-Module mit 3,3-V-Logik verwenden. Erweiterungen, Profilanschlüsse und Verdrahtung stehen in der [Anleitung](main/guide.html) und im [Anschlussplan](main/hardware-plan.svg).
+
+## Darstellung und Wärmepumpe
+
+Unter **System & Hilfe → Darstellung** Standard oder Grafisch und die Anordnung Kompakt wählen.
+Eine Wärmepumpe optional unter **Funktionen** aktivieren und ihren eigenen Shelly-Zähler oder MQTT-Eingang einrichten. TeeNet zeigt ihren elektrischen Verbrauch; die Wärmepumpe wird nicht gesteuert.
 
 ## Externe Steuerung
 

@@ -61,6 +61,7 @@
  /* Status polling must not rewrite unsaved configuration fields. */
  function updateLive(){
   const kind=Number(f.phase_actuator_type.value),none=kind===2,baseline=typeof configBaseline==='undefined'?null:configBaseline;
+  if(kind===3||$('phase-shelly-auth').value!=='1')f.phase_shelly_password.disabled=true;
   const runtimeAllowed=!!state?.phase_mqtt_allowed,configured=runtimeAllowed||baseline?.phase_mqtt_output_enabled===true;
   $('phase-actuator-label').hidden=none&&configured;
   const outputNote=$('phase-mqtt-profile-note');outputNote.hidden=!none;

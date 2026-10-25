@@ -15,6 +15,7 @@ typedef struct {
 typedef mqtt_test_event_t *esp_mqtt_event_handle_t;
 enum {MQTT_EVENT_CONNECTED,MQTT_EVENT_DISCONNECTED,MQTT_EVENT_DATA};
 static settings_t settings;
+static bool wifi_online=true;
 static opendtu_state_t opendtu;
 static bool mqtt_online,phase_mqtt_seen_connection,phase_mqtt_allowed,phase_mqtt_pending;
 static unsigned phase_goal,mqtt_rejected,apply_calls,cancel_calls,subscriptions;
@@ -51,6 +52,7 @@ static void deliver(const char *topic,const char *value,bool retained,bool fragm
         mqtt_event(NULL,NULL,MQTT_EVENT_DATA,&event);}
 }
 int main(void){
+    assert(!heatpump_fresh_locked(now_ms()));
     unsigned checked=0;
     for(unsigned allowed=0;allowed<2;allowed++)for(unsigned polarity=0;polarity<2;polarity++)
     for(unsigned source=0;source<2;source++)for(unsigned charging=0;charging<2;charging++)for(unsigned transport=0;transport<4;transport++){
@@ -89,5 +91,16 @@ int main(void){
         deliver("wallbox-ems/command/enabled","true",true,false);assert(apply_calls==1);
         if(transport){mqtt_event(NULL,NULL,MQTT_EVENT_DISCONNECTED,&event);assert(cancel_calls==0&&phase_mqtt_allowed==(bool)allowed);}
     }
-    printf("PASS: %u actual MQTT receiver cases: disabled/enabled phase output and charging, both polarities, OpenDTU/normal sources, retired/output topics, retained and fragmented messages leave phase control unchanged; normal command routing remains active\n",checked);
+    settings_defaults(&settings);settings.basic_mode=false;settings.heatpump_enabled=true;
+    strcpy(settings.heatpump_source,"mqtt");strcpy(settings.heatpump_input_topic,"external/hp/watts");
+    subscriptions=0;esp_mqtt_client_subscribe(1,settings.heatpump_input_topic,1);mqtt_online=true;
+    deliver("external/hp/watts","2450",false,true);assert(heatpump_power_w==2450&&heatpump_at==now_ms());
+    deliver("external/hp/watts","5000",true,false);assert(heatpump_power_w==2450);
+    deliver("external/hp/watts","0",false,false);assert(heatpump_power_w==0&&heatpump_fresh_locked(now_ms()));
+    deliver("external/hp/watts","unavailable",false,false);assert(!heatpump_at);
+    deliver("external/hp/watts","2200",false,false);assert(heatpump_at);
+    settings.heatpump_enabled=false;deliver("external/hp/watts","5000",false,false);assert(heatpump_power_w==2200);
+    assert(!heatpump_fresh_locked(now_ms()));settings.heatpump_enabled=true;
+    mqtt_test_event_t disconnect={.client=1};mqtt_event(NULL,NULL,MQTT_EVENT_DISCONNECTED,&disconnect);assert(!heatpump_at);
+    printf("PASS: %u phase MQTT isolation cases plus real heat-pump custom topic, fragments, zero, unavailable, retained/disabled and disconnect handling\n",checked);
 }

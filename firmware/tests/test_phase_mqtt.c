@@ -13,7 +13,7 @@ static int64_t phase_candidate_at,phase_stop_at,phase_zero_at,phase_move_at,phas
 static int64_t actual_at,meter_at,wallbox_at,last_sent_current_at,clock_ms;
 static float actual_a[3],solar_w=3300;static bool relay_on[1];
 static pv_control_t pv_control;static manual_report_filter_t manual_filter;
-static struct {bool configured,enabled,preparing;unsigned phases;} evcc_control;
+static struct {bool configured,enabled,preparing,inhibited;unsigned phases;} evcc_control;
 static int64_t wallbox_meter_ttl(void){return 5000;}
 static int64_t now_ms(void){return clock_ms;}
 static bool phase_test_active;static bool phase_config_saving,reboot_required;static uint8_t phase_test_goal;

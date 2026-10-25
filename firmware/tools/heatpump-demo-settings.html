@@ -1,0 +1,31 @@
+<details class="panel settings-group" id="heatpump-settings" hidden>
+ <summary>Wärmepumpe</summary>
+ <p class="footnote">Verbrauch separat anzeigen. Die Wärmepumpe wird dadurch nicht gesteuert.</p>
+ <label>Messwerte von<select name="heatpump_source">
+  <option value="shelly_gen2">Shelly Pro 3EM / 3EM Gen3 · Modbus TCP · drei Phasen</option>
+  <option value="shelly_em1">Shelly Pro EM / EM Gen3 · Modbus TCP · eine Phase (Kanal 0)</option>
+  <option value="mqtt">MQTT</option>
+ </select></label>
+ <div id="heatpump-shelly-fields">
+  <label>Shelly-Adresse<input name="heatpump_host" type="text" maxlength="63" placeholder="z. B. 192.168.1.40" autocomplete="off"></label>
+  <p class="footnote">Modbus im Shelly aktivieren. Der Zähler muss ausschließlich die Wärmepumpe messen.</p>
+ </div>
+ <div id="heatpump-mqtt-fields" hidden>
+  <label>MQTT-Eingangstopic<input name="heatpump_input_topic" type="text" maxlength="127" spellcheck="false"></label>
+  <p class="footnote">Leistung in Watt, z. B. <code>1800</code>. Die Broker-Verbindung wird unter <a href="#mqtt-settings">MQTT</a> eingerichtet.</p>
+ </div>
+ <div class="heatpump-demo-divider">
+  <label class="check-label"><input name="heatpump_publish_enabled" type="checkbox">Messwert über MQTT bereitstellen</label>
+  <label id="heatpump-output-field">MQTT-Ausgangstopic<input name="heatpump_output_topic" type="text" maxlength="127" spellcheck="false"></label>
+  <p class="footnote">Der Verbrauch ist bereits im Hausanschluss enthalten. In der Grafik wird er vom übrigen Hausverbrauch getrennt.</p>
+ </div>
+ <div class="heatpump-demo-test">
+  <strong>Demo ausprobieren</strong>
+  <p class="footnote">Shelly und MQTT werden simuliert. Es werden keine Geräte oder Broker angesprochen.</p>
+  <div class="form-pair"><label>Test-Leistung (W)<input id="heatpump-demo-watts" type="number" min="0" max="50000" step="1" value="1800"></label>
+   <label class="check-label"><input id="heatpump-demo-missing" type="checkbox">Messwert fehlt</label></div>
+  <button class="button" id="heatpump-demo-apply" type="button">Testwert übernehmen</button>
+  <p id="heatpump-demo-result" class="footnote" role="status">Funktion zuerst aktivieren und speichern.</p>
+  <p class="footnote" id="heatpump-demo-output" hidden></p>
+ </div>
+</details>

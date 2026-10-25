@@ -23,7 +23,8 @@ window.TeeNetFirmware=(()=>{
   function remember(info,build){try{sessionStorage.setItem('teenet-update',JSON.stringify({version:info.version,appHash:info.appHash,build,at:Date.now()}));}catch(_){}}
   function checkBoot(s){
     const p=pending();if(!p)return null;
-    if(s.version===p.version&&(p.appHash&&s.app_elf_sha256?s.app_elf_sha256===p.appHash:s.build_id!==p.build)){try{sessionStorage.removeItem('teenet-update');}catch(_){}return `TeeNet ${s.version} ist installiert und wieder erreichbar. Ladung bleibt ausgeschaltet.`;}
+    if(s.firmware_check_failed){try{sessionStorage.removeItem('teenet-update');}catch(_){}return 'Startprüfung fehlgeschlagen. Ladung bleibt gesperrt; Diagnose prüfen.';}
+    if(!s.firmware_check_pending&&s.firmware_check_ok!==false&&s.version===p.version&&(p.appHash&&s.app_elf_sha256?s.app_elf_sha256===p.appHash:s.build_id!==p.build)){try{sessionStorage.removeItem('teenet-update');}catch(_){}return `TeeNet ${s.version} ist installiert und wieder erreichbar. Ladung bleibt ausgeschaltet.`;}
     if(Date.now()-p.at>180000){try{sessionStorage.removeItem('teenet-update');}catch(_){}return 'Update noch nicht bestätigt. Version und Verbindung prüfen.';}
     return null;
   }

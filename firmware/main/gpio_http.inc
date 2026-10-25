@@ -1,3 +1,4 @@
+#include "json_owned.h"
 static cJSON *gpio_snapshot(void){
     cJSON *root=cJSON_CreateObject(),*rows=cJSON_AddArrayToObject(root,"roles"),*pins=cJSON_AddArrayToObject(root,"pins");
     if(!root||!rows||!pins){cJSON_Delete(root);return NULL;}
@@ -10,14 +11,14 @@ static cJSON *gpio_snapshot(void){
         cJSON_AddNumberToObject(row,"value",settings_gpio_value(&saved_settings,i));
         cJSON_AddNumberToObject(row,"active",settings_gpio_value(&settings,i));
         cJSON_AddBoolToObject(row,"used",settings_gpio_used(&saved_settings,i));cJSON_AddBoolToObject(row,"led",i==11);
-        cJSON_AddItemToArray(rows,row);
+        json_add_owned_to_array(rows,row);
     }
     UNLOCK();
     for(int pin=0;pin<=48;pin++){
         cJSON *item=cJSON_CreateObject();if(!item){cJSON_Delete(root);return NULL;}
         cJSON_AddNumberToObject(item,"pin",pin);
         cJSON_AddStringToObject(item,"reason",settings_gpio_reason(pin,false));
-        cJSON_AddBoolToObject(item,"led_allowed",!settings_gpio_reason(pin,true)[0]);cJSON_AddItemToArray(pins,item);
+        cJSON_AddBoolToObject(item,"led_allowed",!settings_gpio_reason(pin,true)[0]);json_add_owned_to_array(pins,item);
     }
     return root;
 }

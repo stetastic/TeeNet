@@ -1,4 +1,4 @@
-# TeeNet 1.22
+# TeeNet 1.23
 
 Lokale ESP32-S3-Steuerung für die **Shell Recharge Advanced 3.0**.
 
@@ -13,8 +13,9 @@ Lokale ESP32-S3-Steuerung für die **Shell Recharge Advanced 3.0**.
 - Hausakku einbeziehen und PV-Leistung zwischen Hausakku und Auto aufteilen.
 - Optional Ladeplan, Wolkenpuffer und automatische Phasenumschaltung über GPIO oder Shelly nutzen.
 - Verbrauch, Ladesitzungen und Netz-/Solarkosten anzeigen und als CSV exportieren.
+- Standard- oder Grafikanzeige und eine kompakte Handyansicht wählen; Details per Bildklick öffnen.
 
-Einrichtung und Bedienung erfolgen im Browser. Die Online-Demo lässt sich ohne Hardware ausprobieren.
+Einrichtung und Bedienung erfolgen im Browser. Die Online-Demo lässt sich ohne Hardware ausprobieren. Eine optional separat gemessene Wärmepumpe wird über Shelly-Modbus oder MQTT angezeigt und vom übrigen Hausverbrauch abgezogen. In der Demo sind alle Verbindungen und Werte simuliert.
 
 ## Installation
 
@@ -32,7 +33,7 @@ Am Referenzaufbau erprobt: dreiphasig 6–11 kW, einphasig 2,0–3,5 kW. Der nut
 
 ## Freiwillige Gerätestatistik
 
-Mit dem aktuellen Build von Version 1.22 kann TeeNet nach ausdrücklicher Bestätigung eine zufällige Kennung und die Firmwareversion an den Projektzähler senden. Die Teilnahme ist bei der Einrichtung vorausgewählt und jederzeit abschaltbar. Keine Lade-, WLAN- oder Standortdaten. Die Demo sendet keine Lebenszeichen. Details stehen in der Anleitung unter Gerätestatistik.
+Mit dem aktuellen Build von Version 1.23 kann TeeNet nach ausdrücklicher Bestätigung eine zufällige Kennung und die Firmwareversion an den Projektzähler senden. Die Teilnahme ist bei der Einrichtung vorausgewählt und jederzeit abschaltbar. Keine Lade-, WLAN- oder Standortdaten. Die Demo sendet keine Lebenszeichen. Details stehen in der Anleitung unter Gerätestatistik.
 
 ## Hinweis
 

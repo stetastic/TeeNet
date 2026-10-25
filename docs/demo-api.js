@@ -104,11 +104,14 @@
     const soc = 73-((Date.now()-started)/3600000)*2;
     return {
       huawei_enabled:cfg.huawei_enabled,huawei_ok:cfg.huawei_enabled,huawei_model:cfg.huawei_enabled?'SUN2000-8KTL-M1':'',battery_source:cfg.huawei_battery?'Huawei':'MQTT',pv_source:cfg.huawei_pv?'Huawei':'MQTT',
-      version:'1.22',build_id:'demo-v1.22',charge_plan:{...plan},charge_plan_enabled:cfg.charge_plan_enabled, token:'demo-token', hostname:'TeeNet-Demo',
+      version:'1.23',build_id:'demo-v1.23',charge_plan:{...plan},charge_plan_enabled:cfg.charge_plan_enabled, token:'demo-token', hostname:'TeeNet-Demo',
       ...control, mqtt_enabled:cfg.mqtt_enabled, mqtt_ok:true, homeassistant_enabled:cfg.homeassistant_enabled,
       wifi_ok:true, ap_active:false, ap_forced:false, wifi_fallback:false, station_ip:'teennet.demo.local',
       basic_mode:cfg.basic_mode,expert_mode:cfg.expert_mode, pv_display_enabled:cfg.pv_display_enabled,
       vehicle_soc_enabled:cfg.vehicle_soc_enabled, car_soc_pct:64,
+      vehicle_status_enabled:cfg.shell_limits_auto,vehicle_status_known:cfg.shell_limits_auto,
+      vehicle_connection_state:cfg.shell_limits_auto?(charging?'charging':control.enabled?'connected':'disconnected'):'unknown',
+      vehicle_status_raw:cfg.shell_limits_auto?(charging?'Charging':control.enabled?'idle':'ON'):'',vehicle_status_reason:cfg.shell_limits_auto?'ok':'pending',vehicle_status_age_s:0,
       relay_board_enabled:cfg.relay_board_enabled, relay1_on:false, relay2_on:false,
       battery_protect:cfg.battery_protect, battery_ok:true,battery_soc_ok:true, battery_soc_pct:Math.max(0,soc),
       battery_reserve_soc:cfg.battery_reserve_soc, battery_capacity_kwh:20,
@@ -205,7 +208,7 @@
       if(url.pathname==='/api/update/github')return json(body.action==='check'?{running:false,installing:false,ok:true,newer:false,version:status().version,message:'Demo: Die aktuelle Version wird angezeigt. Installation nur am echten Gerät.'}:{error:'Installation nur am echten TeeNet-Gerät.'},body.action==='check'?200:400);
       if (url.pathname === '/api/control') {if(cfg.basic_mode&&(body.mode==='pv'||body.mode==='grid_limit'||'pv_surplus_a' in body||body.battery_use||body.battery_start_use))return json({error:'Im Grundbetrieb nur manuell oder per MQTT laden.'},400);if(body.mode==='manual'&&control.mode==='pv'&&measurements().target>0&&!('current_a' in body))control.current_a=measurements().target/(230*phases());Object.assign(control, body);if(['enabled','mode','current_a'].some(key=>key in body)){plan.active=false;plan.phase='off';logEvent(control.enabled?'control_changed':'user_stop');}}
       else if (url.pathname === '/api/config') {
-        const restartFields=["current_offset_a", "evu_input_enabled", "evu_input_pin", "external_mode_input_enabled", "external_mode_input_pin", "fixed_charge_phases", "house_address", "house_meter_baud", "house_meter_format", "house_meter_type", "house_rs485_host", "house_rs485_interface", "house_rts_pin", "house_rx_pin", "house_tx_pin", "house_xemex_coils", "meter_baud", "meter_format", "meter_rs485_host", "meter_rs485_interface", "min_charge_a", "mqtt_enabled", "mqtt_password", "mqtt_prefix", "mqtt_state_json", "mqtt_uri", "mqtt_username", "nominal_v", "phase_actuator_type", "phase_feedback_closed_is_single", "phase_feedback_count", "phase_feedback_enabled", "phase_feedback_pin", "phase_feedback_second_pin", "phase_mqtt_topic", "phase_output_host", "phase_output_password", "phase_output_switch_id", "phase_output_transport", "phase_shelly_host", "phase_shelly_model", "phase_shelly_password", "phase_shelly_pulse", "phase_shelly_true_three_phase", "phase_switch_enabled", "power_factor", "relay1_mode", "relay1_pin", "relay_active_low", "relay_board_enabled", "shell_rs485_host", "shell_rs485_interface", "status_led_pin", "version", "wallbox_address", "wallbox_meter_type", "wallbox_rts_pin", "wallbox_rx_pin", "wallbox_tx_pin", "wifi_password", "wifi_ssid", "xemex_address", "xemex_coils", "xemex_rts_pin", "xemex_rx_pin", "xemex_tx_pin"];
+        const restartFields=["current_offset_a", "evu_input_enabled", "evu_input_pin", "external_mode_input_enabled", "external_mode_input_pin", "fixed_charge_phases", "heatpump_enabled", "heatpump_host", "heatpump_input_topic", "heatpump_output_topic", "heatpump_publish_enabled", "heatpump_source", "house_address", "house_meter_baud", "house_meter_format", "house_meter_type", "house_rs485_host", "house_rs485_interface", "house_rts_pin", "house_rx_pin", "house_tx_pin", "house_xemex_coils", "meter_baud", "meter_format", "meter_rs485_host", "meter_rs485_interface", "min_charge_a", "mqtt_enabled", "mqtt_password", "mqtt_prefix", "mqtt_state_json", "mqtt_uri", "mqtt_username", "nominal_v", "phase_actuator_type", "phase_feedback_closed_is_single", "phase_feedback_count", "phase_feedback_enabled", "phase_feedback_pin", "phase_feedback_second_pin", "phase_mqtt_topic", "phase_output_host", "phase_output_password", "phase_output_switch_id", "phase_output_transport", "phase_shelly_host", "phase_shelly_model", "phase_shelly_password", "phase_shelly_pulse", "phase_shelly_true_three_phase", "phase_switch_enabled", "power_factor", "relay1_mode", "relay1_pin", "relay_active_low", "relay_board_enabled", "shell_rs485_host", "shell_rs485_interface", "status_led_pin", "version", "wallbox_address", "wallbox_meter_type", "wallbox_rts_pin", "wallbox_rx_pin", "wallbox_tx_pin", "wifi_password", "wifi_ssid", "xemex_address", "xemex_coils", "xemex_rts_pin", "xemex_rx_pin", "xemex_tx_pin"];
         if(cfg.mqtt_input_source===2||body.mqtt_input_source===2)restartFields.push(...["battery_protect", "mqtt_input_source", "opendtu_prefix", "opendtu_pv_topic", "opendtu_pv_valid_topic", "pv_display_enabled"]);
         const restartNeeded=restartFields.some(key=>key in body&&body[key]!==cfg[key]);
         rebootRequired ||= restartNeeded;
@@ -242,7 +245,7 @@
       delete settings.wifi_password_set;delete settings.mqtt_password_set;
       if(secrets){settings.wifi_password='demo-password';settings.mqtt_password='demo-password';}
       else {delete settings.wifi_password;delete settings.mqtt_password;}
-      return json({format:'TeeNet-settings',schema:1,build_id:'demo-v1.22',includes_passwords:secrets,settings});
+      return json({format:'TeeNet-settings',schema:1,build_id:'demo-v1.23',includes_passwords:secrets,settings});
     }
     if (url.pathname === '/api/history') return json(history());
     if (url.pathname === '/api/sessions') return json(groupedSessions(url));

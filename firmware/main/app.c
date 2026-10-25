@@ -36,6 +36,7 @@
 #include <fcntl.h>
 
 #include "cJSON.h"
+#include "json_owned.h"
 
 #include "driver/uart.h"
 #include "driver/gpio.h"
@@ -703,7 +704,7 @@ static float pv_available_current_locked(int64_t now,float grid_w) {
 static bool pv_permitted_locked(int64_t now) {
 
     return settings.mode==MODE_PV && settings.enabled && !charge_guard.latched &&
-        (!settings.phase_switch_enabled || phase_state==PHASE_READY) &&
+        (!settings.phase_switch_enabled || (phase_state==PHASE_READY && !phase_idle_inhibit)) &&
 
         !phase_test_active && !restart_pending() && !restarting && !ota_in_progress && !phase_mqtt_saving && !unsupported_meter() &&
 
@@ -726,7 +727,7 @@ static float unlatched_target_locked(int64_t now) {
        (phase_idle_inhibit || evcc_desired_phases(&evcc_control,settings.charge_phases)!=settings.charge_phases))return 0;
 
     if(phase_config_saving || phase_test_active || restart_pending() || restarting || ota_in_progress || unsupported_meter()) return 0;
-    if(settings.phase_switch_enabled && phase_state!=PHASE_READY) return 0;
+    if(settings.phase_switch_enabled && (phase_state!=PHASE_READY || phase_idle_inhibit)) return 0;
     if(charge_plan.active && plan_phase==PLAN_CLOCK)return 0;
 
     if(settings.mode==MODE_PV) {
@@ -737,7 +738,7 @@ static float unlatched_target_locked(int64_t now) {
 
         }
 
-        float target=pv_control.target_a;
+        float target=fminf(pv_control.target_a,settings.max_charge_a);
         if(settings.evu_input_enabled && evu_contact.stable)
             target=settings.evu_limit_a>0?fminf(target,settings.evu_limit_a):0;
         return grid_guard_target(&settings,target,house_currents_ready_locked(now));
@@ -793,7 +794,7 @@ static const char *block_reason_locked(int64_t now) {
     }
     if(settings.phase_switch_enabled && phase_state==PHASE_FAULT) return "phase_fault";
     if(settings.phase_switch_enabled && phase_state!=PHASE_READY) return "phase_switching";
-    if(settings.phase_switch_enabled && phase_idle_inhibit && settings.manual_phases==1 && settings.charge_phases==3 && settings.mode==MODE_MANUAL) return "phase_idle";
+    if(settings.phase_switch_enabled && phase_idle_inhibit) return "phase_idle";
 
     if(unsupported_meter()) return "unsupported_meter";
 
@@ -1094,7 +1095,7 @@ static cJSON *number_array(const float *values,int count,bool valid) {
 
     cJSON *a=cJSON_CreateArray(); if(!a) return NULL;
 
-    for(int i=0;i<count;i++) cJSON_AddItemToArray(a,valid?cJSON_CreateNumber(values[i]):cJSON_CreateNull());
+    for(int i=0;i<count;i++) json_add_owned_to_array(a,valid?cJSON_CreateNumber(values[i]):cJSON_CreateNull());
 
     return a;
 
@@ -1149,6 +1150,8 @@ static esp_err_t http_body_event(esp_http_client_event_t *event) {
 #include "huawei_network.inc"
 
 #include "wallbox_network.inc"
+
+#include "heatpump_runtime.inc"
 
 static bool read_house_meter(float currents[3],float *watts,bool *currents_valid) {
 
@@ -1225,14 +1228,29 @@ static void house_meter_task(void *arg) {
 
 }
 
-static cJSON *status_json(bool include_token) {
+static const char *vehicle_state_name(char state) {
+    switch(state) {
+        case 'A': return "disconnected";
+        case 'B': return "connected";
+        case 'C': return "charging";
+        case 'D': return "finished";
+        case 'F': return "fault";
+        default: return "unknown";
+    }
+}
+
+static cJSON *status_json_profile(bool include_token,bool include_diagnostics) {
 
     cJSON *o=cJSON_CreateObject(); if(!o) return NULL;
 
     int64_t epoch,midnight,now=now_ms(); uint32_t date=calendar(&epoch,&midnight);
 
-    wifi_mode_t wifi_mode=WIFI_MODE_NULL; esp_wifi_get_mode(&wifi_mode);
-    wifi_ap_record_t access_point={0}; bool wifi_signal_ok=esp_wifi_sta_get_ap_info(&access_point)==ESP_OK;
+    wifi_mode_t wifi_mode=WIFI_MODE_NULL;
+    wifi_ap_record_t access_point={0}; bool wifi_signal_ok=false;
+    if(include_diagnostics) {
+        esp_wifi_get_mode(&wifi_mode);
+        wifi_signal_ok=esp_wifi_sta_get_ap_info(&access_point)==ESP_OK;
+    }
 
     LOCK();
 
@@ -1250,10 +1268,24 @@ static cJSON *status_json(bool include_token) {
     cJSON_AddBoolToObject(o,"evcc_local_stop",evcc_control.inhibited);
     cJSON_AddBoolToObject(o,"evcc_lease_expired",evcc_control.expired);
     cJSON_AddBoolToObject(o,"evcc_status_known",evcc_shell_fresh(&evcc_shell,evcc_shell_at,now));
-    cJSON_AddStringToObject(o,"evcc_statuscar",evcc_shell.raw);
+    if(include_diagnostics) {
+        cJSON_AddStringToObject(o,"evcc_statuscar",evcc_shell.raw);
+    }
+    bool vehicle_status_enabled=evcc_control.configured||settings.shell_limits_auto;
+    bool vehicle_status_known=vehicle_status_enabled&&shell_vehicle_fresh(&evcc_shell,evcc_shell_at,now);
+    cJSON_AddBoolToObject(o,"vehicle_status_enabled",vehicle_status_enabled);
+    cJSON_AddBoolToObject(o,"vehicle_status_known",vehicle_status_known);
+    cJSON_AddStringToObject(o,"vehicle_connection_state",vehicle_status_known?vehicle_state_name(evcc_shell.state):"unknown");
+    if(include_diagnostics) {
+        cJSON_AddStringToObject(o,"vehicle_status_raw",evcc_shell.raw);
+        cJSON_AddStringToObject(o,"vehicle_status_reason",evcc_shell.reason);
+        nullable(o,"vehicle_status_age_s",evcc_shell_at?(now-evcc_shell_at)/1000.0:0,evcc_shell_at>0);
+    }
     cJSON_AddStringToObject(o,"release_channel","stable");
     cJSON_AddStringToObject(o,"version",VERSION); cJSON_AddStringToObject(o,"build_id",EMS_BUILD_ID);
-    cJSON_AddNumberToObject(o,"rs485_modules",2);
+    if(include_diagnostics) {
+        cJSON_AddNumberToObject(o,"rs485_modules",2);
+    }
     cJSON_AddStringToObject(o,"hardware",EMS_HARDWARE_NAME);
     cJSON_AddStringToObject(o,"hardware_id",EMS_HARDWARE_ID);
     cJSON_AddNumberToObject(o,"default_shell_tx_pin",EMS_DEFAULT_SHELL_TX_PIN);
@@ -1281,7 +1313,9 @@ static cJSON *status_json(bool include_token) {
     cJSON_AddBoolToObject(o,"charge_plan_enabled",settings.charge_plan_enabled);
     cJSON_AddBoolToObject(o,"huawei_enabled",settings.huawei_enabled);
     cJSON_AddBoolToObject(o,"huawei_ok",fresh(now,huawei_at,15000));
-    cJSON_AddStringToObject(o,"huawei_model",huawei_model);
+    if(include_diagnostics) {
+        cJSON_AddStringToObject(o,"huawei_model",huawei_model);
+    }
     cJSON_AddStringToObject(o,"battery_source",settings.huawei_enabled && settings.huawei_battery?"Huawei":"MQTT");
     cJSON_AddStringToObject(o,"pv_source",settings.huawei_enabled && settings.huawei_pv?"Huawei":"MQTT");
     cJSON *plan=cJSON_AddObjectToObject(o,"charge_plan");
@@ -1353,10 +1387,12 @@ static cJSON *status_json(bool include_token) {
     cJSON_AddNumberToObject(o,"fixed_charge_phases",settings.fixed_charge_phases);
     cJSON_AddBoolToObject(o,"shell_limits_auto",settings.shell_limits_auto);
     cJSON_AddBoolToObject(o,"shell_limits_ok",settings.shell_limits_auto && fresh(now,shell_limits_at,900000));
-    cJSON_AddStringToObject(o,"shell_setup_host",shell_active_host);
-    cJSON_AddNumberToObject(o,"shell_limits_http",shell_limits_code);
-    nullable(o,"shell_grid_limit_a",shell_grid_a,shell_limits_at>0);
-    nullable(o,"shell_max_charge_a",shell_max_a,shell_limits_at>0);
+    if(include_diagnostics) {
+        cJSON_AddStringToObject(o,"shell_setup_host",shell_active_host);
+        cJSON_AddNumberToObject(o,"shell_limits_http",shell_limits_code);
+        nullable(o,"shell_grid_limit_a",shell_grid_a,shell_limits_at>0);
+        nullable(o,"shell_max_charge_a",shell_max_a,shell_limits_at>0);
+    }
     cJSON_AddNumberToObject(o,"charge_phases",settings.charge_phases);
     cJSON_AddNumberToObject(o,"manual_phases",settings.manual_phases);
     cJSON_AddNumberToObject(o,"phase_feedback",phase_gpio_ready?phase_observed():0);
@@ -1408,6 +1444,16 @@ static cJSON *status_json(bool include_token) {
     nullable(o,"battery_soc_pct",battery_soc,fresh(now,battery_soc_at,EMS_INPUT_TTL));
     nullable(o,"car_soc_pct",car_soc,settings.vehicle_soc_enabled && fresh(now,car_soc_at,ems_param_ms(EP_CAR_TTL)));
     nullable(o,"pv_generation_w",pv_generation_w,settings.pv_display_enabled && fresh(now,pv_generation_at,EMS_INPUT_TTL));
+    bool heatpump_ok=heatpump_fresh_locked(now);
+    cJSON_AddBoolToObject(o,"heatpump_enabled",settings.heatpump_enabled&&!settings.basic_mode);
+    cJSON_AddBoolToObject(o,"heatpump_ok",heatpump_ok);
+    nullable(o,"heatpump_w",heatpump_power_w,heatpump_ok);
+    nullable(o,"heatpump_age_s",heatpump_at?(now-heatpump_at)/1000.0:0,heatpump_at>0);
+    cJSON_AddStringToObject(o,"heatpump_source",settings.heatpump_source);
+    cJSON_AddBoolToObject(o,"heatpump_publish_enabled",settings.heatpump_publish_enabled);
+    cJSON_AddBoolToObject(o,"heatpump_publish_ok",heatpump_ok&&mqtt_online&&settings.heatpump_publish_enabled);
+    cJSON_AddStringToObject(o,"heatpump_mqtt_topic",settings.heatpump_output_topic);
+
     battery_power_t battery_power=battery_power_locked(now);
     nullable(o,"battery_charge_w",battery_power.charge_w,battery_power.fresh);
     nullable(o,"battery_discharge_w",battery_power.discharge_w,battery_power.fresh);
@@ -1419,7 +1465,9 @@ static cJSON *status_json(bool include_token) {
     cJSON_AddBoolToObject(o,"meter_ok",meter_ok); cJSON_AddBoolToObject(o,"wallbox_ok",fresh(now,wallbox_at,ems_param_ms(EP_SHELL_TTL)));
 
     cJSON_AddBoolToObject(o,"feedback_ok",actual_ok); cJSON_AddBoolToObject(o,"mqtt_ok",mqtt_online); cJSON_AddBoolToObject(o,"wifi_ok",wifi_online);
-    nullable(o,"wifi_rssi_dbm",access_point.rssi,wifi_signal_ok);
+    if(include_diagnostics) {
+        nullable(o,"wifi_rssi_dbm",access_point.rssi,wifi_signal_ok);
+    }
 
     cJSON_AddBoolToObject(o,"wallbox_uart_ready",wallbox_ready); cJSON_AddBoolToObject(o,"meter_uart_ready",meter_ready);
 
@@ -1431,45 +1479,49 @@ static cJSON *status_json(bool include_token) {
     cJSON_AddNumberToObject(o,"runtime_watchdog_tasks",runtime_watchdog_tasks);
     cJSON_AddBoolToObject(o,"ota_rollback_armed",boot_rollback_armed); cJSON_AddBoolToObject(o,"clock_ok",date!=0);
 
-    cJSON_AddNumberToObject(o,"current_date",date);
+    if(include_diagnostics) {
+        cJSON_AddNumberToObject(o,"current_date",date);
+    }
 
     cJSON_AddBoolToObject(o,"storage_ok",stats_storage_ok && config_storage_ok && !storage_error && plan_storage_ok && control_storage_ok);
 
-    cJSON_AddNumberToObject(o,"uptime_s",now/1000);
-    cJSON_AddNumberToObject(o,"min_free_heap",heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT));
-    cJSON_AddNumberToObject(o,"largest_free_block",heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));cJSON_AddNumberToObject(o,"reset_reason",esp_reset_reason());
+    if(include_diagnostics) {
+        cJSON_AddNumberToObject(o,"uptime_s",now/1000);
+        cJSON_AddNumberToObject(o,"min_free_heap",heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT));
+        cJSON_AddNumberToObject(o,"largest_free_block",heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));cJSON_AddNumberToObject(o,"reset_reason",esp_reset_reason());
 
-    cJSON_AddNumberToObject(o,"meter_failures",meter_failures); cJSON_AddNumberToObject(o,"wallbox_requests",wallbox_requests);
+        cJSON_AddNumberToObject(o,"meter_failures",meter_failures); cJSON_AddNumberToObject(o,"wallbox_requests",wallbox_requests);
 
-    cJSON_AddNumberToObject(o,"wallbox_rx_bytes",wallbox_rx_bytes); cJSON_AddNumberToObject(o,"wallbox_valid_frames",wallbox_valid_frames);
+        cJSON_AddNumberToObject(o,"wallbox_rx_bytes",wallbox_rx_bytes); cJSON_AddNumberToObject(o,"wallbox_valid_frames",wallbox_valid_frames);
 
-    cJSON_AddNumberToObject(o,"wallbox_other_address",wallbox_other_address); cJSON_AddNumberToObject(o,"wallbox_crc_resyncs",wallbox_crc_resyncs);
+        cJSON_AddNumberToObject(o,"wallbox_other_address",wallbox_other_address); cJSON_AddNumberToObject(o,"wallbox_crc_resyncs",wallbox_crc_resyncs);
 
-    nullable(o,"wallbox_last_address",wallbox_last_address,wallbox_valid_frames>0); nullable(o,"wallbox_last_function",wallbox_last_function,wallbox_valid_frames>0);
+        nullable(o,"wallbox_last_address",wallbox_last_address,wallbox_valid_frames>0); nullable(o,"wallbox_last_function",wallbox_last_function,wallbox_valid_frames>0);
 
-    nullable(o,"wallbox_last_register",wallbox_last_register,wallbox_valid_frames>0);
+        nullable(o,"wallbox_last_register",wallbox_last_register,wallbox_valid_frames>0);
 
-    nullable(o,"wallbox_last_count",wallbox_last_count,wallbox_valid_frames>0);
+        nullable(o,"wallbox_last_count",wallbox_last_count,wallbox_valid_frames>0);
 
-    nullable(o,"wallbox_reply_age_s",(now-wallbox_at)/1000,wallbox_at>0);
+        nullable(o,"wallbox_reply_age_s",(now-wallbox_at)/1000,wallbox_at>0);
 
-    cJSON_AddNumberToObject(o,"wallbox_tx_errors",wallbox_tx_errors);
+        cJSON_AddNumberToObject(o,"wallbox_tx_errors",wallbox_tx_errors);
 
-    char rx_hex[sizeof(wallbox_rx_tail)*2+1]; const char *hex="0123456789ABCDEF";
+        char rx_hex[sizeof(wallbox_rx_tail)*2+1]; const char *hex="0123456789ABCDEF";
 
-    for(size_t i=0;i<wallbox_rx_count;i++) {
+        for(size_t i=0;i<wallbox_rx_count;i++) {
 
-        uint8_t byte=wallbox_rx_tail[(wallbox_rx_next+sizeof(wallbox_rx_tail)-wallbox_rx_count+i)%sizeof(wallbox_rx_tail)];
+            uint8_t byte=wallbox_rx_tail[(wallbox_rx_next+sizeof(wallbox_rx_tail)-wallbox_rx_count+i)%sizeof(wallbox_rx_tail)];
 
-        rx_hex[i*2]=hex[byte>>4]; rx_hex[i*2+1]=hex[byte&15];
+            rx_hex[i*2]=hex[byte>>4]; rx_hex[i*2+1]=hex[byte&15];
 
+        }
+
+        rx_hex[wallbox_rx_count*2]=0; cJSON_AddStringToObject(o,"wallbox_rx_tail_hex",rx_hex);
+
+        nullable(o,"wallbox_rx_age_ms",now-wallbox_rx_at,wallbox_rx_count>0);
+
+        cJSON_AddNumberToObject(o,"mqtt_rejected",mqtt_rejected); cJSON_AddNumberToObject(o,"saved_ago_s",(now-last_saved_ms)/1000);
     }
-
-    rx_hex[wallbox_rx_count*2]=0; cJSON_AddStringToObject(o,"wallbox_rx_tail_hex",rx_hex);
-
-    nullable(o,"wallbox_rx_age_ms",now-wallbox_rx_at,wallbox_rx_count>0);
-
-    cJSON_AddNumberToObject(o,"mqtt_rejected",mqtt_rejected); cJSON_AddNumberToObject(o,"saved_ago_s",(now-last_saved_ms)/1000);
 
     cJSON_AddNumberToObject(o,"grid_limit_a",settings.grid_limit_a); cJSON_AddNumberToObject(o,"max_charge_a",settings.max_charge_a);
 
@@ -1480,11 +1532,16 @@ static cJSON *status_json(bool include_token) {
 
     cJSON_AddBoolToObject(o,"stop_current_below_1a",target_locked(now)<=0 && actual_ok && actual_a[0]<1 && actual_a[1]<1 && actual_a[2]<1);
 
-    cJSON_AddItemToObject(o,"last_sent_a",number_array(last_sent_a,3,last_sent_current_at>0));
+    if(include_diagnostics) {
+        json_add_owned_to_object(o,"last_sent_a",number_array(last_sent_a,3,last_sent_current_at>0));
+    }
 
     nullable(o,"last_sent_age_ms",now-last_sent_current_at,last_sent_current_at>0);
 
-    cJSON_AddNumberToObject(o,"pv_surplus_a",settings.pv_surplus_a); cJSON_AddStringToObject(o,"station_ip",station_ip);
+    cJSON_AddNumberToObject(o,"pv_surplus_a",settings.pv_surplus_a);
+    if(include_diagnostics) {
+        cJSON_AddStringToObject(o,"station_ip",station_ip);
+    }
 
     cJSON_AddNumberToObject(o,"xemex_coils",settings.xemex_coils);
 
@@ -1503,21 +1560,25 @@ static cJSON *status_json(bool include_token) {
     cJSON_AddBoolToObject(o,"grid_guard_ok",!settings.grid_guard_enabled || house_phases_ok);
     cJSON_AddBoolToObject(o,"grid_guard_fallback",settings.grid_guard_enabled && !house_phases_ok);
     nullable(o,"grid_guard_limit_kw",EMS_GRID_FALLBACK_W/1000,settings.grid_guard_enabled && !house_phases_ok);
-    cJSON_AddItemToObject(o,"house_a",number_array(house_a,3,house_phases_ok));
+    if(include_diagnostics) {
+        json_add_owned_to_object(o,"house_a",number_array(house_a,3,house_phases_ok));
+    }
     cJSON_AddBoolToObject(o,"external_mode_input_enabled",settings.external_mode_input_enabled);
     cJSON_AddBoolToObject(o,"external_mode_contact",settings.external_mode_input_enabled && mode_contact.stable);
     cJSON_AddBoolToObject(o,"evu_input_enabled",settings.evu_input_enabled);
     cJSON_AddBoolToObject(o,"evu_active",settings.evu_input_enabled && evu_contact.stable);
     cJSON_AddNumberToObject(o,"evu_limit_a",settings.evu_limit_a);
 
-    cJSON_AddBoolToObject(o,"ap_active",wifi_mode==WIFI_MODE_AP || wifi_mode==WIFI_MODE_APSTA);
+    if(include_diagnostics) {
+        cJSON_AddBoolToObject(o,"ap_active",wifi_mode==WIFI_MODE_AP || wifi_mode==WIFI_MODE_APSTA);
 
-    cJSON_AddBoolToObject(o,"ap_forced",wifi_ap_forced);
+        cJSON_AddBoolToObject(o,"ap_forced",wifi_ap_forced);
 
-    cJSON_AddStringToObject(o,"ap_ssid",SETUP_SSID);
-    cJSON_AddStringToObject(o,"hostname",DEVICE_HOSTNAME);
+        cJSON_AddStringToObject(o,"ap_ssid",SETUP_SSID);
+        cJSON_AddStringToObject(o,"hostname",DEVICE_HOSTNAME);
 
-    cJSON_AddBoolToObject(o,"wifi_fallback",wifi_fallback);
+        cJSON_AddBoolToObject(o,"wifi_fallback",wifi_fallback);
+    }
 
     nullable(o,"meter_total_a",settings.charge_phases==1?meter_a[0]:meter_a[0]+meter_a[1]+meter_a[2],meter_ok);
 
@@ -1529,9 +1590,9 @@ static cJSON *status_json(bool include_token) {
 
     cJSON_AddStringToObject(o,"mqtt_prefix",settings.mqtt_prefix);
 
-    cJSON_AddItemToObject(o,"meter_a",number_array(meter_a,3,meter_ok)); cJSON_AddItemToObject(o,"actual_a",number_array(actual_a,3,actual_ok));
+    json_add_owned_to_object(o,"meter_a",number_array(meter_a,3,meter_ok)); json_add_owned_to_object(o,"actual_a",number_array(actual_a,3,actual_ok));
 
-    cJSON_AddItemToObject(o,"reported_a",number_array(reported,3,true));
+    json_add_owned_to_object(o,"reported_a",number_array(reported,3,true));
 
     nullable(o,"estimate_w",estimated_charge_power(&settings,meter_a),meter_ok);
 
@@ -1555,14 +1616,21 @@ static cJSON *status_json(bool include_token) {
         nullable(item,"today_kwh",today/1000,date!=0 && covered>0); cJSON_AddNumberToObject(item,"today_covered_s",covered/1000);
         cJSON_AddNumberToObject(item,"today_charging_s",charging/1000);
 
-        nullable(item,"today_cost",today/1000*settings.price_kwh,date!=0 && covered>0); cJSON_AddItemToArray(sources,item);
+        nullable(item,"today_cost",today/1000*settings.price_kwh,date!=0 && covered>0); json_add_owned_to_array(sources,item);
 
     }
+
+    if(!include_diagnostics)cJSON_AddStringToObject(o,"status_profile","dashboard");
 
     if(include_token) cJSON_AddStringToObject(o,"token",csrf_token);
 
     UNLOCK(); return o;
 
+}
+
+/* Legacy HTTP and MQTT clients retain the complete status schema. */
+static cJSON *status_json(bool include_token) {
+    return status_json_profile(include_token,true);
 }
 
 static void publish_value(const char *name,cJSON *value) {
@@ -1584,7 +1652,7 @@ static cJSON *homeassistant_entity(const char *name,const char *object,const cha
     if(state_suffix) { snprintf(topic,sizeof(topic),"%s/%s",settings.mqtt_prefix,state_suffix); cJSON_AddStringToObject(o,"state_topic",topic); }
     snprintf(topic,sizeof(topic),"%s/availability",settings.mqtt_prefix); cJSON_AddStringToObject(o,"availability_topic",topic);
     cJSON *device=cJSON_AddObjectToObject(o,"device");
-    cJSON *identifiers=cJSON_AddArrayToObject(device,"identifiers"); cJSON_AddItemToArray(identifiers,cJSON_CreateString(mqtt_device_id));
+    cJSON *identifiers=cJSON_AddArrayToObject(device,"identifiers"); json_add_owned_to_array(identifiers,cJSON_CreateString(mqtt_device_id));
     cJSON_AddStringToObject(device,"name","TeeNet"); cJSON_AddStringToObject(device,"manufacturer","TeeNet");
     cJSON_AddStringToObject(device,"model","ESP32-S3 Wallbox EMS"); cJSON_AddStringToObject(device,"sw_version",VERSION);
     if(station_ip[0]) { char url[48]; snprintf(url,sizeof(url),"http://%s/",station_ip); cJSON_AddStringToObject(device,"configuration_url",url); }
@@ -1625,7 +1693,7 @@ static void homeassistant_discovery(bool enabled) {
     homeassistant_publish_entity("binary_sensor","meter",o,true);
     o=homeassistant_entity("Betriebsart","mode","sensor/mode");
     char topic[160];snprintf(topic,sizeof(topic),"%s/command/mode",settings.mqtt_prefix);cJSON_AddStringToObject(o,"command_topic",topic);
-    cJSON *options=cJSON_AddArrayToObject(o,"options");cJSON_AddItemToArray(options,cJSON_CreateString("off"));cJSON_AddItemToArray(options,cJSON_CreateString("manual"));cJSON_AddItemToArray(options,cJSON_CreateString("pv"));
+    cJSON *options=cJSON_AddArrayToObject(o,"options");json_add_owned_to_array(options,cJSON_CreateString("off"));json_add_owned_to_array(options,cJSON_CreateString("manual"));json_add_owned_to_array(options,cJSON_CreateString("pv"));
     homeassistant_publish_entity("select","mode",o,true);
     o=homeassistant_entity("Gewünschte Ladeleistung","charging_power_setpoint","sensor/manual_power_kw");
     snprintf(topic,sizeof(topic),"%s/command/power_kw",settings.mqtt_prefix);cJSON_AddStringToObject(o,"command_topic",topic);
@@ -1686,6 +1754,13 @@ static void mqtt_state(void) {
 
         } else publish_value(names[i],value);
 
+    }
+
+    if(settings.heatpump_enabled&&!settings.basic_mode&&settings.heatpump_publish_enabled){
+        cJSON *value=cJSON_GetObjectItemCaseSensitive(o,"heatpump_w");char watts[32];
+        if(cJSON_IsNumber(value))snprintf(watts,sizeof(watts),"%.0f",value->valuedouble);
+        else strcpy(watts,"unavailable");
+        esp_mqtt_client_enqueue(mqtt_client,settings.heatpump_output_topic,watts,0,0,0,true);
     }
 
     static bool phase_topics_published;
@@ -1945,7 +2020,7 @@ static void mqtt_event(void *arg,esp_event_base_t base,int32_t id,void *data) {
     if(id==MQTT_EVENT_CONNECTED) {
         LOCK();if(settings.phase_output_transport==0)phase_mqtt_seen_connection=true;UNLOCK();
 
-        LOCK(); mqtt_online=true; UNLOCK(); char subscription[100];
+        LOCK(); mqtt_online=true; UNLOCK(); char subscription[192];
 
         snprintf(subscription,sizeof(subscription),"%s/command/#",settings.mqtt_prefix); esp_mqtt_client_subscribe(e->client,subscription,1);
 
@@ -1953,6 +2028,9 @@ static void mqtt_event(void *arg,esp_event_base_t base,int32_t id,void *data) {
 
         snprintf(subscription,sizeof(subscription),"%s/input/+",settings.mqtt_prefix); esp_mqtt_client_subscribe(e->client,subscription,1);
         opendtu_subscribe(e->client);
+        if(settings.heatpump_enabled&&!settings.basic_mode&&!strcmp(settings.heatpump_source,"mqtt"))
+            esp_mqtt_client_subscribe(e->client,settings.heatpump_input_topic,1);
+
 
         if(!settings.mqtt_state_json) { snprintf(subscription,sizeof(subscription),"%s/state",settings.mqtt_prefix); esp_mqtt_client_enqueue(e->client,subscription,"",0,1,1,false); }
 
@@ -1963,7 +2041,7 @@ static void mqtt_event(void *arg,esp_event_base_t base,int32_t id,void *data) {
 
     } else if(id==MQTT_EVENT_DISCONNECTED) {
 
-        LOCK();if(settings.phase_output_transport==0&&phase_mqtt_seen_connection)phase_mqtt_cancel_locked(true);memset(&opendtu,0,sizeof(opendtu)); mqtt_online=false; if(!(settings.huawei_enabled && settings.huawei_battery)){battery_soc_at=0;battery_charge_at=0;battery_discharge_at=0;} car_soc_at=0; if(!(settings.huawei_enabled && settings.huawei_pv))pv_generation_at=0; if(!sdm_meter() && !network_wallbox_meter()) power_at=0; if(!settings.zero_feed_enabled) pv_at=0; UNLOCK(); expected=received=0;
+        LOCK();if(settings.phase_output_transport==0&&phase_mqtt_seen_connection)phase_mqtt_cancel_locked(true);memset(&opendtu,0,sizeof(opendtu)); mqtt_online=false; if(!strcmp(settings.heatpump_source,"mqtt"))heatpump_at=0; if(!(settings.huawei_enabled && settings.huawei_battery)){battery_soc_at=0;battery_charge_at=0;battery_discharge_at=0;} car_soc_at=0; if(!(settings.huawei_enabled && settings.huawei_pv))pv_generation_at=0; if(!sdm_meter() && !network_wallbox_meter()) power_at=0; if(!settings.zero_feed_enabled) pv_at=0; UNLOCK(); expected=received=0;
 
     } else if(id==MQTT_EVENT_DATA) {
 
@@ -1991,7 +2069,10 @@ static void mqtt_event(void *arg,esp_event_base_t base,int32_t id,void *data) {
 
             bool ok=false;
             if(!memchr(payload,0,received)) {
-                if(settings.mqtt_input_source==2 && opendtu_message(topic,payload,retained))ok=true;
+                if(settings.heatpump_enabled&&!strcmp(settings.heatpump_source,"mqtt")&&!strcmp(topic,settings.heatpump_input_topic)){
+                    LOCK();ok=heatpump_mqtt_locked(topic,payload,retained);UNLOCK();
+                }
+                else if(settings.mqtt_input_source==2 && opendtu_message(topic,payload,retained))ok=true;
                 else if(!retained&&!strncmp(topic,prefix,strlen(prefix)))ok=mqtt_input(topic+strlen(prefix),payload);
             }
 
@@ -2076,14 +2157,20 @@ static bool authorized(httpd_req_t *req) {
 }
 
 static esp_err_t theme_get(httpd_req_t *req) {
-    uint8_t selected=0;
+    uint8_t selected=0,view=0,density=0,graphic_seen=0;
     nvs_handle_t nvs;
     if(nvs_open("wallbox_ems",NVS_READONLY,&nvs)==ESP_OK) {
         if(nvs_get_u8(nvs,"ui_theme",&selected)!=ESP_OK) selected=0;
+        nvs_get_u8(nvs,"ui_view",&view);
+        nvs_get_u8(nvs,"ui_density",&density);
+        nvs_get_u8(nvs,"ui_graph_seen",&graphic_seen);
         nvs_close(nvs);
     }
     cJSON *o=cJSON_CreateObject();if(!o)return httpd_resp_send_err(req,HTTPD_500_INTERNAL_SERVER_ERROR,"Out of memory");
     cJSON_AddStringToObject(o,"theme",selected==2?"dark":selected==1?"light":"unset");
+    cJSON_AddStringToObject(o,"view",view==1?"graphic":"standard");
+    cJSON_AddStringToObject(o,"density",density==1?"compact":"standard");
+    cJSON_AddBoolToObject(o,"graphic_notice_pending",graphic_seen<1);
     return send_json(req,o);
 }
 
@@ -2091,17 +2178,31 @@ static esp_err_t theme_post(httpd_req_t *req) {
     if(!authorized(req)) return ESP_OK;
     cJSON *o=read_json(req);if(!o)return ESP_OK;
     cJSON *theme=cJSON_GetObjectItemCaseSensitive(o,"theme");
-    bool only=theme && theme==o->child && !theme->next && cJSON_IsString(theme);
-    uint8_t selected=only&&!strcmp(theme->valuestring,"dark")?2:only&&!strcmp(theme->valuestring,"light")?1:0;
+    cJSON *view=cJSON_GetObjectItemCaseSensitive(o,"view");
+    cJSON *density=cJSON_GetObjectItemCaseSensitive(o,"density");
+    cJSON *ack=cJSON_GetObjectItemCaseSensitive(o,"graphic_notice_ack");
+    bool only=cJSON_IsObject(o) && cJSON_GetArraySize(o)==1;
+    uint8_t selected=only&&cJSON_IsString(theme)&&!strcmp(theme->valuestring,"dark")?2:only&&cJSON_IsString(theme)&&!strcmp(theme->valuestring,"light")?1:0;
+    bool has_view=only&&cJSON_IsString(view)&&(!strcmp(view->valuestring,"graphic")||!strcmp(view->valuestring,"standard"));
+    bool has_density=only&&cJSON_IsString(density)&&(!strcmp(density->valuestring,"compact")||!strcmp(density->valuestring,"standard"));
+    uint8_t compact=has_density&&!strcmp(density->valuestring,"compact")?1:0;
+    bool has_ack=only&&cJSON_IsTrue(ack);
+    uint8_t layout=has_view&&!strcmp(view->valuestring,"graphic")?1:0;
     cJSON_Delete(o);
-    if(!selected)return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Darstellung muss hell oder dunkel sein.");
+    if(!selected&&!has_view&&!has_density&&!has_ack)return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Ungueltige Darstellung.");
     nvs_handle_t nvs;esp_err_t err=nvs_open("wallbox_ems",NVS_READWRITE,&nvs);
-    if(err==ESP_OK){err=nvs_set_u8(nvs,"ui_theme",selected);if(err==ESP_OK)err=nvs_commit(nvs);nvs_close(nvs);}
+    if(err==ESP_OK){err=has_ack?nvs_set_u8(nvs,"ui_graph_seen",1):has_density?nvs_set_u8(nvs,"ui_density",compact):has_view?nvs_set_u8(nvs,"ui_view",layout):nvs_set_u8(nvs,"ui_theme",selected);if(err==ESP_OK)err=nvs_commit(nvs);nvs_close(nvs);}
     if(err!=ESP_OK)return httpd_resp_send_err(req,HTTPD_500_INTERNAL_SERVER_ERROR,"Darstellung konnte nicht gespeichert werden.");
     return theme_get(req);
 }
 
-static esp_err_t status_handler(httpd_req_t *req) { return send_json(req,status_json(true)); }
+static esp_err_t status_handler(httpd_req_t *req) {
+    char query[96],profile[24];
+    bool dashboard=httpd_req_get_url_query_str(req,query,sizeof(query))==ESP_OK &&
+        httpd_query_key_value(query,"profile",profile,sizeof(profile))==ESP_OK &&
+        strcmp(profile,"dashboard")==0;
+    return send_json(req,dashboard?status_json_profile(true,false):status_json(true));
+}
 
 static esp_err_t control_handler(httpd_req_t *req) {
 
@@ -2142,6 +2243,8 @@ static const field_t fields[]={
     FIELD(relay_board_enabled,'b'),FIELD(relay_active_low,'b'),
     FIELD(relay1_mode,'u'),
     FIELD(mqtt_enabled,'b'),FIELD(homeassistant_enabled,'b'),FIELD(pv_display_enabled,'b'),FIELD(mqtt_input_source,'u'),
+    FIELD(heatpump_enabled,'b'),FIELD(heatpump_publish_enabled,'b'),FIELD(heatpump_source,'s'),
+    FIELD(heatpump_host,'s'),FIELD(heatpump_input_topic,'s'),FIELD(heatpump_output_topic,'s'),
     FIELD(phase_actuator_type,'u'),FIELD(phase_shelly_host,'s'),FIELD(phase_shelly_password,'p'),
     FIELD(phase_feedback_count,'u'),FIELD(phase_shelly_model,'u'),FIELD(phase_shelly_pulse,'b'),FIELD(phase_shelly_true_three_phase,'b'),
     FIELD(wallbox_meter_host,'s'),FIELD(charge_plan_enabled,'b'),FIELD(huawei_enabled,'b'),FIELD(huawei_host,'s'),FIELD(huawei_unit_id,'u'),FIELD(huawei_battery,'b'),FIELD(huawei_pv,'b'),FIELD(opendtu_prefix,'s'),FIELD(opendtu_pv_topic,'s'),FIELD(opendtu_pv_valid_topic,'s'),FIELD(opendtu_current_positive_discharge,'b')};
@@ -2277,6 +2380,8 @@ static esp_err_t config_apply(httpd_req_t *req,cJSON *o,bool restore) {
     next.wallbox_address=1;next.house_xemex_coils=3;
     settings_fixed_pins(&next);
     settings_basic_mode(&next);
+    if(!heatpump_settings_valid(&next))
+        return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Waermepumpe: Shelly-Adresse oder MQTT-Broker/Topics pruefen. Eingang und Ausgang getrennt halten.");
     if(!settings_shell_pin_available(&next,next.wallbox_tx_pin,true) ||
        !settings_shell_pin_available(&next,next.wallbox_rx_pin,false))
         return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Shell-Pins: freie, geeignete GPIOs fuer TX und RX waehlen; keine Doppelbelegung.");
@@ -2288,6 +2393,7 @@ static esp_err_t config_apply(httpd_req_t *req,cJSON *o,bool restore) {
     next.homeassistant_enabled=next.mqtt_enabled;
     if(next.mqtt_input_source==1)next.mqtt_input_source=0;
     if(!next.mqtt_enabled){next.vehicle_soc_enabled=false;
+        if(!strcmp(next.heatpump_source,"mqtt"))next.heatpump_enabled=false;
         if(!(next.huawei_enabled && next.huawei_pv))next.pv_display_enabled=false;
         if(!(next.huawei_enabled && next.huawei_battery))next.battery_protect=false;}
     if(next.phase_actuator_type!=2)next.phase_feedback_enabled=true;
@@ -2514,14 +2620,17 @@ static esp_err_t energy_reset_handler(httpd_req_t *req) {
     if(!authorized(req)) return ESP_OK;
     int64_t epoch,minute;uint32_t date=calendar(&epoch,&minute);
     if(!date){httpd_resp_set_status(req,"503 Service Unavailable");return httpd_resp_sendstr(req,"Internetzeit noch nicht verfuegbar.");}
+    if(xSemaphoreTake(maintenance_flash_lock,ticks(2000))!=pdTRUE){httpd_resp_set_status(req,"409 Conflict");return httpd_resp_sendstr(req,"Speicherung beschaeftigt. Zaehlerstand noch nicht zurueckgesetzt.");}
     double previous[EMS_SOURCES];uint32_t previous_date;
     LOCK();memcpy(previous,energy_reset_wh,sizeof(previous));previous_date=energy_reset_date;
     for(int i=0;i<EMS_SOURCES;i++)energy_reset_wh[i]=energy.store.total_wh[i];
     energy_reset_date=date;UNLOCK();
     if(!save_energy()){
         LOCK();memcpy(energy_reset_wh,previous,sizeof(previous));energy_reset_date=previous_date;UNLOCK();
+        xSemaphoreGive(maintenance_flash_lock);
         return httpd_resp_send_err(req,HTTPD_500_INTERNAL_SERVER_ERROR,"Zaehlerstand konnte nicht gespeichert werden.");
     }
+    xSemaphoreGive(maintenance_flash_lock);
     return ok_json(req);
 }
 
@@ -2529,12 +2638,14 @@ static esp_err_t sessions_reset_handler(httpd_req_t *req) {
     if(!authorized(req)) return ESP_OK;
     sessions_t *previous=malloc(sizeof(*previous));
     if(!previous)return httpd_resp_send_err(req,HTTPD_500_INTERNAL_SERVER_ERROR,"Nicht genug Speicher.");
+    if(xSemaphoreTake(maintenance_flash_lock,ticks(2000))!=pdTRUE){free(previous);httpd_resp_set_status(req,"409 Conflict");return httpd_resp_sendstr(req,"Speicherung beschaeftigt. Ladesitzungen noch nicht geloescht.");}
     LOCK();*previous=sessions;sessions_init(&sessions);UNLOCK();
     if(!save_energy()){
         LOCK();sessions=*previous;UNLOCK();free(previous);
+        xSemaphoreGive(maintenance_flash_lock);
         return httpd_resp_send_err(req,HTTPD_500_INTERNAL_SERVER_ERROR,"Ladesitzungen konnten nicht geloescht werden.");
     }
-    free(previous);return ok_json(req);
+    xSemaphoreGive(maintenance_flash_lock);free(previous);return ok_json(req);
 }
 
 static esp_err_t reboot_handler(httpd_req_t *req) {
@@ -2594,7 +2705,7 @@ static esp_err_t wifi_scan_handler(httpd_req_t *req) {
 
     cJSON *o=cJSON_CreateObject(),*a=cJSON_AddArrayToObject(o,"networks");
 
-    for(uint16_t i=0;i<count;i++) if(records[i].ssid[0]) { cJSON *n=cJSON_CreateObject(); cJSON_AddStringToObject(n,"ssid",(char *)records[i].ssid); cJSON_AddNumberToObject(n,"rssi",records[i].rssi); cJSON_AddItemToArray(a,n); }
+    for(uint16_t i=0;i<count;i++) if(records[i].ssid[0]) { cJSON *n=cJSON_CreateObject(); cJSON_AddStringToObject(n,"ssid",(char *)records[i].ssid); cJSON_AddNumberToObject(n,"rssi",records[i].rssi); json_add_owned_to_array(a,n); }
 
     if(previous==WIFI_MODE_AP) esp_wifi_set_mode(previous);
 
@@ -2630,7 +2741,7 @@ static esp_err_t history_handler(httpd_req_t *req) {
 
         for(int s=0;s<2;s++) nullable(item,s?"wallbox_w":"estimate_w",p->covered_ms[s]?p->wh[s]*3600000/p->covered_ms[s]:0,p->minute==m && p->covered_ms[s]>0);
 
-        cJSON_AddItemToArray(points,item);
+        json_add_owned_to_array(points,item);
 
     }
 
@@ -2650,7 +2761,7 @@ static esp_err_t history_handler(httpd_req_t *req) {
 
         }
 
-        cJSON_AddItemToArray(days,item);
+        json_add_owned_to_array(days,item);
 
     }
 
@@ -2708,7 +2819,7 @@ static void session_day_emit(cJSON *rows,const session_day_t *day,unsigned offse
     cJSON_AddNumberToObject(item,"unknown_kwh",day->unknown_wh/1000);cJSON_AddNumberToObject(item,"cost_eur",day->cost_eur);
     cJSON_AddNumberToObject(item,"grid_cost_eur",day->grid_cost_eur);cJSON_AddNumberToObject(item,"solar_cost_eur",day->solar_cost_eur);
     cJSON_AddBoolToObject(item,"active",day->active);cJSON_AddNumberToObject(item,"flags",day->flags);
-    cJSON_AddItemToArray(rows,item);(*shown)++;
+    json_add_owned_to_array(rows,item);(*shown)++;
 }
 #include "session_snapshot.inc"
 
@@ -2764,7 +2875,7 @@ static esp_err_t session_day_handler(httpd_req_t *req){
         cJSON_AddNumberToObject(item,"grid_cost_eur",r->grid_cost_eur);cJSON_AddNumberToObject(item,"solar_cost_eur",r->solar_cost_eur);
         cJSON_AddNumberToObject(item,"flags",r->flags);
         cJSON_AddBoolToObject(item,"active",copy->active_id&&r->id==copy->active_id);
-        cJSON_AddItemToArray(rows,item);shown++;
+        json_add_owned_to_array(rows,item);shown++;
     }
     cJSON_AddNumberToObject(o,"date",date);cJSON_AddNumberToObject(o,"count",count);cJSON_AddNumberToObject(o,"offset",offset);
     free(copy);return send_json(req,o);
@@ -2806,6 +2917,7 @@ extern const uint8_t wiring_start[] asm("_binary_wiring_plan_jpg_start"),wiring_
 
 extern const uint8_t html_gz_start[] asm("_binary_dashboard_html_gz_start"),html_gz_end[] asm("_binary_dashboard_html_gz_end");
 extern const uint8_t css_gz_start[] asm("_binary_dashboard_css_gz_start"),css_gz_end[] asm("_binary_dashboard_css_gz_end");
+extern const uint8_t energy_gz_start[] asm("_binary_energy_js_gz_start"),energy_gz_end[] asm("_binary_energy_js_gz_end");
 extern const uint8_t js_gz_start[] asm("_binary_dashboard_js_gz_start"),js_gz_end[] asm("_binary_dashboard_js_gz_end");
 extern const uint8_t qr_gz_start[] asm("_binary_qrcode_js_gz_start"),qr_gz_end[] asm("_binary_qrcode_js_gz_end");
 extern const uint8_t guide_gz_start[] asm("_binary_guide_html_gz_start"),guide_gz_end[] asm("_binary_guide_html_gz_end");
@@ -2828,6 +2940,7 @@ static esp_err_t asset_send(httpd_req_t *req) {
     if(!strcmp(req->uri,"/dashboard.css")) start=css_gz_start,end=css_gz_end,type="text/css; charset=utf-8";
 
     if(!strcmp(req->uri,"/dashboard.js")) start=js_gz_start,end=js_gz_end,type="application/javascript; charset=utf-8";
+    if(!strcmp(req->uri,"/energy.js")) start=energy_gz_start,end=energy_gz_end,type="application/javascript; charset=utf-8";
     if(!strcmp(req->uri,"/health.js")) start=health_gz_start,end=health_gz_end,type="application/javascript; charset=utf-8";
     if(!strcmp(req->uri,"/firmware.js")) start=firmware_gz_start,end=firmware_gz_end,type="application/javascript; charset=utf-8";
     if(!strcmp(req->uri,"/terms.js")) start=terms_js_gz_start,end=terms_js_gz_end,type="application/javascript; charset=utf-8";
@@ -3023,14 +3136,14 @@ static esp_err_t shelly_scan_get(httpd_req_t *req) {
         cJSON_AddNumberToObject(device,"inputs",identity->inputs);
         cJSON_AddBoolToObject(device,"modbus",identity->profile==4);
         cJSON_AddBoolToObject(device,"contacts_checked",phase_shelly_found[i].contacts_checked);
-        cJSON_AddItemToArray(devices,device);
+        json_add_owned_to_array(devices,device);
     }
     cJSON_AddNumberToObject(o,"progress",shelly_scan_progress);cJSON_AddNumberToObject(o,"locked",shelly_locked_count);
     for(unsigned i=0;i<shelly_found_count;i++){
         cJSON *item=cJSON_CreateObject();if(!item)break;
         cJSON_AddStringToObject(item,"host",shelly_found[i].host);cJSON_AddStringToObject(item,"type",shelly_found[i].type);
         if(shelly_found[i].locked)cJSON_AddNullToObject(item,"watts");else cJSON_AddNumberToObject(item,"watts",shelly_found[i].watts);
-        cJSON_AddBoolToObject(item,"locked",shelly_found[i].locked);cJSON_AddNumberToObject(item,"age_ms",now_ms()-shelly_found[i].at);cJSON_AddItemToArray(items,item);
+        cJSON_AddBoolToObject(item,"locked",shelly_found[i].locked);cJSON_AddNumberToObject(item,"age_ms",now_ms()-shelly_found[i].at);json_add_owned_to_array(items,item);
     }
     UNLOCK();return send_json(req,o);
 }
@@ -3127,6 +3240,7 @@ static esp_err_t meter_preview_post(httpd_req_t *req) {
 #include "evcc_http.inc"
 #include "shell_limits.inc"
 
+#include "http_post_guard.inc"
 static void start_web(void) {
 
     /* Reserve sockets for meters, MQTT and the phase actuator (16 total). */
@@ -3137,7 +3251,7 @@ static void start_web(void) {
 
     httpd_handle_t server; ESP_ERROR_CHECK(httpd_start(&server,&cfg));web_started=true;
 
-    const httpd_uri_t routes[]={
+    static const httpd_uri_t routes[]={
         {.uri="/api/terms",.method=HTTP_POST,.handler=terms_post},
         {.uri="/api/evcc/local_release",.method=HTTP_POST,.handler=evcc_release_post},
         {.uri="/api/evcc/config",.method=HTTP_GET,.handler=evcc_config_get},
@@ -3155,7 +3269,7 @@ static void start_web(void) {
 
         {.uri="/",.method=HTTP_GET,.handler=asset_handler},{.uri="/dashboard.css",.method=HTTP_GET,.handler=asset_handler},
 
-        {.uri="/dashboard.js",.method=HTTP_GET,.handler=asset_handler},{.uri="/health.js",.method=HTTP_GET,.handler=asset_handler},{.uri="/firmware.js",.method=HTTP_GET,.handler=asset_handler},{.uri="/features.js",.method=HTTP_GET,.handler=asset_handler},{.uri="/qrcode.js",.method=HTTP_GET,.handler=asset_handler},{.uri="/teennet-logo.png",.method=HTTP_GET,.handler=asset_handler},
+        {.uri="/dashboard.js",.method=HTTP_GET,.handler=asset_handler},{.uri="/energy.js",.method=HTTP_GET,.handler=asset_handler},{.uri="/health.js",.method=HTTP_GET,.handler=asset_handler},{.uri="/firmware.js",.method=HTTP_GET,.handler=asset_handler},{.uri="/features.js",.method=HTTP_GET,.handler=asset_handler},{.uri="/qrcode.js",.method=HTTP_GET,.handler=asset_handler},{.uri="/teennet-logo.png",.method=HTTP_GET,.handler=asset_handler},
 
         {.uri="/hardware-plan.svg",.method=HTTP_GET,.handler=asset_handler},
         {.uri="/wiring-plan.jpg",.method=HTTP_GET,.handler=asset_handler},{.uri="/guide",.method=HTTP_GET,.handler=asset_handler},
@@ -3193,7 +3307,11 @@ static void start_web(void) {
 
         {.uri="/api/wifi/ap",.method=HTTP_POST,.handler=ap_handler},{.uri="/api/wifi/scan",.method=HTTP_GET,.handler=wifi_scan_handler},{.uri="/api/ota",.method=HTTP_POST,.handler=ota_handler}};
 
-    for(size_t i=0;i<sizeof(routes)/sizeof(routes[0]);i++) ESP_ERROR_CHECK(httpd_register_uri_handler(server,&routes[i]));
+    for(size_t i=0;i<sizeof(routes)/sizeof(routes[0]);i++){
+        httpd_uri_t route=routes[i];
+        if(route.method==HTTP_POST){route.handler=http_post_guard;route.user_ctx=(void *)&routes[i];}
+        ESP_ERROR_CHECK(httpd_register_uri_handler(server,&route));
+    }
 
 }
 
@@ -3541,6 +3659,11 @@ void app_main(void) {
     if(xTaskCreate(shell_limits_task,"shell_limits",6144,NULL,4,NULL)!=pdPASS)ESP_LOGE(TAG,"Shell limits task failed");
     if(huawei_io)xTaskCreate(huawei_task,"huawei",4096,NULL,6,NULL);
     if(xTaskCreate(house_meter_task,"house_meter",6144,NULL,6,NULL)!=pdPASS) ESP_LOGE(TAG,"House meter task failed");
+    if(settings.heatpump_enabled&&!settings.basic_mode&&strcmp(settings.heatpump_source,"mqtt")&&
+       xTaskCreate(heatpump_task,"heatpump",4096,NULL,3,NULL)!=pdPASS){
+        heatpump_task_ready=false;ESP_LOGW(TAG,"Heat-pump display task unavailable");
+    }
+
 
     if(telemetry_lock&&xTaskCreate(telemetry_task,"device_stats",6144,NULL,2,NULL)!=pdPASS)ESP_LOGW(TAG,"Device statistics task unavailable");
     reset_clear_at=now_ms()+15000;

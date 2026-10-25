@@ -66,5 +66,17 @@ vm.runInNewContext(fs.readFileSync('tools/phase_shelly_ui.js','utf8'),context);
  f.phase_feedback_closed_is_single.value='true';context.window.teenetShellyPhase.updateLive();assert.equal(el('phase-contact-status').textContent,'Neue Zuordnung noch nicht gespeichert.');
  f.phase_feedback_closed_is_single.value='false';context.state.reboot_required=true;context.window.teenetShellyPhase.updateLive();assert.equal(el('phase-contact-status').textContent,'Rückmeldung nach dem Neustart prüfen.');
  context.state.reboot_required=false;context.window.teenetShellyPhase.updateLive();assert(el('phase-contact-status').textContent.includes('Kontakt 1:'));
- console.log('PASS: Shelly setup UI: independent scan, protected selection, inactive profile, obligatory feedback, normal dirty/save workflow and GPIO controls restored');
+ // Polling calls the shared write-state function; it must preserve the hidden
+ // password field's exclusion from an unauthenticated Shelly configuration.
+ const dashboard=fs.readFileSync('main/dashboard.js','utf8'),writeStart=dashboard.indexOf('function writes(){'),writeEnd=dashboard.indexOf('\nfunction showConnection(',writeStart);
+ assert(writeStart>0&&writeEnd>writeStart);
+ context.document.querySelectorAll=selector=>selector.startsWith('#config-form input')?[f.phase_shelly_password]:[];
+ context.scanUi=role=>({button:el(role+'-scan')});context.initialized=true;context.configSaving=false;context.meterScanning=false;context.previewRunning=false;
+ vm.runInNewContext(dashboard.slice(writeStart,writeEnd),context);
+ f.phase_actuator_type.value='1';el('phase-shelly-auth').value='0';f.phase_shelly_password.value='discarded-draft';context.window.teenetShellyPhase.update();
+ assert(f.phase_shelly_password.disabled);context.writes();assert(f.phase_shelly_password.disabled,'status polling must not enable a discarded hidden password for shared form submission');
+ el('phase-shelly-auth').value='1';context.window.teenetShellyPhase.update();context.writes();assert(!f.phase_shelly_password.disabled,'authenticated HTTP still accepts a password');
+ context.online=false;context.writes();assert(f.phase_shelly_password.disabled,'authentication controls respect the offline lock');
+ context.online=true;f.phase_actuator_type.value='3';context.window.teenetShellyPhase.update();context.writes();assert(f.phase_shelly_password.disabled,'Modbus never submits the hidden HTTP password');
+ console.log('PASS: Shelly setup UI: independent scan, protected selection, inactive profile, obligatory feedback, normal dirty/save workflow, stable password exclusion and GPIO controls restored');
 })().catch(error=>{console.error(error);process.exitCode=1;});

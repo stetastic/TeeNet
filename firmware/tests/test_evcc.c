@@ -7,12 +7,14 @@
 int main(void) {
     evcc_shell_t s;
     assert(evcc_shell_parse("{\"connectors\":[{\"id\":1,\"status\":\"ON\",\"chargingRate\":\"0kw\"}]}",&s));
-    assert(s.state=='?'&&!strcmp(s.reason,"transaction_missing"));
+    assert(s.state=='A'&&!strcmp(s.reason,"ok"));
+    assert(shell_vehicle_fresh(&s,100,15099));assert(!evcc_shell_fresh(&s,100,15099));
     assert(evcc_shell_parse("{\"connectors\":[{\"id\":1,\"transaction\":{\"statusCar\":\"Charging\"}}]}",&s)&&s.state=='C');
     assert(evcc_shell_fresh(&s,100,15099));assert(!evcc_shell_fresh(&s,100,15100));
+    assert(shell_vehicle_fresh(&s,100,15099));assert(!shell_vehicle_fresh(&s,100,15100));
     assert(!evcc_shell_fresh(&s,100,99));assert(!evcc_shell_fresh(&s,0,100));
     const char *states[]={"SuspendedEV","SuspendedEVSE","Faulted","Available","Preparing","Finishing","ON",""};
-    const char expected[]={'B','B','F','?','?','?','?','?'};
+    const char expected[]={'B','B','F','A','B','D','?','?'};
     for(unsigned i=0;i<8;i++) {
         char json[200];snprintf(json,sizeof(json),"{\"connectors\":[{\"id\":1,\"transaction\":{\"statusCar\":\"%s\"}}]}",states[i]);
         assert(evcc_shell_parse(json,&s));assert(s.state==expected[i]);
@@ -22,9 +24,13 @@ int main(void) {
     assert(!evcc_shell_parse("{\"connectors\":[{\"id\":1,\"transaction\":{\"statusCar\":\"Charging\",\"statusCar\":\"Faulted\"}}]}",&s));
     assert(!evcc_shell_parse("{broken}",&s));assert(s.state=='?');
     assert(!evcc_shell_parse("{\"connectors\":[{\"id\":2}]}",&s));
-    assert(evcc_shell_parse("{\"connectors\":[{\"id\":1,\"transaction\":null}]}",&s)&&s.state=='?');
+    assert(evcc_shell_parse("{\"connectors\":[{\"id\":1,\"transaction\":null}]}",&s)&&s.state=='A');
+    assert(evcc_shell_parse("{\"connectors\":[{\"id\":1,\"status\":\"Preparing\"}]}",&s)&&s.state=='B');
+    assert(!evcc_shell_fresh(&s,100,15099));
+    assert(evcc_shell_parse("{\"connectors\":[{\"id\":1,\"status\":\"Finishing\"}]}",&s)&&s.state=='D');
+    assert(evcc_shell_parse("{\"connectors\":[{\"id\":1,\"status\":\"Faulted\"}]}",&s)&&s.state=='F');
     assert(evcc_shell_parse("{\"connectors\":[{\"id\":1,\"transaction\":{\"status\":\"CHARGING\",\"statusCar\":\"idle\"}}]}",&s)&&s.state=='B');
-    assert(evcc_shell_parse("{\"connectors\":[{\"id\":1,\"transaction\":{\"status\":\"FINISHED\",\"statusCar\":\"idle\"}}]}",&s)&&s.state=='?');
+    assert(evcc_shell_parse("{\"connectors\":[{\"id\":1,\"transaction\":{\"status\":\"FINISHED\",\"statusCar\":\"idle\"}}]}",&s)&&s.state=='D');
     assert(evcc_shell_parse("{\"connectors\":[{\"id\":1,\"transaction\":{\"statusCar\":\"idle\"}}]}",&s)&&s.state=='?');
     evcc_control_t c;evcc_configure(&c,false);
     assert(!evcc_set_current(&c,8,8,16,1));assert(!evcc_set_enabled(&c,true,true,1));

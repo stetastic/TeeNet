@@ -47,7 +47,7 @@
       const c=await response.json();Object.assign(c,transport,{evcc_feature_enabled:feature});return json(c);
     }
     if(url.origin===location.origin&&url.pathname==='/api/status'&&response.ok) {
-      const s=await response.json();Object.assign(s,{evcc_test_enabled:cfg.enabled,evcc_local_stop:inhibited,terms_accepted:accepted,telemetry_enabled:telemetry,telemetry_decided:telemetryDecided,telemetry_revision:'2026-10-16.1',telemetry_last_ok:false,telemetry_last_age_s:-1,telemetry_delete_pending:false,terms_revision:'2026-10-09.2',evcc_lease_expired:false,evcc_status_known:false,evcc_statuscar:'',release_channel:'private-evcc-test'});
+      const s=await response.json();Object.assign(s,{evcc_test_enabled:cfg.enabled,evcc_local_stop:inhibited,terms_accepted:accepted,telemetry_enabled:telemetry,telemetry_decided:telemetryDecided,telemetry_revision:'2026-10-16.1',telemetry_last_ok:false,telemetry_last_age_s:-1,telemetry_delete_pending:false,terms_revision:'2026-10-09.2',evcc_lease_expired:false,evcc_status_known:false,evcc_statuscar:'',vehicle_status_enabled:s.vehicle_status_enabled||cfg.enabled,release_channel:'private-evcc-test'});
       if(!accepted){s.enabled=false;s.mode='off';s.target_current_a=0;s.block_reason='agreement';}
       if(cfg.enabled){s.enabled=false;s.mode='off';s.target_current_a=0;s.block_reason=inhibited?'evcc_local_stop':'evcc_status';}
       return json(s);

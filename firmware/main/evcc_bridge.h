@@ -7,7 +7,9 @@
 #define EVCC_LEASE_MS (ems_param_ms(EP_EVCC_LEASE))
 
 typedef struct {
-    char state; /* '?' is unknown, never silently interpreted as disconnected. */
+    /* A disconnected, B connected, C charging, D finished, F fault, ? unknown. */
+    char state;
+    bool evcc_usable; /* Only states already verified for evcc may release its readiness check. */
     char raw[32], reason[40];
 } evcc_shell_t;
 
@@ -21,6 +23,7 @@ typedef struct {
 
 bool evcc_shell_parse(const char *body, evcc_shell_t *out);
 bool evcc_shell_fresh(const evcc_shell_t *sample, int64_t at, int64_t now);
+bool shell_vehicle_fresh(const evcc_shell_t *sample, int64_t at, int64_t now);
 void evcc_configure(evcc_control_t *control, bool configured);
 void evcc_touch(evcc_control_t *control, int64_t now);
 bool evcc_set_current(evcc_control_t *control, float value, float minimum, float maximum, int64_t now);

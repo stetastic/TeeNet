@@ -16,7 +16,7 @@
 #define EMS_CHARGE_STOP_CONFIRM_MS (ems_param_ms(EP_STOP_CONFIRM))
 #define EMS_CHARGE_STOP_LIMIT 5
 #define EMS_CHARGE_STOP_WINDOW_MS (ems_param_ms(EP_STOP_WINDOW))
-#define EMS_SETTINGS_VERSION 33
+#define EMS_SETTINGS_VERSION 34
 #define EMS_MIN_CHARGE_A 6.0f
 #define EMS_BATTERY_CAPACITY_KWH 20.0f
 #define EMS_BATTERY_DISCHARGE_MAX_W 4000.0f
@@ -151,7 +151,14 @@ typedef struct {
     /* Version 33: expert GPIO assignment, applied only at boot. */
     int phase_feedback_pin, phase_feedback_second_pin, status_led_pin;
 
+    /* Version 34: optional read-only heat-pump submeter. */
+    bool heatpump_enabled, heatpump_publish_enabled;
+    char heatpump_source[20], heatpump_host[64];
+    char heatpump_input_topic[128], heatpump_output_topic[128];
+
 } settings_t;
+bool heatpump_settings_valid(const settings_t *settings);
+bool heatpump_parse_value(const char *payload,float *watts,bool *available);
 #include "gpio_map.h"
 bool phase_three_phase_meter(const settings_t *settings);
 unsigned phase_measured_currents(const settings_t *settings);

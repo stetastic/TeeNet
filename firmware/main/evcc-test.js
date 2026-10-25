@@ -114,8 +114,6 @@ loadpoints:
       byId('mode').value='manual';
       document.querySelectorAll('[data-mode]').forEach(el=>el.setAttribute('aria-pressed',String(el.dataset.mode==='manual')));
       byId('manual-current-label').hidden=true;
-      byId('target').textContent=s.evcc_local_stop?'Freigeben erlaubt den nächsten Start durch evcc.':'Lokal stoppen sperrt weitere Starts durch evcc.';
-      byId('target').hidden=false;
       byId('pv-allocation-status').hidden=true;
       byId('battery-card').dataset.inactive='true';
       document.querySelectorAll('.battery-choice').forEach(el=>el.hidden=true);

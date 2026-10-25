@@ -1,0 +1,6 @@
+#demo-welcome{max-width:440px;padding:28px}
+#demo-welcome .demo-welcome-icon{display:grid;place-items:center;width:44px;height:44px;margin-bottom:18px;border-radius:13px;background:light-dark(#e7f5f8,#1c4251);color:light-dark(#087e9b,#79d5e9);font-size:18px}
+#demo-welcome h2{margin:0 0 12px;font-size:23px;line-height:1.25}
+#demo-welcome p{margin:0 0 24px;line-height:1.65;font-size:14px}
+#demo-welcome-ok{width:100%;min-height:46px;font-size:14px}
+@media(max-width:420px){#demo-welcome{padding:24px}}

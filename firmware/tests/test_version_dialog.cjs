@@ -1,36 +1,35 @@
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
 const source=fs.readFileSync('main/dashboard.js','utf8');
-const code=source.slice(source.indexOf("// Release display belongs"),source.indexOf("const donateUrl="));
+const start=source.indexOf('async function waitGitHub(){'),end=source.indexOf("$('ota-file').addEventListener('change'",start);
+assert(start>0&&end>start,'test the current controller-backed update workflow');
 function fixture(result){
- const elements=new Map(),events=new Map();let requests=0;
- const node=id=>{if(!elements.has(id))elements.set(id,{dataset:{},textContent:'',href:'https://example.invalid',open:false,clicks:0,click(){this.clicks++},addEventListener(type,handler){events.set(id+':'+type,handler)}});return elements.get(id)};
- const context={$:node,window:{addEventListener(type,handler){events.set(type,handler)}},fetch:async url=>{requests++;assert.equal(url,'https://api.github.com/repos/stetastic/TeeNet/releases/latest');return{ok:true,json:async()=>result}},AbortController,setTimeout,clearTimeout,Date};
- vm.createContext(context);vm.runInContext(code,context);
- return{context,node,events,requests:()=>requests};
+ const nodes=new Map(),requests=[],tasks=[],events=[];
+ const node=id=>{if(!nodes.has(id))nodes.set(id,{hidden:false,textContent:'',value:'old-file',clicks:0,listeners:{},click(){this.clicks++;},addEventListener(type,callback){this.listeners[type]=callback;}});return nodes.get(id);};
+ const context={
+  $:node,Date,busy:false,uploading:false,online:true,state:{version:'1.21'},
+  window:{dispatchEvent(event){events.push(event);}},CustomEvent:function(type,options){this.type=type;this.detail=options.detail;},
+  action(work){const task=work();tasks.push(task);return task;},
+  api:async(path,body)=>{requests.push({path,body});assert.equal(path,'/api/update/github');return body?{}:result;},
+  setTimeout(){throw Error('No polling delay expected for completed synthetic checks');}
+ };
+ vm.createContext(context);vm.runInContext(source.slice(start,end),context);
+ return {context,node,requests,tasks,events,check:()=>node('github-check').listeners.click(),choose:()=>node('ota-upload').listeners.click()};
 }
 (async()=>{
- const f=fixture({tag_name:'v1.15',draft:false,prerelease:false});
- f.events.get('teenet-status')({detail:{version:'1.14'}});
- assert.equal(f.requests(),0,'No GitHub request before opening Update & Help');
- await vm.runInContext('loadLatestRelease()',f.context);
- assert.equal(f.node('available-version').textContent,'TeeNet 1.15 · Update verfügbar');
- await vm.runInContext('loadLatestRelease()',f.context);assert.equal(f.requests(),1,'Cache avoids repeated GitHub requests');
- f.events.get('teenet-status')({detail:{version:'1.16'}});
- assert.equal(f.node('available-version').textContent,'TeeNet 1.15 · installierte Version ist neuer');
- f.events.get('teenet-status')({detail:{version:'1.15'}});
- assert.equal(f.node('available-version').textContent,'TeeNet 1.15 · aktuell');
- const invalid=fixture({tag_name:'<script>',draft:false,prerelease:false});
- await vm.runInContext('loadLatestRelease()',invalid.context);
- assert.equal(invalid.node('available-version').textContent,'Derzeit nicht erreichbar');
- await vm.runInContext('loadLatestRelease()',invalid.context);
- assert.equal(invalid.requests(),1,'Failed lookup backs off instead of repeating on every open');
- const prerelease=fixture({tag_name:'v1.17',draft:false,prerelease:true});
- await vm.runInContext('loadLatestRelease()',prerelease.context);
- assert.equal(prerelease.node('available-version').textContent,'Derzeit nicht erreichbar');
- assert(!fs.readFileSync('main/dashboard.html','utf8').includes('donate-versions'),'No version cards under logo');
- const listener=source.match(/\$\('ota-file-open'\)\.addEventListener\('click',.*?\);\r?\n/)[0];
- vm.runInContext(listener,f.context);f.events.get('ota-file-open:click')();
- assert.equal(f.node('firmware-update').open,true);assert.equal(f.node('local-firmware-update').hidden,false);assert.equal(f.node('ota-file').clicks,1);
- assert.equal(f.requests(),1,'Selecting a file does not trigger an upload or device request');
- console.log('PASS: release display in Update & Help, cache, error backoff, no logo cards and local file chooser');
-})().catch(error=>{console.error(error);process.exitCode=1});
+ let f=fixture({ok:true,running:false,newer:true,version:'1.22'});
+ assert.equal(f.requests.length,0,'rendering the update controls does not start a check');
+ await f.check();assert.equal(f.requests.length,2);assert.equal(f.requests[0].body.action,'check');assert.equal(f.requests[1].body,undefined);
+ assert.equal(f.node('github-install').hidden,false);assert.equal(f.node('github-install').textContent,'TeeNet 1.22 installieren');
+ assert.equal(f.node('github-status').textContent,'TeeNet 1.22 verfügbar.');assert.equal(f.events[0].type,'teenet-release');
+ assert.equal(f.requests.some(request=>request.body?.action==='install'),false,'checking never installs an update');
+ const requests=f.requests.length;f.choose();assert.equal(f.node('ota-file').value,'');assert.equal(f.node('ota-file').clicks,1);
+ assert.equal(f.requests.length,requests,'choosing a local file performs no device request');assert.equal(f.context.uploading,false);
+ for(const flag of ['busy','uploading']){f.context[flag]=true;f.choose();assert.equal(f.node('ota-file').clicks,1);f.context[flag]=false;}
+ f.context.online=false;f.choose();assert.equal(f.node('ota-file').clicks,1);
+ f=fixture({ok:true,running:false,newer:false,version:'1.20'});await f.check();
+ assert.equal(f.node('github-install').hidden,true);assert.match(f.node('github-status').textContent,/Installierte Version 1.21 ist aktuell oder neuer/);
+ f=fixture({ok:false,running:false,message:'Synthetic release unavailable'});await assert.rejects(f.check(),/Synthetic release unavailable/);
+ assert.equal(f.node('github-install').hidden,true,'failed checks cannot expose an install action');
+ assert(!fs.readFileSync('main/dashboard.html','utf8').includes('donate-versions'));
+ console.log('PASS: controller-backed release checks, explicit installation, current local file chooser and failed-check isolation');
+})().catch(error=>{console.error(error);process.exitCode=1;});

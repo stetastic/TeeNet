@@ -28,7 +28,7 @@ int main(void){
  s.xemex_tx_pin=34;assert(!settings_valid(&s));
  settings_defaults(&s);s.version=32;s.xemex_tx_pin=47;
  size_t old_size=offsetof(settings_t,phase_feedback_pin);assert(settings_decode(&s,old_size,&out));
- assert(out.version==33&&out.xemex_tx_pin==EMS_DEFAULT_METER_TX_PIN&&out.phase_feedback_pin==EMS_DEFAULT_FEEDBACK_PIN);
+ assert(out.version==EMS_SETTINGS_VERSION&&out.xemex_tx_pin==EMS_DEFAULT_METER_TX_PIN&&out.phase_feedback_pin==EMS_DEFAULT_FEEDBACK_PIN);
  for(int pin=0;pin<=48;pin++)if(pin==0||pin==3||pin==19||pin==20||pin==45||pin==46)assert(settings_gpio_reason(pin,false)[0]);
  puts("PASS: board GPIO availability, 12-role defaults, remapping persistence, active conflicts, dormant sharing, protected pins, v32 migration and restart-only application");
  return 0;

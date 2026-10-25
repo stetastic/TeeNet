@@ -34,7 +34,7 @@ P(NET_HOUSE_TTL,"Messwerte","Haus-Netzwerkwerte gültig für","s",20,5,60,1,"Tol
 P(INPUT_TTL,"Messwerte","MQTT-Eingangswerte gültig für","s",30,10,120,1,"Gültigkeit von PV- und Hausakku-Eingangswerten.")
 P(SHELL_TTL,"Messwerte","Shell-RS485-Verbindung gültig für","s",10,5,30,1,"Überwachung der Wallbox-Kommunikation.")
 P(CAR_TTL,"Messwerte","Fahrzeug-Ladezustand gültig für","s",600,60,3600,30,"Danach wird der Fahrzeug-Akkustand als veraltet angezeigt.")
-P(EVCC_STATUS_TTL,"evcc","Shell-Fahrzeugstatus gültig für","s",15,5,60,1,"Gültigkeit des Fahrzeugstatus für evcc.")
+P(EVCC_STATUS_TTL,"Messwerte","Shell-Fahrzeugstatus gültig für","s",15,5,60,1,"Danach gilt die Anzeige als unbekannt; evcc pausiert sicher.")
 P(EVCC_LEASE,"evcc","evcc-Kommunikationsfrist","s",90,30,300,1,"Bei ausbleibender Steuerung wird die evcc-Ladung gestoppt.")
 P(MQTT_PUBLISH,"Netzwerk","MQTT-Sendeintervall","s",20,5,120,1,"Abstand der regelmäßigen Messwert-Veröffentlichungen.")
 P(CONTACT_DEBOUNCE,"Externe Kontakte","Kontaktentprellung","ms",100,50,1000,10,"Kontakt muss so lange unverändert sein.")
