@@ -17,6 +17,10 @@
 #define EMS_CHARGE_STOP_LIMIT 5
 #define EMS_CHARGE_STOP_WINDOW_MS (ems_param_ms(EP_STOP_WINDOW))
 #define EMS_SETTINGS_VERSION 34
+#define EMS_STRING_VALUE_(x) #x
+#define EMS_STRING_VALUE(x) EMS_STRING_VALUE_(x)
+/* Keep the legacy blob available to a rollback firmware with an older layout. */
+#define EMS_SETTINGS_STORAGE_KEY "settings_v" EMS_STRING_VALUE(EMS_SETTINGS_VERSION)
 #define EMS_MIN_CHARGE_A 6.0f
 #define EMS_BATTERY_CAPACITY_KWH 20.0f
 #define EMS_BATTERY_DISCHARGE_MAX_W 4000.0f

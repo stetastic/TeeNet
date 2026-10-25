@@ -98,7 +98,7 @@ function gpioRemember(schema,cfg,next){
    }
    const gpioSchema=await schemaPromise;for(const r of gpioSchema.gpio.roles.slice(2))if(r.id in request&&request[r.id]!==cfg[r.id])return plain('GPIO-Belegung im Expertenmodus aendern.',403);
    if(!gpioValid(gpioSchema,next))return plain('GPIO-Belegung ungueltig.',400);
-   request.relay_active_low=false;if(Number(next.phase_feedback_count)===2)request.phase_feedback_closed_is_single=false;request.phase_feedback_enabled=Number(next.phase_actuator_type)!==2;request.relay1_mode=next.phase_switch_enabled?3:0;
+   if(Number(next.phase_feedback_count)===2)request.phase_feedback_closed_is_single=false;request.phase_feedback_enabled=Number(next.phase_actuator_type)!==2;request.relay1_mode=next.phase_switch_enabled?3:0;
    if(![0,1,2,3].includes(Number(next.phase_actuator_type||0)))return plain('Schuetzprofil ungueltig.',400);
    if(next.phase_shelly_host&&!/^[a-zA-Z0-9][a-zA-Z0-9.-]{0,62}$/.test(next.phase_shelly_host))return plain('Shelly-Adresse pruefen.',400);
    if([1,3].includes(Number(next.phase_actuator_type))&&next.phase_switch_enabled){

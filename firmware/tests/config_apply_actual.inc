@@ -185,6 +185,7 @@ static esp_err_t config_apply(httpd_req_t *req,cJSON *o,bool restore) {
         phase_config_quiescent_locked(),actual_at>0||meter_at>0,
         fresh(now_ms(),actual_at,wallbox_meter_ttl()),actual_a);UNLOCK();
     LOCK();bool actuator_change=next.phase_actuator_type!=saved_settings.phase_actuator_type ||
+        next.relay_active_low!=saved_settings.relay_active_low ||
         strcmp(next.phase_shelly_host,saved_settings.phase_shelly_host) ||
         next.phase_shelly_model!=saved_settings.phase_shelly_model||next.phase_shelly_pulse!=saved_settings.phase_shelly_pulse||
         next.phase_shelly_true_three_phase!=saved_settings.phase_shelly_true_three_phase||

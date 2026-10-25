@@ -7,7 +7,17 @@ $env:ZIG_GLOBAL_CACHE_DIR = Join-Path $workspaceRoot 'toolcache\zig-global-cache
 $env:ZIG_LOCAL_CACHE_DIR = Join-Path $workspaceRoot 'toolcache\zig-local-cache'
 $compiler = Join-Path $workspaceRoot 'toolcache\zig\zig-windows-x86_64-0.13.0\zig.exe'
 $jsonDir = Join-Path $workspaceRoot 'toolcache\esp-idf\v5.3.2\esp-idf\components\json\cJSON'
-foreach ($suite in @('heatpump','telemetry','phase_setup','assets','appearance','boot_check','http_encoding','gpio','gpio_atom','gpio_http','core','pv','battery_regression','energy_profiles','runtime','restart','review','sessions','calibration','hardware','hardware_atom','features','huawei','network','grid_fallback','fixed_phase','basic_mode','priority','support','support_atom','em24','opendtu','github_release','github_release_atom','evcc','rs485','rs485_io','bounded_socket','control_storage','expert_storage','wallbox_network','phase_status','phase_controller','phase_mqtt','phase_mqtt_storage','http_json','http_post_guard','storage_reset','session_snapshot','xemex_two','mqtt_input','phase_output_network','shelly_phase','json_memory','status_profile','config_apply','plan_http','terms','expert')) {
+foreach ($extraSuite in @('config_storage','ota_gate')) {
+ if ($Only.Count -eq 0 -or $extraSuite -in $Only) {
+    & 'C:\esp-tools\python_env\idf5.3_py3.12_env\Scripts\python.exe' "tools/extract_${extraSuite}_test.py"
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $compiler cc -target wasm32-wasi -std=c17 -Wall -Wextra -Werror -DCJSON_NESTING_LIMIT=16 -I main -I $jsonDir main/ems_core.c main/shelly_phase.c main/expert_params.c (Join-Path $jsonDir 'cJSON.c') "tests/test_$extraSuite.c" -o "tests/test_$extraSuite.wasm"
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    node tools/run_wasi_test.cjs "tests/test_$extraSuite.wasm"
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+ }
+}
+foreach ($suite in @('gpio_relay','upgrade_compat','heatpump','telemetry','phase_setup','assets','appearance','boot_check','http_encoding','gpio','gpio_atom','gpio_http','core','pv','battery_regression','energy_profiles','runtime','restart','review','sessions','calibration','hardware','hardware_atom','features','huawei','network','grid_fallback','fixed_phase','basic_mode','priority','support','support_atom','em24','opendtu','github_release','github_release_atom','evcc','rs485','rs485_io','bounded_socket','control_storage','expert_storage','wallbox_network','phase_status','phase_controller','phase_mqtt','phase_mqtt_storage','http_json','http_post_guard','storage_reset','session_snapshot','xemex_two','mqtt_input','phase_output_network','shelly_phase','json_memory','status_profile','config_apply','plan_http','terms','expert')) {
     if ($Only.Count -gt 0 -and $suite -notin $Only) { continue }
     $baseSuite = $suite -replace '_atom$',''
     $defines = @('-DCJSON_NESTING_LIMIT=16')
@@ -34,6 +44,10 @@ foreach ($suite in @('heatpump','telemetry','phase_setup','assets','appearance',
     }
     if ($suite -eq 'config_apply') {
         & 'C:\esp-tools\python_env\idf5.3_py3.12_env\Scripts\python.exe' tools/extract_config_test.py
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    }
+    if ($suite -eq 'gpio_relay') {
+        & 'C:\esp-tools\python_env\idf5.3_py3.12_env\Scripts\python.exe' tools/extract_gpio_relay_test.py
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     }
     if ($suite -eq 'phase_controller') {

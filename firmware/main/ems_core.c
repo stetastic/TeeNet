@@ -69,7 +69,8 @@ void settings_fixed_pins(settings_t *s) {
     /* Retired fields remain normalized; expert pin assignments are preserved. */
     s->relay2_pin=14;
     s->relay2_mode=0;s->nominal_v=230;
-    s->relay_active_low=false; /* GPIO contactor output is always active High. */
+    /* New boards default to active High. Preserve commissioned active-Low
+       hardware when loading or restoring an existing installation. */
     if(s->phase_feedback_count==2)s->phase_feedback_closed_is_single=false; /* Two complementary contacts use fixed roles. */
     s->wallbox_rts_pin=s->xemex_rts_pin=s->house_rts_pin=-1;
 }
@@ -384,7 +385,8 @@ bool settings_decode(const void *blob,size_t length,settings_t *out) {
        resume charging automatically. The user must enable it explicitly. */
     next.version=EMS_SETTINGS_VERSION; next.enabled=false;
     if(version<33){
-        next.phase_feedback_closed_is_single=false; /* Previously fixed, including ignored legacy values. */
+        /* A single contact's assignment was configurable in older firmware.
+           Preserve it; changing it silently reverses the reported position. */
         /* These roles were fixed by older firmware, even if legacy blobs
            contained other values. Preserve the already-configurable Shell pins. */
         next.xemex_tx_pin=EMS_DEFAULT_METER_TX_PIN;next.xemex_rx_pin=EMS_DEFAULT_METER_RX_PIN;

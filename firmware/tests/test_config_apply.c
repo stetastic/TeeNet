@@ -115,9 +115,15 @@ int main(void){
     assert(bad.status==400&&!prepared_count&&strstr(bad.message,"phase_actuator_type"));
     fixture();bad=post("[]");assert(bad.status==400&&!prepared_count);
     fixture();bad=post("{\"relay_active_low\":true}");
-    assert(bad.status==200&&prepared_count==1&&!prepared_settings.relay_active_low);
+    assert(bad.status==200&&prepared_count==1&&prepared_settings.relay_active_low);
     prepared_settings.basic_mode=false;prepared_settings.relay_active_low=true;
-    settings_t migrated;assert(settings_decode(&prepared_settings,sizeof(prepared_settings),&migrated));assert(!migrated.relay_active_low);
+    settings_t migrated;assert(settings_decode(&prepared_settings,sizeof(prepared_settings),&migrated));assert(migrated.relay_active_low);
+    fixture();settings.enabled=true;actual_at=meter_at=500;
+    bad=post("{\"relay_active_low\":true}");assert(bad.status==400&&!prepared_count);
+    fixture();actual_at=meter_at=500;actual_a[1]=1.1f;
+    bad=post("{\"relay_active_low\":true}");assert(bad.status==400&&!prepared_count);
+    fixture();actual_at=-5000;meter_at=500;
+    bad=post("{\"relay_active_low\":true}");assert(bad.status==400&&!prepared_count);
     fixture();bad=post("{\"basic_mode\":false,\"relay_board_enabled\":true,\"phase_switch_enabled\":true,\"phase_actuator_type\":1,\"xemex_coils\":2}");
     assert(bad.status==400&&!prepared_count&&strstr(bad.message,"Shelly-Adresse fehlt")&&!strstr(bad.message,"L1"));
     fixture();bad=post("{\"basic_mode\":false,\"relay_board_enabled\":true,\"phase_switch_enabled\":true,\"phase_actuator_type\":1,\"phase_shelly_host\":\"192.168.1.88\",\"xemex_coils\":1}");

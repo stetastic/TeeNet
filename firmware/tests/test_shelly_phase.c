@@ -201,11 +201,12 @@ int main(void){
         assert(phase_state==PHASE_READY&&settings.charge_phases==1&&pulses==1);
         step(20000,8,0,0,!polarity);assert(phase_state==PHASE_FAULT&&pulses==1);
     }
-    /* Legacy feedback becomes the fixed contact-1=three-phase assignment. */
+    /* Preserve a single-contact assignment. The older dual-input Shelly
+       profile retains its fixed contact-1=three-phase assignment. */
     fixture(3);old=settings;old.version=31;old.phase_actuator_type=0;old.phase_feedback_enabled=false;
     old.phase_feedback_closed_is_single=true;
     size_t v31_length=(offsetof(settings_t,phase_feedback_count)+3)&~(size_t)3;
-    assert(settings_decode(&old,v31_length,&migrated)&&migrated.phase_feedback_enabled&&migrated.phase_feedback_count==1&&!migrated.phase_feedback_closed_is_single);
+    assert(settings_decode(&old,v31_length,&migrated)&&migrated.phase_feedback_enabled&&migrated.phase_feedback_count==1&&migrated.phase_feedback_closed_is_single);
     old.phase_actuator_type=1;old.phase_feedback_enabled=true;
     assert(settings_decode(&old,v31_length,&migrated)&&migrated.phase_feedback_count==2&&migrated.phase_shelly_pulse&&!migrated.phase_feedback_closed_is_single);
     for(unsigned transport=1;transport<=3;transport+=2){

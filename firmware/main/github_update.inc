@@ -112,7 +112,7 @@ static esp_err_t github_post(httpd_req_t *req){
     LOCK();int64_t now=now_ms();bool allowed=wifi_online&&!restarting&&!ota_in_progress&&!github_update.running;
     if(install)allowed=allowed&&github_update.ok&&now-github_update.checked_at<600000&&
         firmware_version_compare(github_update.release.version,EMS_VERSION)>0&&!settings.enabled&&
-        !(fresh(now,actual_at,EMS_METER_TTL)&&(actual_a[0]>=1||actual_a[1]>=1||actual_a[2]>=1));
+        ota_install_allowed_locked(now);
     if(allowed){github_update.running=true;github_update.install=install;github_update.progress=0;
         strcpy(github_update.message,install?"Firmware wird von GitHub geladen.":"GitHub wird geprueft.");if(install){ota_in_progress=true;settings.enabled=false;}}
     UNLOCK();

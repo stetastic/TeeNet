@@ -1,4 +1,8 @@
 /* Verify application identity before touching the inactive OTA partition. */
+static bool ota_install_allowed_locked(int64_t now){
+    return !restarting&&!ota_in_progress&&!backup_in_progress&&!evcc_configuring&&
+        !boot_validation_pending&&!phase_test_active&&phase_config_gate_locked(now)==CONFIG_GATE_OK;
+}
 static esp_err_t ota_handler(httpd_req_t *req) {
     if(!authorized(req))return ESP_OK;
     const esp_partition_t *partition=esp_ota_get_next_update_partition(NULL);
@@ -18,10 +22,9 @@ static esp_err_t ota_handler(httpd_req_t *req) {
     if(!firmware_prefix_check(prefix,sizeof(prefix),version))
         return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Datei ist keine TeeNet-Anwendung fuer ESP32-S3. Keine USB-/Factory-Datei verwenden.");
     LOCK();int64_t now=now_ms();
-    bool allowed=!settings.enabled&&!restarting&&!ota_in_progress&&
-        !(fresh(now,actual_at,EMS_METER_TTL)&&(actual_a[0]>=1||actual_a[1]>=1||actual_a[2]>=1));
+    bool allowed=ota_install_allowed_locked(now);
     if(allowed){ota_in_progress=true;settings.enabled=false;}UNLOCK();
-    if(!allowed){httpd_resp_set_status(req,"409 Conflict");return httpd_resp_sendstr(req,"Zuerst Ladung stoppen und Ende der Ladung abwarten.");}
+    if(!allowed){httpd_resp_set_status(req,"409 Conflict");return httpd_resp_sendstr(req,"Ladung und Schuetztest stoppen; nach vorhandenen Messungen frische Stromwerte unter 1 A abwarten.");}
     esp_ota_handle_t handle=0;
     bool opened=esp_ota_begin(partition,req->content_len,&handle)==ESP_OK;
     uint8_t *buffer=opened?malloc(4096):NULL;bool ok=buffer&&esp_ota_write(handle,prefix,sizeof(prefix))==ESP_OK;

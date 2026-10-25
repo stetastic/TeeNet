@@ -42,3 +42,10 @@ Mit dem aktuellen Build von Version 1.23 kann TeeNet nach ausdrücklicher Bestä
 
 
 Die Geräteoberfläche prüft beim Öffnen und anschließend alle sechs Stunden auf passende neue Firmware. Bei einer neueren Version erscheint ein Hinweis mit „Update ansehen“ und „Später“. Die Installation wird ausdrücklich bestätigt.
+
+
+## Kompatibilitätskorrektur innerhalb von 1.23
+
+Gespeicherte HIGH-/LOW-Relaislogik und Einzelkontakt-Zuordnung bleiben erhalten. Versionsbezogene Konfigurationsspeicherung schützt ältere Rollback-Daten; beide OTA-Wege sperren bei Schütztest und unzureichenden Strommesswerten. Am Desktop sind Logo, Shell-Recharge-Hinweis und Seitenmenü wieder vorhanden. [Prüfbericht und Grenzen](docs/Pruefbericht-1.23-Kompatibilitaet.md).
+
+Die Korrektur wurde auf dem GPIO-ESP mit gestoppter Ladung und bestätigter Dreiphasenrückmeldung geprüft. Bereits installierte 1.23 aktualisiert man über „Update aus Datei“; die Versionsnummer bleibt 1.23.

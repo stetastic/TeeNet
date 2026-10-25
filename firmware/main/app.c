@@ -309,16 +309,16 @@ static void load_settings(void) {
 
     if(config_storage_ok && nvs_open("wallbox_ems",NVS_READONLY,&nvs)==ESP_OK) {
 
-        const char *keys[]={"settings_v21","settings_v20","settings_v19","settings_v18","settings_v16","settings_v15","settings_v14","settings_v13","settings_v12","settings_v11","settings_v10","settings_v9","settings_v8","settings_v7","settings_v6","settings_v5","settings_v4","settings_v3","settings_v2","settings_v1"};
 
         /* The decoder has its own settings copy. Keep the input off the small
            startup stack as the append-only settings layout grows. */
         unsigned char *blob=malloc(sizeof(settings_t));if(!blob)boot_config_ok=false;
-        for(unsigned i=0;blob && i<sizeof(keys)/sizeof(keys[0]);i++) {
+        for(uint16_t version=EMS_SETTINGS_VERSION;blob&&version>0;version--) {
+            char key[16];snprintf(key,sizeof(key),"settings_v%u",(unsigned)version);
 
             size_t len=sizeof(settings_t);
 
-            esp_err_t err=nvs_get_blob(nvs,keys[i],blob,&len);
+            esp_err_t err=nvs_get_blob(nvs,key,blob,&len);
 
             if(err==ESP_ERR_NVS_NOT_FOUND) continue;
 
@@ -413,7 +413,7 @@ static esp_err_t save_config(const settings_t *config) {
 
     if(err!=ESP_OK) return err;
 
-    err=nvs_set_blob(nvs,"settings_v21",config,sizeof(*config));
+    err=nvs_set_blob(nvs,EMS_SETTINGS_STORAGE_KEY,config,sizeof(*config));
 
     if(err==ESP_OK) err=nvs_commit(nvs);
 
@@ -572,7 +572,7 @@ static bool phase_can_unlock_locked(int64_t now) {
 static void relay_set(unsigned index,bool energized) {
     if(settings.phase_actuator_type!=0 || !relay_ready || !settings.relay_board_enabled || index>0) return;
     gpio_set_level(settings.relay1_pin,
-        energized?1:0);
+        relay_output_level(settings.relay_active_low,energized));
     relay_on[index]=energized;
 }
 
@@ -590,11 +590,11 @@ static void phase_setup(void) {
         if(settings.phase_switch_enabled){phase_goal=3;phase_move_at=now_ms();phase_state=PHASE_MOVING;}
         return; /* Never touch GPIO12/13 for the Shelly profile. */
     }
-    int off=0;
+    int off=relay_output_level(settings.relay_active_low,false);
     gpio_set_level(settings.relay1_pin,off);
     gpio_config_t output={.pin_bit_mask=(1ULL<<settings.relay1_pin),.mode=GPIO_MODE_OUTPUT,
-        .pull_up_en=GPIO_PULLUP_DISABLE,
-        .pull_down_en=GPIO_PULLDOWN_ENABLE,.intr_type=GPIO_INTR_DISABLE};
+        .pull_up_en=settings.relay_active_low?GPIO_PULLUP_ENABLE:GPIO_PULLUP_DISABLE,
+        .pull_down_en=settings.relay_active_low?GPIO_PULLDOWN_DISABLE:GPIO_PULLDOWN_ENABLE,.intr_type=GPIO_INTR_DISABLE};
     relay_ready=gpio_config(&output)==ESP_OK;
     relay_set(0,false);
     if(!settings.phase_switch_enabled) return;
@@ -2442,6 +2442,7 @@ static esp_err_t config_apply(httpd_req_t *req,cJSON *o,bool restore) {
         phase_config_quiescent_locked(),actual_at>0||meter_at>0,
         fresh(now_ms(),actual_at,wallbox_meter_ttl()),actual_a);UNLOCK();
     LOCK();bool actuator_change=next.phase_actuator_type!=saved_settings.phase_actuator_type ||
+        next.relay_active_low!=saved_settings.relay_active_low ||
         strcmp(next.phase_shelly_host,saved_settings.phase_shelly_host) ||
         next.phase_shelly_model!=saved_settings.phase_shelly_model||next.phase_shelly_pulse!=saved_settings.phase_shelly_pulse||
         next.phase_shelly_true_three_phase!=saved_settings.phase_shelly_true_three_phase||
