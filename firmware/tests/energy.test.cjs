@@ -1,6 +1,21 @@
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const {model}=require('../main/energy.js');
+test('the small wallbox stays visible beside a selected profile and without one',()=>{
+ const fs=require('node:fs'),vm=require('node:vm'),code=fs.readFileSync('main/energy.js','utf8');
+ const block=code.slice(code.indexOf(" const art=find('.en-car-art')"),code.indexOf(" const sources=[["));
+ assert(block.length>0);
+ const children=[],classes=new Set();
+ const node=()=>({attrs:{},setAttribute(k,v){this.attrs[k]=v;},getAttribute(k){return this.attrs[k];},toggleAttribute(k,v){if(v)this.attrs[k]='';else delete this.attrs[k];}});
+ const button={append(n){children.push(n);},querySelector(q){return children.find(n=>(n.className||n.attrs.class||'').split(' ').includes(q.slice(1)));},classList:{toggle(k,v){if(v)classes.add(k);else classes.delete(k);}}};
+ const art={...node(),closest(){return button;}};
+ const ctx={online:true,m:{carVisible:true},profile:{active:true,image:'local-car.webp',name:'Car'},find(){return art;},document:{createElement:node,createElementNS:node}};
+ vm.createContext(ctx);const render=()=>vm.runInContext('(()=>{'+block+'})()',ctx);
+ render();const charger=button.querySelector('.en-profile-charger');assert(charger);assert(!('hidden' in charger.attrs));assert(classes.has('en-with-profile'));
+ ctx.profile.active=false;render();assert(!('hidden' in charger.attrs));assert(!classes.has('en-with-profile'));
+ ctx.profile.active=true;ctx.online=false;render();assert(!('hidden' in charger.attrs));
+ ctx.online=true;render();assert(!('hidden' in charger.attrs));assert.equal(children.length,2,'polling reuses the image and wallbox');
+});
 const live={basic_mode:false,zero_feed_enabled:true,feedback_ok:true,actual_a:[9,0,0],wallbox_w:2070,house_meter_ok:true,house_power_w:2000,pv_display_enabled:true,pv_generation_w:1500,battery_protect:true,battery_power_ok:true,battery_soc_ok:true,battery_soc_pct:60,battery_charge_w:0,battery_discharge_w:1200,mode:'pv'};
 test('mixed PV, battery and grid retain independent flow directions',()=>{
  const m=model(live,true);assert.equal(m.scene,'grid');assert.equal(m.pvFlow,true);assert.equal(m.batteryFlow,'discharge');assert.equal(m.gridFlow,'import');assert.equal(m.carHappy,false);assert.equal(m.houseLoad,2630);

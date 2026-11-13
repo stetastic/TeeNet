@@ -21,6 +21,16 @@ static bool power_ok(float value) {
     return isfinite(value) && value>=-1000000 && value<=1000000;
 }
 
+bool shelly_modbus_decode_voltage(const uint8_t *data,size_t length,float voltage[3]){
+    if(!data||!voltage||length<SHELLY_EM_COUNT*2)return false;
+    float values[3];
+    for(unsigned i=0;i<3;i++){
+        values[i]=mixed_float(data+(1020+20*i-SHELLY_EM_START)*2);
+        if(!isfinite(values[i])||values[i]<0||values[i]>300)return false;
+    }
+    memcpy(voltage,values,sizeof(values));return true;
+}
+
 bool shelly_modbus_decode_em(const uint8_t *data,size_t length,
                              shelly_modbus_reading_t *out) {
     if(!data || !out || length<SHELLY_EM_COUNT*2) return false;
@@ -35,6 +45,7 @@ bool shelly_modbus_decode_em(const uint8_t *data,size_t length,
     };
     if(!current_ok(next.current_a[0]) || !current_ok(next.current_a[1]) ||
        !current_ok(next.current_a[2]) || !power_ok(next.active_power_w)) return false;
+    next.voltage_valid=shelly_modbus_decode_voltage(data,length,next.voltage_v);
     *out=next;
     return true;
 }

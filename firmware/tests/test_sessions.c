@@ -7,6 +7,7 @@
 static sessions_t s,restored;
 static void near(double a,double b){assert(fabs(a-b)<.002);}
 static void sample(int64_t t,double w,double grid){sessions_step(&s,t,1790150000000LL+t,20260923,w,t+5000,grid,t+10000,.25f,.08f);}
+static const charge_session_t *current(void){return s.pending_active?&s.pending_session:sessions_recent(&s.store,0);}
 int main(void){
     sessions_init(&s);sample(1000,0,2000);sample(2000,600,2000);assert(s.store.count==0);
     sessions_init(&s);sample(1000,5000,2000);
@@ -15,14 +16,14 @@ int main(void){
     near(r->grid_wh,2000);near(r->solar_wh,3000);near(r->unknown_wh,0);near(r->cost_eur,.74);assert(r->charging_ms==3600000);
     sample(3601000,0,0);for(int i=1;i<=299;i++)sample(3601000+(int64_t)i*1000,0,0);assert(s.store.active_slot);
     sample(3901000,0,0);assert(!s.store.active_slot&&s.checkpoint);assert(s.store.count==1);
-    sample(3902000,5000,-2000);sample(3903000,5000,-2000);r=sessions_recent(&s.store,0);near(r->grid_wh,0);near(r->solar_wh,5000.0/3600);assert(s.store.count==2);
-    assert(sessions_restore(&restored,&s.store,sizeof(s.store),.25f,.08f));assert(!restored.store.active_slot);assert(sessions_recent(&restored.store,0)->flags&SESSION_INTERRUPTED);
+    sample(3902000,5000,-2000);sample(3903000,5000,-2000);r=current();near(r->grid_wh,0);near(r->solar_wh,5000.0/3600);assert(s.store.count==1&&s.pending_active);
+    assert(sessions_restore(&restored,&s.store,sizeof(s.store),.25f,.08f));assert(!restored.store.active_slot&&restored.store.count==1);
 
     sessions_init(&s);
     sessions_step(&s,1000,1790150001000LL,20260923,5000,6000,2000,1500,.25f,.08f);
     sessions_step(&s,2000,1790150002000LL,20260923,5000,7000,2000,12000,.25f,.08f);
-    r=sessions_recent(&s.store,0);near(r->grid_wh,(2000*.5+5000*.5)/3600);near(r->solar_wh,3000*.5/3600);near(r->unknown_wh,0);
-    sessions_init(&s);sample(1000,5000,9000);sample(2000,5000,9000);r=sessions_recent(&s.store,0);near(r->grid_wh,5000.0/3600);near(r->solar_wh,0);
+    r=current();near(r->grid_wh,(2000*.5+5000*.5)/3600);near(r->solar_wh,3000*.5/3600);near(r->unknown_wh,0);
+    sessions_init(&s);sample(1000,5000,9000);sample(2000,5000,9000);r=current();near(r->grid_wh,5000.0/3600);near(r->solar_wh,0);
 
     /* Tariff changes are prospective; short pauses stay in the same session. */
     sessions_init(&s);sample(1000,5000,2000);
@@ -39,7 +40,7 @@ int main(void){
     sample(7231000,5000,0);near(r->grid_wh+r->solar_wh+r->unknown_wh,before);
 
     sessions_init(&s);int64_t t=1000;
-    for(unsigned i=0;i<CHARGE_SESSION_CAPACITY+3;i++){sample(t,5000,0);sample(t+1000,0,0);sample(t+1000+SESSION_PAUSE_MS,0,0);t+=SESSION_PAUSE_MS+2000;}
+    for(unsigned i=0;i<CHARGE_SESSION_CAPACITY+3;i++){sample(t,900000,0);sample(t+1000,900000,0);sample(t+2000,900000,0);sample(t+3000,900000,0);sample(t+4000,0,0);sample(t+4000+SESSION_PAUSE_MS,0,0);t+=SESSION_PAUSE_MS+5000;}
     assert(s.store.count==CHARGE_SESSION_CAPACITY);assert(sessions_recent(&s.store,0)->id==CHARGE_SESSION_CAPACITY+3);assert(sessions_recent(&s.store,CHARGE_SESSION_CAPACITY-1)->id==4);
     assert(!sessions_recent(&s.store,CHARGE_SESSION_CAPACITY));
     uint32_t period;assert(session_period_parse("2026-09",&period)&&period==202609);assert(session_matches(sessions_recent(&s.store,0),period));

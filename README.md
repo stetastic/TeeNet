@@ -1,51 +1,35 @@
-# TeeNet 1.23
+# TeeNet 1.24
 
-Lokale ESP32-S3-Steuerung für die **Shell Recharge Advanced 3.0**.
+Lokale Ladesteuerung für die Shell Recharge Advanced 3.0: manuelles Laden, PV-Überschuss, Hausakku, Fahrzeugprofile und Ladepläne. Bedienung im Browser; ioBroker, Home Assistant und MQTT sind optional.
 
-[Online-Demo](https://stetastic.github.io/TeeNet/) · [Bebilderte Anleitung](https://stetastic.github.io/TeeNet/help) · [Downloads](https://stetastic.github.io/TeeNet/downloads) · [USB-Webinstaller](https://stetastic.github.io/TeeNet/install.html)
-
-## Funktionen
-
-- Ladeleistung manuell einstellen oder automatisch mit PV-Überschuss laden.
-- Über den ioBroker-Adapter oder Home Assistant per MQTT steuern.
-- Optional evcc für die Ladesteuerung verwenden.
-- PV- und Akkudaten von OpenDTU-OnBattery per MQTT nutzen.
-- Hausakku einbeziehen und PV-Leistung zwischen Hausakku und Auto aufteilen.
-- Optional Ladeplan, Wolkenpuffer und automatische Phasenumschaltung über GPIO oder Shelly nutzen.
-- Verbrauch, Ladesitzungen und Netz-/Solarkosten anzeigen und als CSV exportieren.
-- Standard- oder Grafikanzeige und eine kompakte Handyansicht wählen; Details per Bildklick öffnen.
-
-Einrichtung und Bedienung erfolgen im Browser. Die Online-Demo lässt sich ohne Hardware ausprobieren. Eine optional separat gemessene Wärmepumpe wird über Shelly-Modbus oder MQTT angezeigt und vom übrigen Hausverbrauch abgezogen. In der Demo sind alle Verbindungen und Werte simuliert.
-
-## Installation
-
-Neue Geräte über den [USB-Webinstaller](https://stetastic.github.io/TeeNet/install.html) installieren; dabei werden vorhandene Daten gelöscht. Eingerichtete Geräte unter **System & Hilfe** direkt von GitHub aktualisieren. Dort lässt sich vorher eine vollständige Systemsicherung herunterladen. Firmware und Quellcode stehen bei den [Veröffentlichungen](https://github.com/stetastic/TeeNet/releases/latest).
+[Demo](https://stetastic.github.io/TeeNet/) · [Anleitung](https://stetastic.github.io/TeeNet/help.html) · [Downloads & USB-Installation](https://stetastic.github.io/TeeNet/downloads.html) · [Version 1.24](https://github.com/stetastic/TeeNet/releases/tag/v1.24)
 
 ## Hardware
 
-Empfohlen wird der erprobte **ESP32-S3 N16R8 mit 16 MB Flash** und USB-Versorgung. Ein automatischer RS485-Wandler mit 3,3-V-Logik verbindet ihn mit der Shell. Für einen RS485-Wallbox-Zähler wird ein zweiter Wandler benötigt.
+| Board | Flash | Shell-RS485 |
+| --- | --- | --- |
+| M5Stack AtomS3 Lite + Tail485 | 8 MB | TX GPIO2 / RX GPIO1 |
+| ESP32-S3 N16R8 | 16 MB | TX GPIO17 / RX GPIO18 |
 
-Für Andreas steht zusätzlich das Profil **Andreas Testboard · AtomS3 Lite** bereit. Es nutzt 8 MB Flash, Shell TX6/RX5 und optional GPIO1 für den Betriebsartkontakt. Diese Variante ist als Hardwaretest gekennzeichnet.
+AtomS3 Lite und N16R8 sind reguläre Hardwareprofile. Bestehende Atom-Installationen erhalten weiterhin das passende Update. Tail485 verbindet A, B, + und − mit dem passenden Wallbox-Anschluss. Anschlussbelegung und Versorgung vor der Installation anhand der Anleitung prüfen.
 
-Ein **separater Zähler am Wallbox-Abgang** ist für die Regelung erforderlich. Die Shell muss für externes dynamisches Lastmanagement eingerichtet sein. Unterstützte Zähler und Anschlüsse beschreibt die [Anleitung](https://stetastic.github.io/TeeNet/help).
+Optional: Shelly 3EM als Wallbox-Zähler, Hausanschlusszähler für PV-Laden und ein über Netzwerk angesteuertes Phasenschütz. Die Anleitung beschreibt Öffner-/Schließerkontakte und die optionale Stellungsprüfung über Phasenspannungen.
 
-Am Referenzaufbau erprobt: dreiphasig 6–11 kW, einphasig 2,0–3,5 kW. Der nutzbare Bereich hängt von Fahrzeug und Aufbau ab. Details stehen im [Messprotokoll](https://github.com/stetastic/TeeNet/blob/main/Probelauf.md).
+## Neu in 1.24
 
-## Freiwillige Gerätestatistik
+- HTTP-Regelung ohne externen Wallbox-Zähler ist dauerhaft auswählbar; sie läuft selbstständig im ESP.
+- Mit Mercedes GLB 250 getestet. Ladetests mit weiteren Fahrzeugen ohne Shelly-Zähler stehen aus; andere Netzwerklatenzen sind nicht bestätigt.
+- Neue dreiphasige Standard-Untergrenze: 5,6 kW. Die früheren Auswahlschalter für 5,5 und 6 kW entfallen. Individuelle Expertenparameter bleiben erhalten.
+- Kürzere Einstellungen, zusammengeführte Downloads für beide Boards und überarbeitete Anleitung.
 
-Mit dem aktuellen Build von Version 1.23 kann TeeNet nach ausdrücklicher Bestätigung eine zufällige Kennung und die Firmwareversion an den Projektzähler senden. Die Teilnahme ist bei der Einrichtung vorausgewählt und jederzeit abschaltbar. Keine Lade-, WLAN- oder Standortdaten. Die Demo sendet keine Lebenszeichen. Details stehen in der Anleitung unter Gerätestatistik.
+Bei HTTP-Regelung werden Strom und Leistung geschätzt. Die kWh-Abrechnung nutzt die Zählerstände der Wallbox. Fehlende HTTP-Daten stoppen die Regelung; ein Phasenwechsel benötigt weiterhin einen unabhängigen Nachweis des Stromstillstands.
 
-## Hinweis
+## Installieren
 
-**Privates, kostenloses Bastelprojekt. Nutzung auf eigene Gefahr.** Netzanschlüsse nur durch Elektrofachkräfte. Eingriffe in die Wallbox können Garantieansprüche beeinträchtigen. Vor Installation und Betrieb [Nutzung, Sicherheit und Haftung](DISCLAIMER.md) lesen.
+Vor einem Update eine Systemsicherung herunterladen. Auf bestehenden Geräten die OTA-Datei für das eigene Board unter **System & Hilfe** installieren. Eine USB-Erstinstallation ist für neue Geräte vorgesehen und kann vorhandene Daten löschen.
 
+Der Quellcode liegt unter [firmware](firmware/). Die passende Anschlussanleitung liegt unter [firmware/main/guide.html](firmware/main/guide.html).
 
+## Nutzung
 
-Die Geräteoberfläche prüft beim Öffnen und anschließend alle sechs Stunden auf passende neue Firmware. Bei einer neueren Version erscheint ein Hinweis mit „Update ansehen“ und „Später“. Die Installation wird ausdrücklich bestätigt.
-
-
-## Kompatibilitätskorrektur innerhalb von 1.23
-
-Gespeicherte HIGH-/LOW-Relaislogik und Einzelkontakt-Zuordnung bleiben erhalten. Versionsbezogene Konfigurationsspeicherung schützt ältere Rollback-Daten; beide OTA-Wege sperren bei Schütztest und unzureichenden Strommesswerten. Am Desktop sind Logo, Shell-Recharge-Hinweis und Seitenmenü wieder vorhanden. [Prüfbericht und Grenzen](docs/Pruefbericht-1.23-Kompatibilitaet.md).
-
-Zusätzlich sind die dreiphasige Abregelung und die grafische Anzeige bei kurzzeitig widersprüchlichen Messwerten korrigiert. Reale Prüfungen mit 6 kW, 9 kW und zurück auf 6 kW liefen ohne Ladeabbruch; anschließend wurde gestoppt. Desktop-Hilfe und Status sind übersichtlicher, unter 0,1 kW PV erscheint ein Mond. Bereits installierte 1.23 aktualisiert man über „Update aus Datei“; die Versionsnummer bleibt 1.23.
+Privates, kostenloses Projekt. Hinweise zu Installation und Betrieb stehen in der [Anleitung](https://stetastic.github.io/TeeNet/help.html). Netzanschlüsse gehören in die Hände einer Elektrofachkraft.

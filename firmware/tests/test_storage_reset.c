@@ -1,5 +1,7 @@
 #include "ems_core.h"
 #include "charge_sessions.h"
+#include "charge_counter.h"
+#include "session_checkpoint.h"
 #include <assert.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -12,10 +14,13 @@ typedef struct { int status; } httpd_req_t;
 #define NVS_READWRITE 1
 #define HTTPD_500_INTERNAL_SERVER_ERROR 500
 #define pdTRUE 1
-static int maintenance_flash_lock=1,locks,flash_held;
+#define ESP_LOGW(...) ((void)0)
+static int maintenance_flash_lock=1,status_snapshot_lock=2,locks,flash_held,status_held;
 static unsigned takes,gives,writes,commits;
 static bool stats_storage_ok,storage_error,clock_valid,fail_write;
 static energy_t energy;
+static charge_counter_t charge_counter;
+typedef struct {uint32_t version;energy_store_t totals;charge_counter_checkpoint_t counter;} meter_totals_t;
 static sessions_t sessions;
 static double energy_reset_wh[EMS_SOURCES];
 static uint32_t energy_reset_date;
@@ -29,8 +34,8 @@ static int64_t now_ms(void){return 120000;}
 static unsigned ticks(unsigned value){return value;}
 static bool authorized(httpd_req_t *req){(void)req;return true;}
 static uint32_t calendar(int64_t *epoch,int64_t *midnight){*epoch=1792742400000LL;*midnight=1792713600000LL;return clock_valid?20261023:0;}
-static int xSemaphoreTake(int semaphore,unsigned wait){assert(semaphore==maintenance_flash_lock&&wait==2000&&!locks);takes++;if(flash_held)return 0;flash_held=1;return pdTRUE;}
-static void xSemaphoreGive(int semaphore){assert(semaphore==maintenance_flash_lock&&flash_held&&!locks);flash_held=0;gives++;}
+static int xSemaphoreTake(int semaphore,unsigned wait){if(semaphore==status_snapshot_lock){assert(!wait&&!locks&&!status_held);status_held=1;return pdTRUE;}assert(semaphore==maintenance_flash_lock&&wait==2000&&!locks);takes++;if(flash_held)return 0;flash_held=1;return pdTRUE;}
+static void xSemaphoreGive(int semaphore){if(semaphore==status_snapshot_lock){assert(status_held&&!locks);status_held=0;return;}assert(semaphore==maintenance_flash_lock&&flash_held&&!locks);flash_held=0;gives++;}
 static int httpd_resp_set_status(httpd_req_t *req,const char *status){req->status=!strncmp(status,"409",3)?409:503;return ESP_OK;}
 static int httpd_resp_sendstr(httpd_req_t *req,const char *text){(void)req;(void)text;return ESP_OK;}
 static int httpd_resp_send_err(httpd_req_t *req,int status,const char *text){(void)text;req->status=status;return ESP_OK;}
@@ -43,15 +48,17 @@ static int nvs_set_blob(nvs_handle_t handle,const char *key,const void *value,si
     assert(handle==7&&flash_held&&!locks);writes++;if(fail_write)return -1;
     if(!strcmp(key,"sessions")){assert(bytes==sizeof(persisted_sessions));memcpy(&persisted_sessions,value,bytes);}
     else if(!strcmp(key,"reset_base")){assert(bytes==sizeof(persisted_reset));memcpy(persisted_reset,value,bytes);}
+    else if(!strcmp(key,"meter_totals"))assert(bytes==sizeof(meter_totals_t));
     else assert(!strcmp(key,"totals")&&bytes==sizeof(energy_store_t));
     return ESP_OK;
 }
 static int nvs_set_u32(nvs_handle_t handle,const char *key,uint32_t value){assert(handle==7&&flash_held&&!strcmp(key,"reset_date"));persisted_date=value;return ESP_OK;}
 static int nvs_commit(nvs_handle_t handle){assert(handle==7&&flash_held&&!locks);commits++;return ESP_OK;}
 static void nvs_close(nvs_handle_t handle){assert(handle==7&&flash_held&&!locks);}
+static int session_chunks_save_checkpoint(nvs_handle_t h,const session_checkpoint_t *s){session_store_t copy={.version=2,.count=s->count,.next_slot=s->next_slot,.next_id=s->next_id,.active_slot=s->active_slot};for(unsigned i=0;i<CHARGE_SESSION_CAPACITY;i++){const charge_session_t*r=session_checkpoint_at(s,i);if(r)copy.records[i]=*r;}return nvs_set_blob(h,"sessions",&copy,sizeof(copy));}
 #include "storage_reset_generated.inc"
 static void fixture(void){
-    memset(&energy,0,sizeof(energy));sessions_init(&sessions);sessions.store.count=1;sessions.store.records[0].id=42;
+    memset(&energy,0,sizeof(energy));sessions_init(&sessions);sessions.store.count=1;sessions.store.next_slot=1;sessions.store.next_id=43;sessions.store.records[0].id=42;
     persisted_sessions=sessions.store;energy.store.total_wh[0]=12000;energy.store.total_wh[1]=11000;
     energy_reset_wh[0]=100;energy_reset_wh[1]=90;energy_reset_date=persisted_date=20260901;
     memcpy(persisted_reset,energy_reset_wh,sizeof(persisted_reset));

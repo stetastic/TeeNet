@@ -2,7 +2,7 @@ const {test}=require('node:test'),assert=require('node:assert/strict'),fs=requir
 const source=fs.readFileSync('main/energy.js','utf8');
 function setup(server={seen:false},missing=new Set()){
  const nodes={},events={},requests=[],storage=new Map();let otherDialog=false,error=false;
- const node=id=>nodes[id]??={dataset:{},open:false,value:'manual',textContent:'',className:'',hidden:false,disabled:false,attrs:{},listeners:{},querySelector(selector){return node(id+' '+selector);},setAttribute(key,value){this.attrs[key]=value;},addEventListener(event,fn){this.listeners[event]=fn;},showModal(){this.open=true;},close(){this.open=false;}};
+ const node=id=>nodes[id]??={dataset:{},open:false,value:'manual',textContent:'',className:'',hidden:false,disabled:false,attrs:{},listeners:{},querySelector(selector){return selector==='.en-wallbox-node'?null:node(id+' '+selector);},setAttribute(key,value){this.attrs[key]=value;},addEventListener(event,fn){this.listeners[event]=fn;},showModal(){this.open=true;},close(){this.open=false;}};
  const context={Number,module:{exports:{}},window:{addEventListener(event,fn){events[event]=fn;}},
   document:{documentElement:{dataset:{}},hidden:false,getElementById:id=>missing.has(id)?null:node(id),addEventListener(){},querySelector(selector){return selector==='dialog[open]'?(otherDialog||node('graphic-notice').open):node(selector);}},
   localStorage:{getItem:key=>storage.get(key),setItem:(key,value)=>storage.set(key,value)},
@@ -10,20 +10,10 @@ function setup(server={seen:false},missing=new Set()){
  vm.runInNewContext(source,context);
  return {api:context.window.TeeNetEnergy,node,events,requests,dataset:context.document.documentElement.dataset,storage,setOther(value){otherDialog=value;},setError(value){error=value;}};
 }
-test('notice waits for setup and existing dialogs, then remains dismissed across reloads',async()=>{
- const server={seen:false},s=setup(server);
- s.api.loadNotice(true);assert(!s.node('graphic-notice').open);
- s.api.update({terms_accepted:false},true);s.events['teenet-status']();assert(!s.node('graphic-notice').open);
- s.api.update({terms_accepted:true,telemetry_decided:true},true);s.setOther(true);s.events['teenet-status']();assert(!s.node('graphic-notice').open);
- s.setOther(false);s.events['teenet-status']();assert(s.node('graphic-notice').open);
- await s.node('graphic-notice-ok').listeners.click();assert(server.seen);assert(!s.node('graphic-notice').open);
- s.events['teenet-status']();assert(!s.node('graphic-notice').open);assert.equal(s.requests.length,1);
- const reload=setup(server);reload.api.update({terms_accepted:true},true);reload.api.loadNotice(!server.seen);reload.events['teenet-status']();assert(!reload.node('graphic-notice').open);
-});
-test('failed acknowledgement is retryable and never treated as saved',async()=>{
- const server={seen:false},s=setup(server);s.api.update({terms_accepted:true},true);s.api.loadNotice(true);s.setError(true);
- await s.node('graphic-notice-ok').listeners.click();assert(!server.seen);assert(s.node('graphic-notice').open);assert(!s.node('graphic-notice-ok').disabled);assert.match(s.node('graphic-notice-status').textContent,/erneut/);
- s.setError(false);await s.node('graphic-notice-ok').listeners.click();assert(server.seen);assert(!s.node('graphic-notice').open);
+test('retired presentation popup never opens even when old firmware reports it pending',()=>{
+ const s=setup();s.api.loadNotice(true);s.api.update({terms_accepted:true,telemetry_decided:true},true);
+ s.events['teenet-status']?.();assert(!s.node('graphic-notice').open);assert.equal(s.requests.length,0);
+ assert(!fs.readFileSync('main/dashboard.html','utf8').includes('id="graphic-notice"'));
 });
 
 test('layout defaults to familiar standard and persists independently of the view',async()=>{

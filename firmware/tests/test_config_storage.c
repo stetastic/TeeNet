@@ -39,12 +39,12 @@ int main(void){
     legacy_size=(offsetof(settings_t,phase_actuator_type)+3)&~(size_t)3;memcpy(legacy,&old,legacy_size);
     unsigned char original[sizeof(legacy)];memcpy(original,legacy,legacy_size);
     load_settings();assert(boot_config_ok&&loaded_settings_version==27);
-    assert(settings.relay_active_low&&settings.phase_feedback_closed_is_single);
+    assert(settings.relay_active_low&&!settings.phase_feedback_closed_is_single&&settings.phase_feedback_pin==-1);
     assert(!strcmp(settings.wifi_ssid,old.wifi_ssid));
     settings.battery_reserve_soc=55;assert(save_config(&settings)==ESP_OK);
     assert(!memcmp(original,legacy,legacy_size));
     load_settings();assert(loaded_settings_version==EMS_SETTINGS_VERSION&&settings.battery_reserve_soc==55);
-    assert(settings.relay_active_low&&settings.phase_feedback_closed_is_single&&!settings.enabled);
+    assert(settings.relay_active_low&&!settings.phase_feedback_closed_is_single&&!settings.enabled);
     assert(!strcmp(settings.wifi_password,old.wifi_password));
     /* An older decoder still finds its original schema, not the newer struct. */
     uint32_t legacy_version;memcpy(&legacy_version,legacy,sizeof(legacy_version));assert(legacy_version==27);

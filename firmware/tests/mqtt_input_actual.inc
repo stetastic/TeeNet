@@ -21,10 +21,11 @@ static bool heatpump_mqtt_locked(const char *topic,const char *payload,bool reta
 static bool mqtt_input(const char *suffix,const char *payload) {
 
     if(!settings.mqtt_enabled) return false;
+    LOCK();bool vehicle_input=vehicle_soc_message_locked(suffix,payload);UNLOCK();if(vehicle_input)return true;
     /* Retired command/phases and outgoing boolean topics have no input handler. */
     if(settings.mqtt_input_source==2 && (!strncmp(suffix,"input/battery_",14)||!strncmp(suffix,"input/pv_generation",19)))return true;
-    if((!settings.battery_protect || (settings.huawei_enabled && settings.huawei_battery)) && !strncmp(suffix,"input/battery_",14))return true;
-    if((!settings.pv_display_enabled || (settings.huawei_enabled && settings.huawei_pv)) && !strncmp(suffix,"input/pv_generation",19))return true;
+    if((!settings.battery_protect || (settings.huawei_enabled && settings.huawei_battery) || (settings.sungrow_enabled && settings.sungrow_battery)) && !strncmp(suffix,"input/battery_",14))return true;
+    if((!settings.pv_display_enabled || (settings.huawei_enabled && settings.huawei_pv) || (settings.sungrow_enabled && settings.sungrow_pv)) && !strncmp(suffix,"input/pv_generation",19))return true;
     double value;
     if(!strcmp(suffix,"input/car_soc_valid")) {
         if(strcmp(payload,"false") && strcmp(payload,"0")) return false;
@@ -93,14 +94,14 @@ static bool mqtt_input(const char *suffix,const char *payload) {
     } else if(!strcmp(key,"power_kw")) {
         parsed=parse_number(payload,0,11,&value);
         if(parsed){
-            double half=round(value*2)/2;
+            double requested_kw=round(value*10)/10;
             unsigned phases=settings.phase_switch_enabled?(value>0 && value<=3.5?1:3):settings.fixed_charge_phases;
-            double minimum=phases==1?2.0:6.0;
-            parsed=(value==0 || (value>=minimum && (phases==3 || value<=3.5) && fabs(value-half)<.001)) &&
-                half<=settings.max_charge_a*phases*settings.nominal_v*settings.power_factor/1000.0+.05;
+            double minimum=manual_minimum_power_kw(&settings,phases);
+            parsed=(value==0 || (value>=minimum-.001 && (phases==3 || value<=3.5) && fabs(value-requested_kw)<.001)) &&
+                requested_kw<=settings.max_charge_a*ems_phase_voltage_sum(&settings,phases)*settings.power_factor/1000.0+.001;
             if(parsed){
                 double current=value==0?0:fmax(settings.min_charge_a,
-                    half*1000/(phases*settings.nominal_v*settings.power_factor));
+                    requested_kw*1000/(ems_phase_voltage_sum(&settings,phases)*settings.power_factor));
                 parsed=current<=settings.max_charge_a+.001;
                 if(parsed){cJSON_AddStringToObject(o,"mode","manual");cJSON_AddNumberToObject(o,"current_a",fmin(current,settings.max_charge_a));cJSON_AddNumberToObject(o,"manual_phases",phases);cJSON_AddBoolToObject(o,"enabled",value>0);}
             }
@@ -133,6 +134,7 @@ static void mqtt_event(void *arg,esp_event_base_t base,int32_t id,void *data) {
         LOCK();if(settings.phase_output_transport==0)phase_mqtt_seen_connection=true;UNLOCK();
 
         LOCK(); mqtt_online=true; UNLOCK(); char subscription[192];
+        snprintf(subscription,sizeof(subscription),"%s/private/grid_voltages",settings.mqtt_prefix);esp_mqtt_client_subscribe(e->client,subscription,0);
 
         snprintf(subscription,sizeof(subscription),"%s/command/#",settings.mqtt_prefix); esp_mqtt_client_subscribe(e->client,subscription,1);
 
@@ -140,6 +142,7 @@ static void mqtt_event(void *arg,esp_event_base_t base,int32_t id,void *data) {
 
         snprintf(subscription,sizeof(subscription),"%s/input/+",settings.mqtt_prefix); esp_mqtt_client_subscribe(e->client,subscription,1);
         opendtu_subscribe(e->client);
+        snprintf(subscription,sizeof(subscription),"%s/solis/hold/status",settings.mqtt_prefix);esp_mqtt_client_subscribe(e->client,subscription,0);
         if(settings.heatpump_enabled&&!settings.basic_mode&&!strcmp(settings.heatpump_source,"mqtt"))
             esp_mqtt_client_subscribe(e->client,settings.heatpump_input_topic,1);
 
@@ -153,7 +156,7 @@ static void mqtt_event(void *arg,esp_event_base_t base,int32_t id,void *data) {
 
     } else if(id==MQTT_EVENT_DISCONNECTED) {
 
-        LOCK();if(settings.phase_output_transport==0&&phase_mqtt_seen_connection)phase_mqtt_cancel_locked(true);memset(&opendtu,0,sizeof(opendtu)); mqtt_online=false; if(!strcmp(settings.heatpump_source,"mqtt"))heatpump_at=0; if(!(settings.huawei_enabled && settings.huawei_battery)){battery_soc_at=0;battery_charge_at=0;battery_discharge_at=0;} car_soc_at=0; if(!(settings.huawei_enabled && settings.huawei_pv))pv_generation_at=0; if(!sdm_meter() && !network_wallbox_meter()) power_at=0; if(!settings.zero_feed_enabled) pv_at=0; UNLOCK(); expected=received=0;
+        LOCK();if(settings.phase_output_transport==0&&phase_mqtt_seen_connection)phase_mqtt_cancel_locked(true);memset(&opendtu,0,sizeof(opendtu)); mqtt_online=false;personal_sync_locked(now_ms()); if(!strcmp(settings.heatpump_source,"mqtt"))heatpump_at=0; if(!(settings.huawei_enabled && settings.huawei_battery)&&!(settings.sungrow_enabled && settings.sungrow_battery)){battery_soc_at=0;battery_charge_at=0;battery_discharge_at=0;} car_soc_at=0;memset(vehicle_soc_at,0,sizeof(vehicle_soc_at)); if(!(settings.huawei_enabled && settings.huawei_pv)&&!(settings.sungrow_enabled && settings.sungrow_pv))pv_generation_at=0; if(!sdm_meter() && !network_wallbox_meter()) power_at=0; if(!settings.zero_feed_enabled) pv_at=0; UNLOCK(); expected=received=0;
 
     } else if(id==MQTT_EVENT_DATA) {
 
@@ -181,7 +184,10 @@ static void mqtt_event(void *arg,esp_event_base_t base,int32_t id,void *data) {
 
             bool ok=false;
             if(!memchr(payload,0,received)) {
-                if(settings.heatpump_enabled&&!strcmp(settings.heatpump_source,"mqtt")&&!strcmp(topic,settings.heatpump_input_topic)){
+                char solis_topic[128];snprintf(solis_topic,sizeof(solis_topic),"%s/solis/hold/status",settings.mqtt_prefix);
+                if(!retained&&!strcmp(topic,solis_topic)){LOCK();solis_hold_ack_locked(payload);UNLOCK();ok=true;}
+                else if(!retained&&!strncmp(topic,prefix,strlen(prefix))&&!strcmp(topic+strlen(prefix),"private/grid_voltages")){LOCK();ok=personal_voltage_message_locked(payload);UNLOCK();}
+                else if(settings.heatpump_enabled&&!strcmp(settings.heatpump_source,"mqtt")&&!strcmp(topic,settings.heatpump_input_topic)){
                     LOCK();ok=heatpump_mqtt_locked(topic,payload,retained);UNLOCK();
                 }
                 else if(settings.mqtt_input_source==2 && opendtu_message(topic,payload,retained))ok=true;

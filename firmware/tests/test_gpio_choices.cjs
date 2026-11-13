@@ -1,0 +1,14 @@
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+const source=fs.readFileSync('tools/expert_ui.js','utf8');
+const classes=()=>({toggle(){}}),node=()=>({children:[],classList:classes(),append(...items){this.children.push(...items);},replaceChildren(...items){this.children=items;}});
+const nodes={};const el=id=>nodes[id]??={...node(),parentElement:{classList:classes()},disabled:false,textContent:''};
+const pins=[1,2,5,6,7,8,38,39],row=(key,label,pin)=>({key,label,standard:pin,saved:pin,node:node(),reset:{},input:{value:String(pin),options:pins.map(pin=>({value:String(pin)})),setCustomValidity(text){this.invalid=text;},setAttribute(){}}});
+const rows=[row('wallbox_tx_pin','Shell TX',2),row('wallbox_rx_pin','Shell RX',1),row('evu_input_pin','Ladefreigabe',8),row('house_tx_pin','Haus TX',6),row('house_rx_pin','Haus RX',7)];
+const c={gpioRows:rows,configBaseline:{shell_rs485_interface:0,wallbox_meter_type:'shelly_gen2',phase_switch_enabled:false,house_meter_type:'tasmota'},snapshot:{gpio:{pins:pins.map(pin=>({pin,reason:''}))}},gpioEditable:()=>true,value:r=>Number(r.input.value),changed:r=>Number(r.input.value)!==r.saved,same:(a,b)=>a===b,el,document:{createElement:node}};
+vm.createContext(c);vm.runInContext(source.slice(source.indexOf('function gpioUsed('),source.indexOf('function renderGPIO('))+source.slice(source.indexOf('function updateGPIO('),source.indexOf('async function saveGPIO(')),c);
+c.updateGPIO();assert(rows[2].input.options.find(o=>o.value==='2').disabled,'an occupied Shell TX cannot be selected even for an inactive role');
+rows[2].input.value='2';c.updateGPIO();assert(rows[2].input.invalid&&el('expert-gpio-save').disabled,'programmatically injected conflicts still block save');
+rows[2].input.value='8';c.configBaseline.evu_input_enabled=true;c.configBaseline.phase_feedback_enabled=true;c.configBaseline.phase_actuator_type=0;c.updateGPIO();assert(rows[0].input.options.find(o=>o.value==='8').disabled);
+c.configBaseline.house_meter_type='sdm230';c.updateGPIO();assert(rows[0].input.options.find(o=>o.value==='6').disabled,'all serial house-meter profiles reserve their pins');
+c.configBaseline.evu_input_enabled=false;c.updateGPIO();const line=el('expert-gpio-inventory').children.find(n=>n.children[0].textContent==='GPIO 8');assert.equal(line.children[1].textContent,'Frei','disabled functions are not presented as active pin allocations');
+console.log('PASS: occupied GPIO options disabled, injected conflicts block save, all serial meters reserve pins, unused roles do not imply duplicate live allocations');

@@ -58,7 +58,7 @@ static esp_err_t evcc_config_post(httpd_req_t *req) {
     if(!valid)return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Shell-Adresse und evcc-Auswahl pruefen.");
     LOCK();bool stopped=!settings.enabled && fresh(now_ms(),actual_at,wallbox_meter_ttl()) &&
         actual_a[0]<1 && actual_a[1]<1 && actual_a[2]<1 && (!settings.phase_switch_enabled || phase_state==PHASE_READY);
-    bool ready=settings.evcc_feature_enabled&&!reboot_required&&!restarting&&!ota_in_progress;
+    bool ready=settings.evcc_feature_enabled&&!settings.shell_http_control_enabled&&!reboot_required&&!restarting&&!ota_in_progress;
     if(!active || (stopped && ready))evcc_configuring=true;
     UNLOCK();
     if(active && (!stopped || !ready)) {

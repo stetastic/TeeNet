@@ -15,7 +15,12 @@
 :root{--green:#007caa;--line:#e1eaf0}body{background:#f2f7fa;color:#183a50}main{max-width:1500px;padding-top:28px}.rail{background:#fff;border-color:#e3edf2}.panel{border:1px solid #e3edf2;box-shadow:0 10px 35px #123b5710;border-radius:22px}.live-lamps{display:flex;justify-content:flex-end;gap:20px;padding:0 4px 18px}.signal{display:flex;align-items:center;gap:7px;font-size:12px;color:#456274}.signal i{height:8px;width:8px;border-radius:50%;background:#c0cbd0}.signal.ok i{background:#24a57a;box-shadow:0 0 0 4px #24a57a12}.signal.fault i{background:#d37357}.signal small{font-size:10px;color:#7c909d}.charge-layout{display:grid;grid-template-columns:minmax(0,1.65fr) minmax(280px,1fr);gap:22px}.scene-panel{padding:20px 24px;overflow:hidden}.scene-heading{display:flex;justify-content:space-between;align-items:center}.charge-scene{position:relative;margin:-4px -24px -40px;overflow:hidden}.charge-scene img{width:100%;display:block}.charge-flow{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;opacity:0}.charge-flow path{fill:none;stroke:#00cbd4;stroke-width:8;stroke-linecap:round;stroke-dasharray:8 28;filter:drop-shadow(0 0 5px #00bccc);animation:charge-travel var(--charge-duration,2s) linear infinite;animation-play-state:paused}.is-charging .charge-flow{opacity:1}.is-charging .charge-flow path{animation-play-state:running}@keyframes charge-travel{to{stroke-dashoffset:-108}}.scene-reading{position:relative;text-align:right;margin:0 0 20px}.scene-reading strong{font-size:42px;letter-spacing:-2px;font-weight:650}.scene-reading span{margin-left:6px;color:#678394}.scene-reading small{display:block;color:#8196a3;font-size:10px}.scene-panel .phases{gap:20px;margin:0}.track{background:#edf3f6}.track i{background:#0097ba!important}.control-panel h2{font-size:21px;margin:0 0 24px}.mode-picker{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:26px}.mode-picker button{min-height:88px;text-align:left;border:1px solid #dce8ee;border-radius:14px;background:#f7fafb;color:#587185;padding:14px;cursor:pointer}.mode-picker b{font-size:16px;display:block}.mode-picker small{display:block;font-size:11px;margin-top:8px}.mode-picker [aria-pressed=true]{background:#e7f6fb;border-color:#008fb7;color:#006b95;box-shadow:0 0 0 1px #008fb7}.control-panel #current{font-size:30px;padding:14px 16px;font-weight:550;max-height:72px}.control-caption{min-height:42px;color:#78909e;font-size:12px;line-height:1.6}.actions{gap:10px}.actions .button{min-height:47px;flex:1}.primary-button{background:#007fa8!important}.target-reading{border-top:1px solid #e4edf2;margin-top:25px;padding-top:20px;display:flex;justify-content:space-between;gap:12px;font-size:12px;color:#79909e}.target-reading strong{color:#244a62}.home-grid{display:grid;grid-template-columns:1.65fr 1fr;gap:22px}.house-card{display:flex;align-items:center;justify-content:space-between;gap:14px}.house-card strong,.today-card strong{display:block;font-size:28px;letter-spacing:-.7px;margin:12px 0 5px}.house-card #house-caption,.today-card>.muted{display:block;font-size:12px;color:#748d9d}.today-card small{font-size:13px;font-weight:400}.house-flow{display:flex;align-items:center;gap:10px;color:#46728b;font-size:13px}.house-flow>span:last-child{font-size:32px}.flow-line{display:flex;gap:2px;width:52px;overflow:hidden;opacity:.35}.flow-line i{font-style:normal;font-size:26px}.house-flow[data-direction=import] .flow-line,.house-flow[data-direction=export] .flow-line{opacity:1;color:#0095b8}.house-flow[data-direction=export] .flow-line{transform:rotate(180deg);color:#27997b}.house-flow[data-direction=import] i,.house-flow[data-direction=export] i{animation:house-travel 1.3s linear infinite}@keyframes house-travel{from{transform:translateX(-9px);opacity:.3}to{transform:translateX(9px);opacity:1}}.house-flow[data-direction=unknown]{opacity:.3}.pill{background:#e5f7f2;color:#258269}.muted-pill{background:#eef3f6;color:#8295a0}.settings-group{box-shadow:none}.settings-grid{max-width:960px}.save-row{background:transparent}.rail nav a.active{background:#e9f5fa}.brand-logo{border:0;box-shadow:none;background:transparent;padding:0}.charge-layout .panel{margin-bottom:22px}@media(max-width:1050px){.charge-layout{grid-template-columns:minmax(0,1fr) minmax(270px,1fr)}.scene-reading strong{font-size:34px}.mode-picker{gap:6px}.mode-picker button{padding:11px}.mode-picker b{font-size:14px}.house-flow{gap:5px}.home-grid{grid-template-columns:1.3fr 1fr}}@media(max-width:750px){.charge-layout,.home-grid{grid-template-columns:1fr}.charge-scene{max-height:330px;margin-bottom:-25px}.charge-scene img{height:100%;object-fit:contain}.scene-panel{padding:18px 22px}.control-panel h2{margin-bottom:16px}.mode-picker{margin-bottom:18px}.mode-picker button{min-height:75px}.mode-picker b{font-size:16px}.scene-reading strong{font-size:37px}.live-lamps{padding-top:2px}.home-grid{gap:0}.target-reading{margin-top:18px;padding-top:14px}.control-caption{min-height:28px}.rail nav a span{display:inline;font-size:11px}.rail nav a{font-size:13px;padding:8px 6px}.brand-logo{width:100px}.rail{gap:8px}main{padding-top:15px}.house-flow{margin-right:6px}}@media(prefers-reduced-motion:reduce){.charge-flow path,.house-flow i{animation:none!important}}
 
 
-.battery-choice{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 0;border-top:1px solid #e3edf2;font-size:12px}.battery-choice small{display:block;color:#728d9c;margin-top:5px;font-size:10px}.battery-choice button{border:1px solid #b9d8df;border-radius:12px;background:#eef8f7;padding:12px;color:#1c7067;font-size:12px;cursor:pointer;min-width:112px}.battery-choice button[aria-pressed=true]{background:#fff3d8;border-color:#e6c478;color:#896116}.battery-choice button:disabled{opacity:.5;cursor:default}
+/* All battery actions share one column, including the optional Solis action. */
+.battery-choice{display:grid;grid-template-columns:minmax(0,1fr) clamp(132px,44%,168px);align-items:center;gap:10px;padding:14px 0;border-top:1px solid #e3edf2;font-size:12px}
+.battery-choice>div{min-width:0;overflow-wrap:break-word}
+.battery-choice small{display:block;color:#728d9c;margin-top:5px;font-size:10px}
+.battery-choice button{box-sizing:border-box;display:flex;align-items:center;justify-content:center;width:100%;min-width:0;height:4em;min-height:48px;border:1px solid #b9d8df;border-radius:12px;background:#eef8f7;padding:8px 10px;color:#1c7067;font-size:12px;line-height:1.2;text-align:center;overflow-wrap:anywhere;cursor:pointer}
+.battery-choice button[aria-pressed=true]{background:#fff3d8;border-color:#e6c478;color:#896116}.battery-choice button:disabled{opacity:.5;cursor:default}
 @media(max-width:480px){.rail nav a span{display:none}.rail nav a{font-size:18px;padding:8px}.rail{gap:4px}}
 
 /* Compact, image-free overview. */
@@ -628,10 +633,9 @@ html[data-theme="dark"] .app-footer .footer-help:hover{background:#1b3d50}
 :root[data-dashboard-density="compact"] #battery-card .battery-choice{grid-column:1/-1;padding:7px 0 0;margin:0;gap:12px;border-color:var(--line)}
 :root[data-dashboard-density="compact"] #battery-card .battery-choice small{display:none}
 :root[data-dashboard-density="compact"] #battery-card .battery-choice strong{font-size:12px;line-height:1.4}
-:root[data-dashboard-density="compact"] #battery-card .battery-choice button{min-height:40px;min-width:126px;padding:7px 10px;font-size:12px;border-radius:10px}
+:root[data-dashboard-density="compact"] #battery-card .battery-choice button{height:3.667em;min-height:44px;min-width:0;padding:7px 10px;font-size:12px;border-radius:10px}
 :root[data-dashboard-density="compact"] #battery-card #compact-battery-soc{display:block;font-size:12px;color:var(--muted);font-weight:550;margin:0;white-space:nowrap}
-:root[data-dashboard-view="graphic"] #teenet-house-mood .en-storage{font:inherit;background:none;border:1px solid transparent;border-radius:12px;padding:0;cursor:pointer;transition:background .15s}
-:root[data-dashboard-view="graphic"] #teenet-house-mood .en-storage:hover,:root[data-dashboard-view="graphic"] #teenet-house-mood .en-storage:focus-visible{background:var(--en-surface)}
+:root[data-dashboard-view="graphic"] #teenet-house-mood .en-storage{font:inherit;background:none;border:1px solid transparent;border-radius:12px;padding:0;cursor:default}
 :root[data-dashboard-view="graphic"] #teenet-house-mood .en-battery-edit{font-size:10px;color:var(--en-car);line-height:1.5;margin-top:4px}
 :root[data-dashboard-view="graphic"] #teenet-house-mood .en-battery-edit>span{font-size:14px;line-height:1}
 :root[data-dashboard-view="graphic"] #teenet-house-mood .en-consumers .en-home-node{align-self:start;min-height:0;border:0!important;background:none;border-radius:0;padding:14px 4px}
@@ -680,8 +684,7 @@ html[data-theme="dark"] .app-footer .footer-help:hover{background:#1b3d50}
 :root[data-dashboard-density="compact"]:not([data-dashboard-view="graphic"]) #house-card .pv-reading>.pv-sun{display:none}
 
 /* The battery shortcut is available in either layout. */
-#teenet-house-mood .en-storage{font:inherit;color:inherit;background:none;border:1px solid transparent;border-radius:12px;padding:0;cursor:pointer}
-#teenet-house-mood .en-storage:hover,#teenet-house-mood .en-storage:focus-visible{background:var(--en-surface)}
+#teenet-house-mood .en-storage{font:inherit;color:inherit;background:none;border:1px solid transparent;border-radius:12px;padding:0;cursor:default}
 #teenet-house-mood .en-battery-edit{font-size:10px;color:var(--en-car);line-height:1.5;margin-top:4px}
 #teenet-house-mood .en-battery-edit>span{font-size:14px;line-height:1}
 
@@ -749,7 +752,7 @@ html[data-theme="dark"] .app-footer .footer-help:hover{background:#1b3d50}
  :root[data-dashboard-density="compact"] #battery-card .battery-heading h2{font-size:14px;line-height:1.4}
  :root[data-dashboard-density="compact"] #battery-card .battery-summary>div:last-child{gap:5px;flex-direction:row;align-items:baseline}
  :root[data-dashboard-density="compact"] #battery-card .battery-summary strong{font-size:20px;line-height:1.15}
- :root[data-dashboard-density="compact"] #battery-card .battery-choice{grid-column:auto;flex-direction:column;align-items:stretch;padding:5px 0 0;gap:3px}
+ :root[data-dashboard-density="compact"] #battery-card .battery-choice{display:flex;grid-column:auto;flex-direction:column;align-items:stretch;padding:5px 0 0;gap:3px}
  :root[data-dashboard-density="compact"] #battery-card .battery-choice button{min-height:44px;width:100%;padding:6px 8px;min-width:0}
  :root[data-dashboard-density="compact"] #battery-card .battery-choice strong{display:flex;align-items:center;font-size:11px;line-height:1.3;min-height:29px}
  :root[data-dashboard-density="compact"] #overview #manual-current-label{display:grid;grid-template-columns:1fr auto;align-items:center;gap:0 8px;margin:6px 0 0}
@@ -768,7 +771,7 @@ html[data-theme="dark"] .app-footer .footer-help:hover{background:#1b3d50}
 /* Consumer picture details. */
 /* Keep names and live power visible; additional details open on the pictures. */
 #teenet-house-mood .en-consumers .en-node.en-clickable{min-height:0!important;align-self:start;background:transparent!important;border:0!important;box-shadow:none;padding:0!important}
-#teenet-house-mood .en-clickable>:not(.en-picture-button):not(.en-label):not(.en-power){display:none!important}
+#teenet-house-mood .en-clickable>:not(.en-picture-button):not(.en-expand-wallbox):not(.en-label):not(.en-power):not(.en-wallbox-state):not(.en-car-identity):not(.en-wallbox-live){display:none!important}
 #teenet-house-mood .en-picture-button{display:flex;align-items:center;justify-content:center;width:100%;min-width:0;padding:12px 4px;margin:0;border:1px solid transparent;border-radius:14px;background:transparent;box-shadow:none;color:inherit;cursor:pointer;touch-action:manipulation}
 #teenet-house-mood .en-picture-button:hover{background:var(--en-surface);border-color:var(--en-line)}
 #teenet-house-mood .en-picture-button:focus-visible{outline:2px solid var(--en-car);outline-offset:2px;background:var(--en-surface)}
@@ -871,3 +874,222 @@ html[data-theme="dark"] .app-footer .footer-help:hover{background:#1b3d50}
  .app-header .status-wrap{margin-left:190px;width:calc(100% - 190px);padding-left:24px;padding-right:24px}
  body>.app-header+main{margin-left:190px;width:calc(100% - 190px);padding-left:24px;padding-right:24px}
 }
+
+/* Desktop: one energy panel balances both control panels in the second column. */
+@media(min-width:1201px){
+ :root[data-dashboard-view="graphic"] #overview #teenet-house-mood{align-self:stretch;justify-content:center;height:auto}
+ :root[data-dashboard-view="graphic"]:not([data-dashboard-density="compact"]) #overview{grid-template-columns:minmax(0,1.5fr) minmax(340px,1fr)}
+ :root[data-dashboard-view="graphic"]:not([data-dashboard-density="compact"]) #overview #teenet-house-mood{padding:30px;min-height:520px}
+ :root[data-dashboard-view="graphic"]:not([data-dashboard-density="compact"]) #teenet-house-mood .en-overview{max-width:none}
+ :root[data-dashboard-view="graphic"]:not([data-dashboard-density="compact"]) #teenet-house-mood .en-art{width:110px;height:86px}
+ :root[data-dashboard-view="graphic"]:not([data-dashboard-density="compact"]) #teenet-house-mood .en-label{font-size:15px;margin-top:8px}
+ :root[data-dashboard-view="graphic"]:not([data-dashboard-density="compact"]) #teenet-house-mood .en-power{font-size:clamp(30px,2.3vw,40px);gap:5px;margin-top:6px}
+ :root[data-dashboard-view="graphic"]:not([data-dashboard-density="compact"]) #teenet-house-mood .en-power small{font-size:13px}
+ :root[data-dashboard-view="graphic"]:not([data-dashboard-density="compact"]) #teenet-house-mood .en-detail{font-size:13px;min-height:20px}
+ :root[data-dashboard-view="graphic"]:not([data-dashboard-density="compact"]) #teenet-house-mood .en-distribution{height:96px;margin-top:16px}
+ :root[data-dashboard-view="graphic"]:not([data-dashboard-density="compact"]) #teenet-house-mood .en-consumers{gap:22px}
+ :root[data-dashboard-view="graphic"]:not([data-dashboard-density="compact"]) #teenet-house-mood .en-consumers .en-art{width:156px;height:116px;max-width:100%}
+ :root[data-dashboard-view="graphic"]:not([data-dashboard-density="compact"]) #teenet-house-mood .en-consumers .en-node{padding:16px 8px}
+ :root[data-dashboard-view="graphic"]:not([data-dashboard-density="compact"]) #overview:has(#battery-card[hidden]) #teenet-house-mood{min-height:0}
+}
+
+/* Optional vehicle profiles; no global form sizing overrides. */
+#vehicle-profile-form>label,#vehicle-profile-form>.form-pair,#vehicle-profile-form>.actions{margin-top:14px}
+.vehicle-plan-heading,.vehicle-photo-editor{display:flex;align-items:center;gap:12px;margin:14px 0;flex-wrap:wrap}
+.vehicle-plan-heading label{flex:1;min-width:160px}
+.vehicle-plan-heading img,.vehicle-photo-editor img{object-fit:contain;border-radius:10px;background:#fff}
+.vehicle-mqtt-topic{display:block;overflow-wrap:anywhere;margin:8px 0}
+#vehicle-estimate,#vehicle-plan-live{line-height:1.5}
+#vehicle-profile-form{min-width:0}
+#vehicle-profile-form input[type=file]{max-width:100%}
+
+.vehicle-active-profile{display:flex;align-items:center;gap:12px;margin:10px 0 14px}.vehicle-active-profile[hidden]{display:none}.vehicle-active-profile img{object-fit:contain;background:#fff;border-radius:8px}.vehicle-active-profile strong,.vehicle-active-profile small{display:block}.vehicle-active-profile small{margin-top:3px;color:var(--muted)}
+.vehicle-active-identity{flex:1;min-width:0;overflow-wrap:anywhere}
+.vehicle-active-soc{display:inline-flex;flex:0 0 auto;align-items:center;margin-left:auto;color:#32967e}
+.vehicle-active-soc[hidden]{display:none}
+.vehicle-active-soc svg{display:block;width:70px;height:auto}
+.vehicle-active-soc text{fill:var(--text);font-family:inherit;font-size:13px;font-weight:750;font-variant-numeric:tabular-nums}
+@media(max-width:480px){.vehicle-active-profile{gap:8px}.vehicle-active-soc svg{width:60px}}
+
+/* Vehicle identity remains visible without opening the detail dialog. */
+#teenet-house-mood .en-car-identity{display:flex;gap:5px 8px;align-items:center;justify-content:center;flex-wrap:wrap;margin-top:7px}
+#teenet-house-mood .en-car-identity [hidden],#teenet-house-mood .en-picture-button .en-art[hidden],#teenet-house-mood [data-wallbox-goal][hidden]{display:none!important}
+#teenet-house-mood .en-car-soc{font-size:13px;line-height:1.5;margin:0;white-space:nowrap}
+#teenet-house-mood .en-car-soc b{font-size:15px}
+.vehicle-license{display:inline-block;padding:2px 7px;border:1px solid #9aabb8;border-left:5px solid #416eaa;border-radius:4px;background:#fff;color:#21394b;font-size:11px;font-weight:700;line-height:1.35;letter-spacing:.4px;white-space:nowrap}
+#teenet-house-mood .en-wallbox-live{display:flex;flex-wrap:wrap;justify-content:center;gap:4px 10px;margin-top:7px;color:var(--muted);font-size:11px;line-height:1.5}
+#teenet-house-mood .en-wallbox-live [data-wallbox-mode],#teenet-house-mood .en-wallbox-live [data-wallbox-goal]{flex-basis:100%}
+#teenet-house-mood .en-consumers .en-node.en-wallbox-node{background:var(--en-surface)!important;border:1px solid var(--en-line)!important;border-radius:16px;padding:12px 10px!important;align-self:stretch}
+#teenet-house-mood .en-wallbox-node .en-label{font-size:16px;font-weight:750}
+#teenet-house-mood .en-wallbox-node .en-power{font-size:clamp(30px,3vw,44px);font-weight:800}
+#teenet-house-mood .en-wallbox-state{font-weight:650;margin-top:5px;color:var(--en-car)}
+#teenet-house-mood .en-vehicle-picture{object-fit:contain;max-width:100%}
+.vehicle-picture-options{min-width:0;margin:16px 0 0;padding:12px;border:1px solid var(--line);border-radius:12px}
+.vehicle-picture-options legend{font-size:12px;color:var(--muted);padding:0 5px}
+.vehicle-picture-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.vehicle-picture-option{display:grid;align-content:center;gap:3px;padding:6px;border:1px solid var(--line);border-radius:9px;background:var(--panel);color:var(--text);cursor:pointer;font-size:11px}
+.vehicle-picture-option img{display:block;width:100%;height:auto;aspect-ratio:3/2;object-fit:contain}
+.vehicle-picture-option[aria-pressed=true]{border-color:var(--accent,#087fa1);background:var(--soft,rgba(0,127,168,.08));box-shadow:0 0 0 1px var(--accent,#087fa1)}
+#vehicle-profile-fields>label,#vehicle-profile-fields>.form-pair,#vehicle-profile-fields>.actions{margin-top:14px}
+@media(max-width:600px){
+ #teenet-house-mood .en-consumers .en-node.en-wallbox-node{padding:6px 4px!important;border-radius:12px}
+ #teenet-house-mood .en-wallbox-node .en-label{font-size:13px}
+ #teenet-house-mood .en-wallbox-node .en-power{font-size:27px}
+ #teenet-house-mood .en-wallbox-live{font-size:10px;gap:2px 6px}
+ #teenet-house-mood .en-car-identity{gap:3px;margin-top:5px}
+ #teenet-house-mood .en-car-soc{font-size:11px}#teenet-house-mood .en-car-soc b{font-size:13px}
+ .vehicle-license{font-size:10px;padding:1px 4px}
+ .vehicle-picture-grid{gap:5px}.vehicle-picture-option{font-size:10px}
+}
+
+@media(max-width:600px){#teenet-house-mood[data-heatpump-enabled="true"] .en-wallbox-node .en-power{font-size:23px}}
+
+/* Compact, identifiable status strip and the profiled vehicle's own charger. */
+.app-header .status-wrap .control-status{background:var(--soft,#edf5f8);border:1px solid var(--line);border-radius:10px;padding:7px 12px;box-shadow:0 1px 3px rgba(23,64,84,.04)}
+@media(max-width:850px){body:has(#overview:not([hidden])) .app-header .status-wrap .control-status{min-height:30px;padding:5px 10px;margin:3px 0 5px;font-weight:600}}
+#teenet-house-mood .en-picture-button.en-with-profile{position:relative}
+#teenet-house-mood .en-with-profile .en-vehicle-picture{width:80%;margin-left:20%}
+#teenet-house-mood .en-profile-charger{position:absolute;left:0;top:15%;width:25%;height:65%;pointer-events:none}
+#teenet-house-mood .en-profile-charger{left:1%;top:19%;width:24%;height:63%}
+#teenet-house-mood .en-picture-button.en-with-profile{gap:3px;justify-content:center;align-items:center}
+#teenet-house-mood .en-picture-button.en-with-profile .en-vehicle-picture{margin-left:0;max-width:calc(100% - 32px);flex:0 1 auto}
+#teenet-house-mood .en-picture-button.en-with-profile .en-profile-charger{position:static;order:-1;flex:0 0 auto;width:35px;height:64px;margin-right:-12px}
+@media(max-width:600px){#teenet-house-mood .en-picture-button.en-with-profile .en-profile-charger{width:24px;height:43px;margin-right:-8px}#teenet-house-mood .en-picture-button.en-with-profile .en-vehicle-picture{max-width:calc(100% - 25px)}}
+#teenet-house-mood .en-profile-charger[hidden],#expert-phase-mqtt{display:none!important}
+#vehicle-active-card{font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.config-field-error{border:2px solid #c52d42!important;outline:2px solid #c52d4233!important;outline-offset:2px;scroll-margin-block:120px;background:#fff2f3!important;color:#86172a!important}
+.config-field-message{display:block;margin-top:7px;color:#b01f34!important;font-weight:600;line-height:1.4}
+html[data-theme="dark"] .config-field-error{background:#3b2028!important;border-color:#ff8494!important;color:#ffced4!important}
+html[data-theme="dark"] .config-field-message{color:#ffacb8!important}
+.app-header .status-wrap .control-status{background:var(--surface,#fff);border:1px solid var(--line,#d9e5eb);border-left:3px solid currentColor;border-radius:12px;box-shadow:0 3px 12px #163e5710;padding:8px 12px;font-weight:600}
+.scene-vehicle-row{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px 22px}
+.scene-vehicle-row .vehicle-active-profile{margin:0;padding:0;border:0;background:none;flex:0 1 auto}
+.scene-vehicle-row .vehicle-state{width:100%;margin-top:0}
+.vehicle-photo-button{padding:0;border:0;background:transparent;cursor:pointer;border-radius:10px}
+.vehicle-photo-button img{width:108px;height:72px;object-fit:contain}
+.vehicle-photo-button:focus-visible{outline:2px solid var(--accent,#087e9e);outline-offset:4px}
+.vehicle-details-photo{display:block;width:min(240px,65%);height:140px;object-fit:contain;margin:8px auto 18px}
+#vehicle-details-facts{display:grid;gap:0}#vehicle-details-facts>div{display:flex;justify-content:space-between;gap:18px;padding:10px 0;border-bottom:1px solid var(--line)}#vehicle-details-facts dt{color:var(--muted)}#vehicle-details-facts dd{margin:0;text-align:right;overflow-wrap:anywhere}
+.en-vehicle-name{font-size:.9rem;font-weight:650;overflow-wrap:anywhere}.en-vehicle-connection{font-size:.8rem;color:var(--muted);margin-top:5px}
+#teenet-house-mood .en-clickable>.en-vehicle-name:not([hidden]),#teenet-house-mood .en-clickable>.en-vehicle-connection:not([hidden]){display:block!important}
+#teenet-house-mood #graphic-vehicle-name:not([hidden]),#teenet-house-mood #graphic-vehicle-connection:not([hidden]){display:block!important}
+@media(min-width:851px){.app-header .rail{display:flex;flex-direction:column;min-height:100dvh}.app-header .rail nav{display:flex;flex:1;flex-direction:column;align-items:stretch;min-height:0}.app-header .rail nav a.desktop-help{margin-top:auto}}
+@media(max-width:600px){.scene-vehicle-row .vehicle-active-profile{max-width:58%;gap:7px}.vehicle-photo-button img{width:82px;height:58px}.scene-vehicle-row .vehicle-active-soc svg{width:54px}.scene-vehicle-row .vehicle-active-name{font-size:.9rem}}
+
+/* Shared control sizes; related actions keep equal widths without widening the page. */
+:root{--control-height:44px;--control-radius:10px}
+:root .app-header nav a{min-height:var(--control-height);height:var(--control-height)}
+#overview #apply-control,#overview #plan-start,#statistics #reset-total,#statistics #session-csv{min-height:var(--control-height);height:var(--control-height);padding:10px 14px;font-size:14px;line-height:1.35}
+.button,select{min-height:var(--control-height);border-radius:var(--control-radius)}
+:root #settings .button,:root #settings select,:root dialog .button{min-height:var(--control-height);font-size:14px;line-height:1.35;padding:10px 14px}
+:root #settings select{height:var(--control-height);padding-right:32px}
+:root #settings input:not([type="checkbox"]):not([type="range"]):not([type="hidden"]):not([type="file"]),:root dialog input:not([type="checkbox"]):not([type="range"]):not([type="file"]){min-height:var(--control-height);border-radius:var(--control-radius)}
+.actions,.save-actions,.view-picker,.theme-picker{align-items:stretch}
+#settings .actions>.button,#settings .save-actions>.button,#settings .view-picker>.button,#settings .theme-picker>.button,dialog .actions>.button{flex:1 1 0;min-width:0}
+#settings .form-pair>label{min-width:0}
+@media(max-width:600px){:root #settings select,:root #settings input:not([type="checkbox"]):not([type="range"]):not([type="hidden"]):not([type="file"]),:root dialog input:not([type="checkbox"]):not([type="range"]):not([type="file"]){font-size:16px}#phase-hardware-test .actions{flex-direction:column}}
+/* Wallbox details occupy the energy card without changing its layout. */
+#teenet-house-mood{position:relative}
+#teenet-house-mood .en-wallbox-node{position:relative}
+#teenet-house-mood .en-expand-wallbox,#teenet-house-mood .en-minimize-wallbox{display:inline-flex;align-items:center;justify-content:center;flex:none;width:44px;height:44px;min-width:44px;padding:10px;border:1px solid var(--en-line);border-radius:10px;background:var(--en-surface);color:var(--en-text,inherit);cursor:pointer}
+#teenet-house-mood .en-expand-wallbox{position:absolute;top:4px;right:4px;z-index:2}
+#teenet-house-mood .en-expand-wallbox svg,#teenet-house-mood .en-minimize-wallbox svg{width:24px;height:24px}
+#teenet-house-mood .en-expand-wallbox:focus-visible,#teenet-house-mood .en-minimize-wallbox:focus-visible{outline:3px solid var(--en-car);outline-offset:2px}
+#teenet-house-mood.en-wallbox-expanded>:not(.en-wallbox-expanded-panel){visibility:hidden}
+#teenet-house-mood .en-wallbox-expanded-panel{position:absolute;inset:0;z-index:3;overflow:auto;border-radius:inherit;padding:22px;background:var(--en-surface);color:inherit;text-align:left;display:flex;flex-direction:column;gap:18px}
+#teenet-house-mood .en-expanded-header{display:flex;justify-content:space-between;align-items:start;gap:12px;position:sticky;top:-22px;background:var(--en-surface);z-index:1;padding-block:4px}
+#teenet-house-mood .en-expanded-header h2{margin:0;font-size:22px}
+#teenet-house-mood .en-expanded-header p{margin:5px 0 0;font-size:13px}
+#teenet-house-mood .en-minimize-wallbox{width:48px;height:48px;min-width:48px}
+#teenet-house-mood .en-expanded-metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+#teenet-house-mood .en-expanded-metrics>div{padding:12px;border:1px solid var(--en-line);border-radius:12px;min-width:0}
+#teenet-house-mood .en-expanded-metrics span{display:block;font-size:12px;opacity:.8}
+#teenet-house-mood .en-expanded-metrics strong{display:block;font-size:clamp(20px,2.5vw,32px);margin-top:3px}
+#teenet-house-mood .en-expanded-phase-wrap{overflow-x:auto;flex-shrink:0}
+#teenet-house-mood .en-expanded-phases{width:100%;border-collapse:collapse;font-size:14px}
+#teenet-house-mood .en-expanded-phases caption{text-align:left;font-weight:650;padding-bottom:8px}
+#teenet-house-mood .en-expanded-phases th,#teenet-house-mood .en-expanded-phases td{padding:8px;border-bottom:1px solid var(--en-line);text-align:right}
+#teenet-house-mood .en-expanded-phases th:first-child{text-align:left}
+#teenet-house-mood .en-expanded-note{font-size:12px;margin:0;opacity:.85}
+#teenet-house-mood .en-expanded-today{display:flex;gap:20px;flex-wrap:wrap;font-size:12px;margin-top:auto}
+#teenet-house-mood .en-expanded-today b{display:block;font-size:16px;margin-top:4px}
+@media(max-width:600px){#teenet-house-mood .en-wallbox-expanded-panel{padding:16px;gap:12px}#teenet-house-mood .en-expanded-header{top:-16px}#teenet-house-mood .en-expanded-metrics>div{padding:9px}}
+#teenet-house-mood .en-wallbox-chart{margin:0;flex-shrink:0}
+#teenet-house-mood .en-wallbox-chart figcaption{display:flex;justify-content:space-between;gap:8px;font-size:12px;align-items:center}
+#teenet-house-mood .en-wallbox-chart figcaption span{white-space:nowrap;font-size:11px}
+#teenet-house-mood .en-wallbox-chart i{display:inline-block;width:15px;height:3px;background:var(--en-car);vertical-align:middle;margin-left:7px}
+#teenet-house-mood .en-wallbox-chart i.en-target-key{height:0;border-top:2px dashed var(--en-muted);background:none}
+#teenet-house-mood .en-wallbox-chart svg{display:block;width:100%;height:clamp(170px,23vw,260px)}
+#teenet-house-mood .en-chart-grid path{stroke:var(--en-line);fill:none}
+#teenet-house-mood .en-chart-grid text,#teenet-house-mood .en-chart-labels text,#teenet-house-mood .en-chart-empty{fill:var(--en-muted);font:13px system-ui,sans-serif}
+#teenet-house-mood .en-chart-actual{fill:none;stroke:var(--en-car);stroke-width:2.8;stroke-linejoin:round}
+#teenet-house-mood .en-chart-target{fill:none;stroke:var(--en-muted);stroke-width:1.8;stroke-dasharray:6 5}
+#teenet-house-mood .en-chart-dot{fill:var(--en-car)}
+#teenet-house-mood .en-wallbox-chart small{display:block;font-size:10px;color:var(--en-muted)}
+#teenet-house-mood .en-expanded-metrics{grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+#teenet-house-mood .en-expanded-metrics>div{padding:8px}
+#teenet-house-mood .en-expanded-metrics span{font-size:10px}
+#teenet-house-mood .en-expanded-metrics strong{font-size:17px}
+#teenet-house-mood .en-expanded-phases{font-size:12px}
+#teenet-house-mood .en-expanded-phases th,#teenet-house-mood .en-expanded-phases td{padding:4px 8px}
+#teenet-house-mood .en-expanded-today b{display:inline;font-size:13px;margin-left:5px}
+@media(max-width:600px){#teenet-house-mood .en-expanded-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}#teenet-house-mood .en-expanded-metrics strong{font-size:16px}#teenet-house-mood .en-expanded-note{font-size:11px}}
+#teenet-house-mood .en-car-identity{position:static}
+#teenet-house-mood .en-car-battery{position:absolute;left:9px;top:8px;width:80px;height:36px;color:var(--en-battery);margin:0}
+#teenet-house-mood .en-car-battery svg{display:block;width:100%;height:100%}
+#teenet-house-mood .en-car-battery text{font:700 19px system-ui,sans-serif;fill:var(--en-text)}
+#teenet-house-mood .en-consumers .en-node.en-wallbox-node.en-has-soc{padding-top:48px!important}
+@media(max-width:600px){#teenet-house-mood .en-car-battery{width:64px;height:30px;left:5px;top:7px}#teenet-house-mood .en-consumers .en-node.en-wallbox-node.en-has-soc{padding-top:44px!important}#teenet-house-mood[data-heatpump-enabled="true"] .en-car-battery{width:48px;height:29px;left:3px;top:8px}}
+
+.en-chart-range{fill:var(--primary,#0084a5);opacity:.12;stroke:none}
+
+#teenet-house-mood .en-wallbox-open{position:absolute;inset:0;z-index:2;display:block;width:100%;height:100%;padding:0;margin:0;border:0;border-radius:inherit;background:transparent;box-shadow:none;cursor:pointer}
+#teenet-house-mood .en-wallbox-open:hover{background:color-mix(in srgb,var(--en-car) 5%,transparent)}
+#teenet-house-mood .en-wallbox-open:focus-visible{outline:3px solid var(--en-car);outline-offset:2px}
+#teenet-house-mood .en-wallbox-node>.en-wallbox-open{display:block!important}
+#teenet-house-mood .en-picture-button{cursor:inherit}
+#teenet-house-mood .en-storage{cursor:default}
+#teenet-house-mood .en-storage:hover{background:transparent;box-shadow:none;transform:none}
+#teenet-house-mood .en-expanded-vehicle{border-top:1px solid var(--en-line);padding-top:10px;flex-shrink:0}
+#teenet-house-mood .en-expanded-vehicle-heading{display:flex;align-items:center;gap:15px}
+#teenet-house-mood .en-expanded-vehicle-heading img{width:96px;height:64px;object-fit:contain}
+#teenet-house-mood .en-expanded-vehicle-heading h3{font-size:16px;margin:0}
+#teenet-house-mood .en-expanded-vehicle dl{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px 18px;margin:10px 0 0;font-size:12px}
+#teenet-house-mood .en-expanded-vehicle dl>div{min-width:0}
+#teenet-house-mood .en-expanded-vehicle dt{color:var(--en-muted)}
+#teenet-house-mood .en-expanded-vehicle dd{margin:2px 0 0;overflow-wrap:anywhere}
+
+/* The complete expanded view closes on click; the vehicle scene stays compact. */
+#teenet-house-mood .en-wallbox-expanded-panel{cursor:pointer}
+#teenet-house-mood .en-wallbox-expanded-panel:focus-visible{outline:3px solid var(--en-car);outline-offset:-4px}
+#teenet-house-mood .en-consumers .en-node.en-wallbox-node.en-has-soc{padding-top:12px!important}
+#teenet-house-mood .en-picture-button{position:relative;display:block;padding:0!important;border:0;min-height:76px;box-sizing:content-box;pointer-events:none;overflow:visible}
+#teenet-house-mood .en-picture-button .en-car-art,#teenet-house-mood .en-picture-button.en-with-profile .en-vehicle-picture{position:absolute;bottom:0;height:auto!important;max-width:none!important;margin:0!important;aspect-ratio:1.5;object-fit:contain}
+#teenet-house-mood .en-picture-button .en-profile-charger{position:absolute!important;top:auto!important;margin:0!important;max-width:none;z-index:3}
+#teenet-house-mood .en-charging-cable{position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none;z-index:2}
+#teenet-house-mood .en-charging-cable[hidden]{display:none!important}
+#teenet-house-mood .en-charging-lead{stroke:color-mix(in srgb,var(--en-text) 85%,var(--en-line))}
+#teenet-house-mood .en-charging-plug{fill:var(--en-text)}
+#teenet-house-mood .en-battery-trailer{position:absolute;color:var(--en-battery);margin:0;z-index:1}
+#teenet-house-mood .en-battery-trailer svg{position:absolute;z-index:1;left:5px;top:12%;width:calc(100% - 10px);height:calc(var(--trailer-body) * .66);overflow:visible}
+#teenet-house-mood .en-battery-trailer text{font:750 28px system-ui,sans-serif;fill:var(--en-text)}
+#teenet-house-mood .en-trailer-bed{position:absolute;left:-2px;right:-2px;top:0;height:var(--trailer-body);border:1px solid var(--en-muted);border-radius:3px;background:color-mix(in srgb,var(--en-muted) 15%,var(--en-surface));box-shadow:inset 0 3px color-mix(in srgb,var(--en-surface) 60%,transparent)}
+#teenet-house-mood .en-trailer-frame{position:absolute;left:-3px;right:-3px;top:var(--trailer-body);height:3px;background:var(--en-muted);border-radius:2px}
+#teenet-house-mood .en-trailer-frame:after{content:"";position:absolute;left:55%;top:2px;width:2px;height:var(--trailer-suspension);background:var(--en-muted)}
+#teenet-house-mood .en-trailer-wheel{position:absolute;bottom:0;left:45%;width:var(--trailer-wheel);height:var(--trailer-wheel);border:calc(var(--trailer-wheel) * .25) solid var(--en-wheel);border-radius:50%;background:var(--en-line);box-sizing:border-box}
+#teenet-house-mood .en-trailer-mudguard{position:absolute;bottom:calc(var(--trailer-wheel) * .5);left:calc(45% - 3px);width:calc(var(--trailer-wheel) + 6px);height:calc(var(--trailer-wheel) * .65);border-radius:15px 15px 1px 1px;background:var(--en-muted)}
+#teenet-house-mood .en-trailer-light{position:absolute;right:-3px;top:calc(var(--trailer-body) - 10px);width:3px;height:7px;border-radius:1px;background:#b65d4d}
+#teenet-house-mood .en-trailer-tow{position:absolute;height:3px;background:var(--en-muted);border-radius:2px;transform-origin:left center}
+#teenet-house-mood .en-trailer-hitch{position:absolute;width:5px;height:5px;border-radius:50%;background:var(--en-muted)}
+#teenet-house-mood .en-picture-button:not(.en-has-trailer) .en-trailer-tow,#teenet-house-mood .en-picture-button:not(.en-has-trailer) .en-trailer-hitch{display:none}
+@media(max-width:600px){#teenet-house-mood .en-consumers .en-node.en-wallbox-node.en-has-soc{padding-top:6px!important}}
+.expert-row{grid-template-columns:minmax(0,1fr) minmax(110px,170px) auto auto}
+.expert-adopt{font-size:12px;padding:8px;max-width:180px;white-space:normal;line-height:1.2}
+@media(max-width:600px){.expert-row{grid-template-columns:minmax(0,1fr) auto minmax(92px,1.35fr);gap:8px}.expert-row label{grid-column:1/-1}.expert-row .expert-reset,.expert-row .expert-adopt{min-height:42px}}
+
+@media(max-width:600px){#teenet-house-mood .en-car-battery{width:80px;height:36px}#teenet-house-mood[data-heatpump-enabled="true"] .en-car-battery{width:72px;height:34px}}
+
+#teenet-house-mood dl.en-expanded-phases{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin:0;padding-block:7px;border-block:1px solid var(--en-line);font-size:12px}
+#teenet-house-mood dl.en-expanded-phases dt{font-size:11px;color:var(--en-muted);font-weight:650;margin-bottom:3px}
+#teenet-house-mood dl.en-expanded-phases dd{display:flex;gap:5px 10px;flex-wrap:wrap;margin:0;font-variant-numeric:tabular-nums}
+#teenet-house-mood dl.en-expanded-phases dd span{white-space:nowrap}

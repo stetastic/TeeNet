@@ -7,9 +7,19 @@ static esp_err_t phase_test_handler(httpd_req_t *req){
         *risk=cJSON_GetObjectItemCaseSensitive(o,"confirm_risk"),
         *stop=cJSON_GetObjectItemCaseSensitive(o,"stop");
     bool cancel=cJSON_IsTrue(stop),valid=cJSON_IsObject(o);
+#if CONFIG_TEE_HTTP_CONTROL_TRIAL
+    const cJSON *expected=cJSON_GetObjectItemCaseSensitive(o,"expected_event_sequence");
+    bool revision_present=expected!=NULL;
+    double revision=cJSON_IsNumber(expected)?expected->valuedouble:-1;
+    if(revision_present&&(!isfinite(revision)||revision<0||revision>UINT32_MAX||floor(revision)!=revision))valid=false;
+#endif
     if(!cancel&&now_ms()<expert_wrong_until){cJSON_Delete(o);httpd_resp_set_status(req,"429 Too Many Requests");return httpd_resp_sendstr(req,"Kurz warten und erneut versuchen.");}
     for(cJSON *i=o->child;i&&valid;i=i->next){
-        if(strcmp(i->string,"phases")&&strcmp(i->string,"pin")&&strcmp(i->string,"confirm_risk")&&strcmp(i->string,"stop"))valid=false;
+        if(strcmp(i->string,"phases")&&strcmp(i->string,"pin")&&strcmp(i->string,"confirm_risk")&&strcmp(i->string,"stop")
+#if CONFIG_TEE_HTTP_CONTROL_TRIAL
+           &&strcmp(i->string,"expected_event_sequence")
+#endif
+          )valid=false;
         for(cJSON *j=i->next;j;j=j->next)if(!strcmp(i->string,j->string))valid=false;
     }
     if(cancel)valid=valid&&cJSON_GetArraySize(o)==1;
@@ -22,6 +32,16 @@ static esp_err_t phase_test_handler(httpd_req_t *req){
     if(!valid)return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Warnung bestaetigen und Passwort 4040 eingeben. Eine oder drei Phasen waehlen.");
     LOCK();
     if(cancel){phase_test_end_locked();UNLOCK();return ok_json(req);}
+#if CONFIG_TEE_HTTP_CONTROL_TRIAL
+    if(revision_present&&revision!=(double)event_log.sequence){
+        UNLOCK();httpd_resp_set_status(req,"409 Conflict");
+        return httpd_resp_sendstr(req,"Zustand wurde zwischenzeitlich geaendert. Test abgebrochen.");
+    }
+    if(normal_offset_trial.armed||shell_http_trial.armed){
+        UNLOCK();httpd_resp_set_status(req,"409 Conflict");
+        return httpd_resp_sendstr(req,"Regelungstest zuerst bei Stromstillstand beenden.");
+    }
+#endif
     const char *blocked=phase_test_block_locked(now_ms());bool allowed=!blocked[0];
     if(allowed){
         settings.enabled=false;settings.mode=MODE_OFF;evcc_local_stop(&evcc_control);

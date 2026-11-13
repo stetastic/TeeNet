@@ -20,3 +20,11 @@ CONFIG_ESP_MAIN_TASK_STACK_SIZE=4096
 
 # Preserve the two OTA slots and validate new application startup.
 CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
+# Advertise only TeeNet's web service, without the discovery/console helpers.
+CONFIG_MDNS_MAX_INTERFACES=2
+CONFIG_MDNS_MAX_SERVICES=1
+# CONFIG_MDNS_MULTIPLE_INSTANCE is not set
+# CONFIG_MDNS_PREDEF_NETIF_ETH is not set
+# CONFIG_MDNS_ENABLE_CONSOLE_CLI is not set
+# CONFIG_MDNS_ENABLE_BROWSE is not set

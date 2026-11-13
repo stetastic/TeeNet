@@ -50,7 +50,7 @@ int main(void){
     /* Idle EV, 3.4 kW exported and 5.1 kW entering the house battery:
        a 6 kW vehicle ceiling must not wait forever for a 6.7 kW start. */
     settings_defaults(&s);s.basic_mode=false;s.battery_protect=s.zero_feed_enabled=s.pv_allocation_enabled=true;s.battery_reserve_soc=5;
-    s.pv_priority=1;s.pv_car_priority_w=6000;
+    s.pv_priority=1;s.pv_car_priority_w=6000;s.min_charge_a=8.7f;
     float adjusted=pv_allocation_grid(&s,idle,-3400,5100,0,18,true);
     float available=battery_solar_current(&s,idle,adjusted,18,true,0,true);
     near(available,s.min_charge_a);near(pv_start_threshold(&s),s.min_charge_a);

@@ -27,13 +27,7 @@ static void phase_setup(void) {
     relay_ready=gpio_config(&output)==ESP_OK;
     relay_set(0,false);
     if(!settings.phase_switch_enabled) return;
-    if(!settings.phase_feedback_enabled) phase_gpio_ready=relay_ready;
-    else {
-        gpio_config_t input={.pin_bit_mask=(1ULL<<PHASE_FEEDBACK_GPIO)|
-            (settings.phase_feedback_count==2?(1ULL<<PHASE_FEEDBACK_SECOND_GPIO):0),.mode=GPIO_MODE_INPUT,
-            .pull_up_en=GPIO_PULLUP_ENABLE,.pull_down_en=GPIO_PULLDOWN_DISABLE,.intr_type=GPIO_INTR_DISABLE};
-        phase_gpio_ready=relay_ready && gpio_config(&input)==ESP_OK;
-    }
+    phase_gpio_ready=relay_ready;
     if(!phase_gpio_ready) phase_state=PHASE_FAULT;
     else {
         /* Let the deenergized contactor return before evaluating position.

@@ -7,10 +7,8 @@ const gpio_role_t gpio_roles[EMS_GPIO_ROLES]={
     GPIO_ROLE(house_tx_pin,"Hauszähler TX","Daten zum seriellen Hausanschlusszähler.",EMS_DEFAULT_HOUSE_TX_PIN),
     GPIO_ROLE(house_rx_pin,"Hauszähler RX","Messwerte vom seriellen Hausanschlusszähler.",EMS_DEFAULT_HOUSE_RX_PIN),
     GPIO_ROLE(external_mode_input_pin,"Manuell / PV-Kontakt","Kontakt gegen GND wählt PV-Überschuss.",EMS_DEFAULT_MODE_INPUT_PIN),
-    GPIO_ROLE(evu_input_pin,"Extern Start / Stopp / EVU","Kontakt gegen GND stoppt oder begrenzt die Ladung.",7),
+    GPIO_ROLE(evu_input_pin,"Ladefreigabe / Stopp / EVU","Kontakt gegen GND stoppt oder begrenzt die Ladung.",EMS_DEFAULT_EVU_INPUT_PIN),
     GPIO_ROLE(relay1_pin,"Phasenschütz-Ausgang","3,3 V / High schaltet das Relais ein.",EMS_DEFAULT_RELAY_PIN),
-    GPIO_ROLE(phase_feedback_pin,"Schütz-Rückmeldung 1","Kontakt gegen GND; bestätigte Stellung unter Phasenumschaltung wählen.",EMS_DEFAULT_FEEDBACK_PIN),
-    GPIO_ROLE(phase_feedback_second_pin,"Schütz-Rückmeldung 2","Zweiter Kontakt gegen GND bestätigt einphasig bei zwei Rückmeldeeingängen.",EMS_DEFAULT_FEEDBACK_SECOND_PIN),
     GPIO_ROLE(status_led_pin,"RGB-LED","Schaltet die adressierbare LED beim Start aus; -1 deaktiviert dies.",EMS_DEFAULT_LED_PIN)
 };
 #undef GPIO_ROLE
@@ -33,22 +31,20 @@ const char *settings_gpio_reason(int pin,bool led){
 #endif
 }
 bool settings_gpio_used(const settings_t *s,unsigned role){
-    bool meter=s->meter_rs485_interface==0&&strcmp(s->wallbox_meter_type,"shelly_gen2")&&strcmp(s->wallbox_meter_type,"shelly_em1")&&strcmp(s->wallbox_meter_type,"em24_tcp");
-    bool house=s->house_rs485_interface==0&&(!strcmp(s->house_meter_type,"xemex")||sdm_profile(s->house_meter_type)!=NULL);
-    if(role<2)return s->shell_rs485_interface==0;
+    bool meter=s->meter_rs485_interface!=1&&strcmp(s->wallbox_meter_type,"shelly_gen2")&&strcmp(s->wallbox_meter_type,"shelly_em1")&&strcmp(s->wallbox_meter_type,"em24_tcp");
+    bool house=s->house_rs485_interface!=1&&(!strcmp(s->house_meter_type,"xemex")||sdm_profile(s->house_meter_type)!=NULL);
+    if(role<2)return s->shell_rs485_interface!=1;
     if(role<4)return meter;
     if(role<6)return house;
     if(role==6)return s->external_mode_input_enabled;
     if(role==7)return s->evu_input_enabled;
     if(role==8)return s->relay_board_enabled&&s->phase_actuator_type==0;
-    if(role==9)return s->phase_switch_enabled&&s->phase_feedback_enabled&&s->phase_actuator_type==0;
-    if(role==10)return s->phase_switch_enabled&&s->phase_feedback_count==2&&s->phase_actuator_type==0;
     return s->status_led_pin!=-1;
 }
 bool settings_gpio_valid(const settings_t *s){
     for(unsigned i=0;i<EMS_GPIO_ROLES;i++){
         int pin=settings_gpio_value(s,i);
-        if(settings_gpio_reason(pin,i==11)[0])return false;
+        if(settings_gpio_reason(pin,i==EMS_GPIO_ROLES-1)[0])return false;
         if(!settings_gpio_used(s,i))continue;
         for(unsigned j=0;j<i;j++)if(settings_gpio_used(s,j)&&pin==settings_gpio_value(s,j))return false;
     }

@@ -5,7 +5,15 @@
 #include <limits.h>
 
 static bool bounded(double value,double hi){return isfinite(value)&&value>=0&&value<=hi;}
-static charge_session_t *active(sessions_t *s){return s->store.active_slot?&s->store.records[s->store.active_slot-1]:NULL;}
+static charge_session_t *active(sessions_t *s){return s->pending_active?&s->pending_session:s->store.active_slot?&s->store.records[s->store.active_slot-1]:NULL;}
+bool session_recorded(const charge_session_t *r){return r&&r->id&&(double)r->grid_wh+r->solar_wh+r->unknown_wh>=SESSION_MIN_WH-.001;}
+static void promote(sessions_t *s){
+    if(!s->pending_active||s->grid_wh+s->solar_wh+s->unknown_wh<SESSION_MIN_WH-1e-6)return;
+    unsigned slot=s->store.next_slot;s->pending_session.id=s->store.next_id++;if(!s->store.next_id)s->store.next_id=1;
+    s->store.records[slot]=s->pending_session;s->store.active_slot=slot+1;s->store.next_slot=(slot+1)%CHARGE_SESSION_CAPACITY;
+    if(s->store.count<CHARGE_SESSION_CAPACITY)s->store.count++;
+    s->pending_active=false;s->checkpoint=true;
+}
 typedef struct {
     uint32_t id,start_epoch,end_epoch,start_date,charging_ms;
     float grid_wh,solar_wh,unknown_wh,cost_eur;
@@ -68,13 +76,9 @@ bool session_period_parse(const char *text,uint32_t *period){
     *period=n==4?year:year*100+month;return true;
 }
 static void begin(sessions_t *s,int64_t now,int64_t epoch,uint32_t date){
-    unsigned slot=s->store.next_slot;
-    charge_session_t *r=&s->store.records[slot];memset(r,0,sizeof(*r));
-    r->id=s->store.next_id++;if(!s->store.next_id)s->store.next_id=1;
+    charge_session_t *r=&s->pending_session;memset(r,0,sizeof(*r));s->pending_active=true;
     r->start_epoch=r->end_epoch=date?(uint32_t)(epoch/1000):0;r->start_date=date;
     if(!date)r->flags|=SESSION_CLOCK_GAP;
-    s->store.active_slot=slot+1;s->store.next_slot=(slot+1)%CHARGE_SESSION_CAPACITY;
-    if(s->store.count<CHARGE_SESSION_CAPACITY)s->store.count++;
     s->grid_wh=s->solar_wh=s->unknown_wh=s->cost=s->grid_cost=s->solar_cost=0;s->start_ms=now;s->idle_since=0;
 }
 void sessions_step(sessions_t *s,int64_t now,int64_t epoch,uint32_t date,
@@ -96,26 +100,46 @@ void sessions_step(sessions_t *s,int64_t now,int64_t epoch,uint32_t date,
                 double grid_wh=(known?from_grid*known:0)+s->previous_w*(ms-known);
                 grid_wh/=3600000.0;
                 double solar_wh=known?(s->previous_w-from_grid)*known/3600000.0:0;
-                s->grid_wh+=grid_wh;s->solar_wh+=solar_wh;
-                s->grid_cost+=grid_wh*s->grid_price/1000;s->solar_cost+=solar_wh*s->solar_price/1000;
+                if(s->metered){s->pending_grid+=grid_wh;s->pending_solar+=solar_wh;s->pending_grid_cost+=grid_wh*s->grid_price/1000;s->pending_solar_cost+=solar_wh*s->solar_price/1000;}
+                else{s->grid_wh+=grid_wh;s->solar_wh+=solar_wh;s->grid_cost+=grid_wh*s->grid_price/1000;s->solar_cost+=solar_wh*s->solar_price/1000;}
                 s->cost=s->grid_cost+s->solar_cost;
                 r->grid_wh=(float)s->grid_wh;r->solar_wh=(float)s->solar_wh;r->unknown_wh=(float)s->unknown_wh;r->cost_eur=(float)s->cost;
                 r->grid_cost_eur=(float)s->grid_cost;r->solar_cost_eur=(float)s->solar_cost;
                 if(s->previous_w>=1000&&r->charging_ms<=UINT32_MAX-(uint32_t)ms)r->charging_ms+=(uint32_t)ms;
-                if(date){r->end_epoch=(uint32_t)(epoch/1000);if(!r->start_epoch){r->start_epoch=(uint32_t)((epoch-(now-s->start_ms))/1000);r->start_date=date;}}
+                if(date&&(!s->metered||s->previous_w>=1000)){r->end_epoch=(uint32_t)(epoch/1000);if(!r->start_epoch){r->start_epoch=(uint32_t)((epoch-(now-s->start_ms))/1000);r->start_date=date;}}
                 if(!date||llabs((epoch-s->last_epoch)-dt)>2000)r->flags|=SESSION_CLOCK_GAP;
             }
             if(end<now)r->flags|=SESSION_METER_GAP;
         }else r->flags|=SESSION_METER_GAP;
+        promote(s);
     }
     bool measured=expires>now&&bounded(watts,1000000);
     if(measured&&watts>=1000&&!active(s))begin(s,now,epoch,date);
     r=active(s);
     if(r){
-        if(measured&&watts>0)s->idle_since=0;
-        else{if(!s->idle_since)s->idle_since=now;if(now-s->idle_since>=SESSION_PAUSE_MS){s->store.active_slot=0;s->checkpoint=true;}}
+        if(measured&&(s->metered?watts>=1000:watts>0))s->idle_since=0;
+        else{if(!s->idle_since)s->idle_since=now;if(now-s->idle_since>=SESSION_PAUSE_MS){if(s->store.active_slot)s->checkpoint=true;s->store.active_slot=0;s->pending_active=false;}}
     }
     s->initialized=true;s->last_ms=now;s->last_epoch=epoch;s->previous_w=watts;s->previous_grid=grid;
     s->charge_expires=bounded(watts,1000000)?expires:0;s->grid_expires=isfinite(grid)?grid_expires:0;
     s->grid_price=bounded(grid_price,10)?grid_price:.25f;s->solar_price=bounded(solar_price,10)?solar_price:.08f;
+}
+void sessions_meter_mode(sessions_t *s,bool enabled,bool new_session){
+    if(s->metered!=enabled||new_session){s->pending_grid=s->pending_solar=s->pending_grid_cost=s->pending_solar_cost=0;}
+    if(new_session&&active(s)){if(s->store.active_slot)s->checkpoint=true;s->store.active_slot=0;s->pending_active=false;}
+    s->metered=enabled;
+}
+void sessions_add_metered(sessions_t *s,int64_t now,int64_t epoch,uint32_t date,double wh,bool gap){
+    if(!s||!s->metered||!bounded(wh,1000000))return;
+    if(wh==0){s->pending_grid=s->pending_solar=s->pending_grid_cost=s->pending_solar_cost=0;return;}
+    if(!active(s))begin(s,now,epoch,date);
+    s->idle_since=0;
+    charge_session_t *r=active(s);double pending=s->pending_grid+s->pending_solar;
+    if(!gap&&pending>0){double scale=wh/pending;s->grid_wh+=s->pending_grid*scale;s->solar_wh+=s->pending_solar*scale;s->grid_cost+=s->pending_grid_cost*scale;s->solar_cost+=s->pending_solar_cost*scale;}
+    else{s->grid_wh+=wh;s->grid_cost+=wh*s->grid_price/1000;r->flags|=SESSION_METER_GAP;}
+    s->pending_grid=s->pending_solar=s->pending_grid_cost=s->pending_solar_cost=0;
+    s->cost=s->grid_cost+s->solar_cost;r->grid_wh=(float)s->grid_wh;r->solar_wh=(float)s->solar_wh;r->unknown_wh=(float)s->unknown_wh;
+    r->grid_cost_eur=(float)s->grid_cost;r->solar_cost_eur=(float)s->solar_cost;r->cost_eur=r->grid_cost_eur+r->solar_cost_eur;
+    if(date)r->end_epoch=(uint32_t)(epoch/1000);
+    promote(s);
 }

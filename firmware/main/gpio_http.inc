@@ -7,10 +7,11 @@ static cJSON *gpio_snapshot(void){
     for(unsigned i=0;i<EMS_GPIO_ROLES;i++){
         cJSON *row=cJSON_CreateObject();if(!row){UNLOCK();cJSON_Delete(root);return NULL;}
         cJSON_AddStringToObject(row,"id",gpio_roles[i].id);cJSON_AddStringToObject(row,"label",gpio_roles[i].label);
-        cJSON_AddStringToObject(row,"help",gpio_roles[i].help);cJSON_AddNumberToObject(row,"default",gpio_roles[i].standard);
+        cJSON_AddStringToObject(row,"help",gpio_roles[i].help);cJSON_AddNumberToObject(row,"default",gpio_standard_value(i));
+        cJSON_AddNumberToObject(row,"factory",gpio_roles[i].standard);
         cJSON_AddNumberToObject(row,"value",settings_gpio_value(&saved_settings,i));
         cJSON_AddNumberToObject(row,"active",settings_gpio_value(&settings,i));
-        cJSON_AddBoolToObject(row,"used",settings_gpio_used(&saved_settings,i));cJSON_AddBoolToObject(row,"led",i==11);
+        cJSON_AddBoolToObject(row,"used",settings_gpio_used(&saved_settings,i));cJSON_AddBoolToObject(row,"led",i==EMS_GPIO_ROLES-1);
         json_add_owned_to_array(rows,row);
     }
     UNLOCK();
@@ -39,6 +40,13 @@ static esp_err_t gpio_post(httpd_req_t *req,cJSON *o){
             item->valuedouble>=-1&&item->valuedouble<=48&&floor(item->valuedouble)==item->valuedouble;
         for(cJSON *other=item->next;other;other=other->next)if(other->string&&item->string&&!strcmp(item->string,other->string))valid=false;
         if(valid)settings_gpio_set(next,role,(int)item->valuedouble);
+    }
+    /* Also reject a newly assigned dormant role that points at an active pin.
+       Untouched legacy defaults of disabled functions are not live allocations. */
+    if(valid)for(cJSON *item=changes->child;item&&valid;item=item->next){
+        unsigned role=0;while(role<EMS_GPIO_ROLES&&strcmp(item->string,gpio_roles[role].id))role++;
+        for(unsigned other=0;other<EMS_GPIO_ROLES;other++)
+            if(other!=role&&item->valueint>=0&&settings_gpio_used(next,other)&&settings_gpio_value(next,other)==item->valueint)valid=false;
     }
     cJSON_Delete(o);
     if(!stopped){free(next);httpd_resp_set_status(req,"409 Conflict");return httpd_resp_sendstr(req,"Ladung zuerst stoppen. Nach vorhandenen Messungen frische Werte unter 1 A abwarten.");}

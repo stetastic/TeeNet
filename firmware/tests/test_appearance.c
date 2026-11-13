@@ -26,7 +26,7 @@ static esp_err_t httpd_resp_send_err(httpd_req_t *r,int code,const char *message
 #include "appearance_actual.inc"
 static int post(const char *body,bool allow){httpd_req_t r={.body=body,.allowed=allow};theme_post(&r);cJSON_Delete(r.response);return r.status;}
 int main(void){
- httpd_req_t r={0};theme_get(&r);assert(cJSON_IsTrue(cJSON_GetObjectItem(r.response,"graphic_notice_pending")));assert(!strcmp(cJSON_GetObjectItem(r.response,"density")->valuestring,"standard"));cJSON_Delete(r.response);
+ httpd_req_t r={0};theme_get(&r);assert(cJSON_IsFalse(cJSON_GetObjectItem(r.response,"graphic_notice_pending")));assert(!strcmp(cJSON_GetObjectItem(r.response,"density")->valuestring,"standard"));cJSON_Delete(r.response);
  assert(post("{\"view\":\"graphic\"}",true)==200&&view==1&&theme==0&&seen==0);
  assert(post("{\"theme\":\"dark\"}",true)==200&&view==1&&theme==2&&seen==0);
  assert(post("{\"density\":\"compact\"}",false)==403&&density==0);
@@ -43,5 +43,5 @@ int main(void){
  assert(post("{\"graphic_notice_ack\":true}",true)==200&&seen==1&&view==1&&theme==2);
  r=(httpd_req_t){0};theme_get(&r);assert(cJSON_IsFalse(cJSON_GetObjectItem(r.response,"graphic_notice_pending")));cJSON_Delete(r.response);
  fail_commit=true;assert(post("{\"view\":\"standard\"}",true)==500);
- puts("PASS: appearance defaults, independent settings, persistent notice acknowledgement, auth, validation and storage errors");return 0;
+ puts("PASS: retired announcement stays off, independent appearance settings, legacy acknowledgement compatibility, auth, validation and storage errors");return 0;
 }

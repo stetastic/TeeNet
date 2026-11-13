@@ -16,12 +16,14 @@
 #define EMS_CHARGE_STOP_CONFIRM_MS (ems_param_ms(EP_STOP_CONFIRM))
 #define EMS_CHARGE_STOP_LIMIT 5
 #define EMS_CHARGE_STOP_WINDOW_MS (ems_param_ms(EP_STOP_WINDOW))
-#define EMS_SETTINGS_VERSION 34
+#define EMS_SETTINGS_VERSION 38
 #define EMS_STRING_VALUE_(x) #x
 #define EMS_STRING_VALUE(x) EMS_STRING_VALUE_(x)
 /* Keep the legacy blob available to a rollback firmware with an older layout. */
 #define EMS_SETTINGS_STORAGE_KEY "settings_v" EMS_STRING_VALUE(EMS_SETTINGS_VERSION)
 #define EMS_MIN_CHARGE_A 6.0f
+#define EMS_DEFAULT_MIN_CHARGE_A 7.8f
+#define EMS_DEFAULT_THREE_PHASE_POWER_KW 5.6f
 #define EMS_BATTERY_CAPACITY_KWH 20.0f
 #define EMS_BATTERY_DISCHARGE_MAX_W 4000.0f
 #define EMS_BATTERY_BUFFER_MS (ems_param_ms(EP_BAT_BUFFER))
@@ -146,19 +148,39 @@ typedef struct {
 
     /* Version 32: mandatory normal feedback, optional complementary contact,
        compatible Shelly profiles and explicit authenticated expert RPC. */
-    uint8_t phase_feedback_count; /* 1 contact, 2 complementary contacts */
+    uint8_t phase_feedback_count; /* Retired auxiliary-contact byte; retained for old NVS blobs. */
     uint8_t phase_shelly_model; /* 0..12: supported 230-V Shelly profile */
-    bool phase_shelly_pulse; /* bounded bistable pulse; otherwise absolute state */
+    bool phase_shelly_pulse; /* Retired pulse byte; loading an old pulse setup disables switching. */
     bool phase_shelly_true_three_phase;
     char phase_output_password[65]; /* used only by expert transport 3 */
 
     /* Version 33: expert GPIO assignment, applied only at boot. */
-    int phase_feedback_pin, phase_feedback_second_pin, status_led_pin;
+    int phase_feedback_pin, phase_feedback_second_pin; /* Retired; never configured as GPIOs. */
+    int status_led_pin;
 
     /* Version 34: optional read-only heat-pump submeter. */
     bool heatpump_enabled, heatpump_publish_enabled;
     char heatpump_source[20], heatpump_host[64];
     char heatpump_input_topic[128], heatpump_output_topic[128];
+
+    /* Version 35: optional auxiliary contacts, independent downstream voltage proof. */
+    uint8_t phase_feedback_source; /* 1 optional downstream voltage proof, 2 commanded position; 0 retired. */
+    uint8_t phase_voltage_protocol; /* 0 Modbus TCP, 1 Gen2+ RPC, 2 Gen1 HTTP */
+    bool phase_no_feedback_acknowledged; /* Retired confirmation; no longer gates configuration. */
+    char phase_voltage_host[64];
+
+    /* Version 36: read-only Sungrow LAN measurements; no inverter commands. */
+    bool sungrow_enabled,sungrow_pv,sungrow_battery;
+    uint8_t sungrow_profile,sungrow_unit_id;
+    int sungrow_port;
+    char sungrow_host[64],sungrow_model[32];
+    bool vehicle_manual_soc_prompt;
+    uint8_t vehicle_fixed_profile; /* 0: RFID, 1..4: explicitly selected vehicle */
+    bool wallbox_shelly_reverse; /* Shelly C/B/A measures logical wallbox L1/L2/L3. */
+    /* Version 37: old bistable setups require deliberate replacement by an absolute contactor. */
+    bool phase_contactor_reconfigure;
+    /* Version 38: explicit autonomous HTTP pilot-feedback control. */
+    bool shell_http_control_enabled;
 
 } settings_t;
 bool heatpump_settings_valid(const settings_t *settings);
@@ -168,6 +190,9 @@ bool phase_three_phase_meter(const settings_t *settings);
 unsigned phase_measured_currents(const settings_t *settings);
 bool phase_switch_meter_supported(const settings_t *settings);
 bool phase_measured_zero(const settings_t *settings,const float actual[3],float limit);
+bool phase_current_mismatch(const settings_t *settings,const float actual[3]);
+bool phase_uses_voltage(const settings_t *settings);
+bool settings_tail485_valid(const settings_t *settings);
 bool phase_mqtt_output_topic(const settings_t *settings,char *out,size_t capacity);
 bool phase_mqtt_output_value(const settings_t *settings,unsigned phases);
 bool phase_output_settings_supported(const settings_t *settings);
@@ -210,6 +235,7 @@ typedef struct {
     double previous_w[EMS_SOURCES];
     uint32_t last_date;
     bool started;
+    bool primary_metered; /* RAM-only mode; the persisted energy_store_t is unchanged. */
 } energy_t;
 
 void settings_defaults(settings_t *s);
@@ -229,6 +255,9 @@ float pv_allocation_grid(const settings_t *s, const float actual[3], float grid_
     float charge_w, float discharge_w, float soc, bool battery_fresh);
 float pv_start_threshold(const settings_t *s);
 float estimated_charge_power(const settings_t *s, const float currents[3]);
+void ems_phase_voltage_override(const float values[3],bool enabled);
+bool ems_phase_voltage_active(void);
+float ems_phase_voltage_sum(const settings_t *s,unsigned phases);
 float battery_solar_current(const settings_t *s, const float actual[3], float grid_w,
                             float soc, bool battery_fresh, float discharge_w, bool discharge_fresh);
 float battery_assisted_current(const settings_t *s, const float actual[3], float grid_w,
@@ -294,6 +323,7 @@ config_gate_t hardware_config_gate(bool charging,bool quiescent,bool has_measure
 typedef enum { EMS_WIFI_AP, EMS_WIFI_STA, EMS_WIFI_AP_STA } ems_wifi_mode_t;
 ems_wifi_mode_t wifi_recovery_mode(bool configured, bool online, bool forced_ap, int64_t now, int64_t lost_at);
 float control_target(const settings_t *s, bool meter_ok, bool feedback_ok, bool pv_ok);
+float manual_minimum_power_kw(const settings_t *s,unsigned phases);
 bool house_phase_currents_ready(bool supported, const float house[3],
                                 int64_t now, int64_t measured_at);
 float grid_guard_target(const settings_t *s, float requested, bool house_ready);
@@ -302,8 +332,6 @@ bool settings_shell_pin_available(const settings_t *s, int pin, bool tx);
 void grid_guard_report(const settings_t *s, bool house_ready,
                        const float house[3], float reported[3]);
 bool phase_feedback_matches(bool required, unsigned observed, unsigned expected);
-unsigned phase_feedback_position(bool contact_closed, bool closed_is_single);
-unsigned phase_feedback_contacts(bool first_closed,bool second_closed,unsigned count,bool closed_is_single);
 bool phase_motion_complete(bool required, unsigned observed, unsigned expected, int64_t elapsed_ms);
 bool phase_fault_reset_allowed(bool faulted, bool gpio_ready, bool feedback_required,
                                unsigned observed, bool relay_on, bool measurement_fresh,
@@ -317,6 +345,10 @@ typedef struct {
 } manual_report_filter_t;
 void manual_report_smooth(manual_report_filter_t *filter,const settings_t *settings,
                           float target,int64_t now,float report[3]);
+/* Reuse the same bounded actuator ramp for HTTP/PV without copying settings_t
+   onto the small UART task stack. Physical-meter callers use the wrapper. */
+void manual_report_smooth_mode(manual_report_filter_t *filter,const settings_t *settings,
+                              float target,int64_t now,float report[3],bool as_manual);
 typedef struct {
     bool seen_charging, latched;
     int64_t low_since, charging_since, last_at, retry_until, stops[10];
@@ -334,4 +366,5 @@ size_t modbus_reply(const uint8_t *request, size_t len, uint8_t *reply,
 void energy_step(energy_t *e, int64_t now, int64_t epoch_ms, uint32_t date,
                  int64_t day_start_epoch_ms, const double power[2], const int64_t expires[2]);
 bool energy_store_valid(const energy_store_t *store);
+void energy_add_metered(energy_t *e,int64_t from_ms,int64_t to_ms,int64_t from_epoch,int64_t to_epoch,uint32_t date,int64_t midnight,double wh);
 bool energy_store_decode(const void *blob, size_t length, energy_store_t *out);

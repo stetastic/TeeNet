@@ -35,12 +35,3 @@ static bool phase_output_direct_write_auth(uint8_t transport,const char *host,un
     return transport==3?(password[0]&&phase_output_rpc(host,id,true,&on,password)):
         phase_output_direct_write(transport,host,id,on);
 }
-static bool phase_output_input(const char *host,unsigned id,bool *closed){
-    if(!shelly_phase_endpoint_valid(host,64)||id>1||!closed)return false;
-    int64_t deadline=now_ms()+800;int sock=tcp_connect_timeout(host,502,800);if(sock<0)return false;
-    uint8_t request[12],reply[10];shelly_output_coil_request(request,(uint16_t)esp_random(),id,false,false);
-    request[7]=2;
-    bool ok=socket_exact(sock,request,12,true,deadline)&&socket_exact(sock,reply,10,false,deadline)&&
-        !memcmp(reply,request,4)&&reply[4]==0&&reply[5]==4&&reply[6]==1&&reply[7]==2&&reply[8]==1&&reply[9]<=1;
-    close(sock);if(ok)*closed=reply[9]==1;return ok;
-}

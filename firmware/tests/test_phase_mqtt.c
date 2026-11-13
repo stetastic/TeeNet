@@ -18,14 +18,20 @@ static int64_t wallbox_meter_ttl(void){return 5000;}
 static int64_t now_ms(void){return clock_ms;}
 static bool phase_test_active;static bool phase_config_saving,reboot_required;static uint8_t phase_test_goal;
 static void phase_test_end_locked(void){phase_test_active=false;}
+#include "phase_voltage.h"
+static phase_voltage_proof_t phase_voltage;
+static unsigned phase_voltage_observed_locked(int64_t now){return wifi_online?phase_voltage_observed(&phase_voltage,now):0;}
 #include "phase_mqtt_runtime.inc"
 static unsigned phase_observed(void){return 0;}
 static unsigned evcc_desired_phases(const void *unused,unsigned active){(void)unused;return evcc_control.enabled?evcc_control.phases:active;}
 static float phase_surplus_w_locked(int64_t now){(void)now;return solar_w;}
 static void phase_shelly_guard_locked(int64_t now){(void)now;}
+static bool phase_shelly_rechecking,phase_shelly_uncertain;
+static int64_t phase_shelly_recheck_at,phase_shelly_at;
 static bool phase_shelly_remote(void){return false;}
 static bool phase_shelly_motion_complete_locked(unsigned goal,int64_t now){(void)goal;(void)now;return false;}
 static bool phase_actuator_begin_locked(uint8_t goal,int64_t now){return phase_mqtt_begin_locked(goal,now);}
+static float vehicle_phase_surplus_locked(float w){return w;}
 #include "phase_controller.inc"
 static int phase_mqtt_send_lock,mqtt_client=1,locks,published,result,revoked_in_publish;
 static char topic_sent[128],payload_sent[8];
@@ -87,6 +93,24 @@ static void one_phase(void){
     step(19000,0,0,0);assert(phase_state==PHASE_READY&&settings.charge_phases==1);
 }
 int main(void){
+    /* A successful MQTT publish does not prove the contactor switched. Only
+       fresh voltage data AFTER that command can finish verified motion. */
+    fixture();settings.phase_feedback_source=1;settings.phase_feedback_enabled=true;
+    strcpy(settings.phase_voltage_host,"192.168.1.89");
+    phase_mqtt_assumed=1;phase_mqtt_sent_at=10000;
+    const float single_v[3]={230,0,0},three_v[3]={230,231,232};
+    phase_voltage_sample(&phase_voltage,single_v,true,9000);
+    phase_voltage_sample(&phase_voltage,single_v,true,9500);
+    assert(!phase_mqtt_motion_complete_locked(1,12000));
+    phase_voltage_sample(&phase_voltage,single_v,true,12000);
+    assert(phase_mqtt_motion_complete_locked(1,12000));
+    assert(!phase_mqtt_motion_complete_locked(3,12000));
+    assert(!phase_mqtt_motion_complete_locked(1,16000));
+    phase_voltage_sample(&phase_voltage,three_v,true,16000);
+    assert(!phase_mqtt_motion_complete_locked(1,16000));
+    phase_voltage_sample(&phase_voltage,single_v,false,16500);
+    assert(!phase_mqtt_motion_complete_locked(1,16500));
+    memset(&phase_voltage,0,sizeof(phase_voltage));
     fixture();assert(settings_valid(&settings)&&phase_mqtt_supported_locked());
     char topic[128];assert(phase_mqtt_output_topic(&settings,topic,sizeof(topic)));
     for(const char **p=(const char *[]){"wallbox-ems/command/phases","wallbox-ems/input/phases","bad/+","bad/#","$SYS/set",NULL};*p;p++){

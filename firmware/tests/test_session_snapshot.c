@@ -39,6 +39,8 @@ int main(void){
     assert(session_snapshot_recent(copy,0)->id==3&&session_snapshot_recent(copy,1)->id==2&&!session_snapshot_recent(copy,2));
     assert(allocated_bytes==sizeof(*copy)+2*sizeof(charge_session_t)&&allocated_bytes<sizeof(session_store_t)/100);
     test_free(copy);
+    append(4,20261012);sessions.store.records[(sessions.store.next_slot+CHARGE_SESSION_CAPACITY-1)%CHARGE_SESSION_CAPACITY].grid_wh=999;
+    copy=session_snapshot_create(&filter,0);assert(copy&&copy->count==2&&copy->retained==3&&!copy->active_id);test_free(copy);
     copy=session_snapshot_create(NULL,20261012);assert(copy&&copy->count==1&&copy->records[0].id==3);test_free(copy);
     unsigned before=allocations;insert_during_allocation=true;copy=session_snapshot_create(&filter,0);
     assert(copy&&copy->count==3&&copy->records[0].id==99&&allocations==before+2&&live==1);test_free(copy);

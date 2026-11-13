@@ -24,7 +24,7 @@ static int gpio_config(const gpio_config_t *c){if(c->mode==GPIO_MODE_OUTPUT){out
 #include "gpio_relay_actual.inc"
 static unsigned observed(void){
     bool energized=hardware_low?!levels[12]:levels[12];
-    return phase_feedback_contacts(!energized,false,1,false);
+    return energized?1:3;
 }
 static void fixture(bool low){
     settings_defaults(&settings);settings.basic_mode=false;

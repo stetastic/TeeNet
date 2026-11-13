@@ -25,6 +25,17 @@
       if(!valid(restored))cfg=restored;
     }
   }catch{}
+  // Reset only the old showcase choice once; later visitor choices remain saved.
+  if(window.teenetDemoShowcase&&!window.teenetLocalDemoFeatures){
+    try{
+      const migration='teenet-demo-heatpump-start-v1';
+      if(localStorage.getItem(migration)!=='1'){
+        cfg.heatpump_enabled=false;
+        localStorage.setItem(storage,JSON.stringify(cfg));
+        localStorage.setItem(migration,'1');
+      }
+    }catch{}
+  }
   function effective(base){
     for(const key of ['basic_mode','mqtt_enabled'])if(typeof base[key]==='boolean')baseFlags[key]=base[key];
     // Selecting basic operation must not reactivate an old optional meter later.

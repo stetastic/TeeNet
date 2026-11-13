@@ -110,13 +110,20 @@ static esp_err_t github_post(httpd_req_t *req){
     bool valid=cJSON_IsString(a)&&(install||!strcmp(a->valuestring,"check"))&&cJSON_GetArraySize(o)==1;cJSON_Delete(o);
     if(!valid)return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Update-Aktion ungueltig.");
     LOCK();int64_t now=now_ms();bool allowed=wifi_online&&!restarting&&!ota_in_progress&&!github_update.running;
+    /* A browser's background TLS check must not compete for Atom RAM while
+       charging or while a private controller owns the output. Reserve the
+       same measured stopped state used by parameter maintenance. */
+    if(!install)allowed=allowed&&expert_stopped_locked();
+#if CONFIG_TEE_HTTP_CONTROL_TRIAL
+    if(!install)allowed=allowed&&!shell_http_trial.armed&&!normal_offset_trial.armed;
+#endif
     if(install)allowed=allowed&&github_update.ok&&now-github_update.checked_at<600000&&
         firmware_version_compare(github_update.release.version,EMS_VERSION)>0&&!settings.enabled&&
         ota_install_allowed_locked(now);
     if(allowed){github_update.running=true;github_update.install=install;github_update.progress=0;
         strcpy(github_update.message,install?"Firmware wird von GitHub geladen.":"GitHub wird geprueft.");if(install){ota_in_progress=true;settings.enabled=false;}}
     UNLOCK();
-    if(!allowed){httpd_resp_set_status(req,"409 Conflict");return httpd_resp_sendstr(req,install?"Version erneut pruefen und Ladung zuerst stoppen.":"Heimnetz verbinden und laufende Wartung abwarten.");}
+    if(!allowed){httpd_resp_set_status(req,"409 Conflict");return httpd_resp_sendstr(req,install?"Version erneut pruefen und Ladung zuerst stoppen.":"Update-Pruefung erst im Stillstand ohne laufenden Test oder Wartung moeglich.");}
     if(xTaskCreate(github_worker,"github_update",10240,(void *)(uintptr_t)install,1,NULL)!=pdPASS){LOCK();github_update.running=false;if(install)ota_in_progress=false;UNLOCK();return httpd_resp_send_err(req,HTTPD_500_INTERNAL_SERVER_ERROR,"Zu wenig Arbeitsspeicher fuer GitHub-Update.");}
     return github_get(req);
 }

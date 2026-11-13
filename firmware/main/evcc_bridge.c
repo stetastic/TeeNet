@@ -45,8 +45,10 @@ bool evcc_shell_parse(const char *body, evcc_shell_t *out) {
         }
     }
     if (!found) {strcpy(out->reason,"connector_missing");cJSON_Delete(root);return false;}
+    shell_http_sample_parse(found,&out->http_control);
     const cJSON *connector_status=cJSON_GetObjectItemCaseSensitive(found,"status");
     const cJSON *transaction=cJSON_GetObjectItemCaseSensitive(found,"transaction");
+    vehicle_session_parse(transaction,&out->session);
     const cJSON *status=cJSON_IsObject(transaction)?cJSON_GetObjectItemCaseSensitive(transaction,"statusCar"):NULL;
     const cJSON *session=cJSON_IsObject(transaction)?cJSON_GetObjectItemCaseSensitive(transaction,"status"):NULL;
     const char *raw=cJSON_IsString(status)&&status->valuestring[0]?status->valuestring:

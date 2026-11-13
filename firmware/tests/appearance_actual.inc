@@ -12,7 +12,7 @@ static esp_err_t theme_get(httpd_req_t *req) {
     cJSON_AddStringToObject(o,"theme",selected==2?"dark":selected==1?"light":"unset");
     cJSON_AddStringToObject(o,"view",view==1?"graphic":"standard");
     cJSON_AddStringToObject(o,"density",density==1?"compact":"standard");
-    cJSON_AddBoolToObject(o,"graphic_notice_pending",graphic_seen<1);
+    cJSON_AddBoolToObject(o,"graphic_notice_pending",false);
     return send_json(req,o);
 }
 
@@ -38,3 +38,7 @@ static esp_err_t theme_post(httpd_req_t *req) {
     return theme_get(req);
 }
 
+#if CONFIG_TEE_HTTP_CONTROL_TRIAL
+#include "tcp_pcb_diagnostic.inc"
+#include "shell_http_trial_snapshot.inc"
+#endif

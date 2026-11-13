@@ -64,9 +64,30 @@ static void telemetry_task(void *arg){
     for(;;){
         vTaskDelay(ticks(5000));
         if(!TELEMETRY_ENDPOINT[0]||!telemetry_lock||xSemaphoreTake(telemetry_lock,0)!=pdTRUE)continue;
-        int64_t now=now_ms();LOCK();telemetry_config_t c=telemetry_config;
-        bool due=telemetry_due(&c,terms_accepted,wifi_online,ota_in_progress||restarting,now,telemetry_next_at);UNLOCK();
-        if(!due||time(NULL)<1735689600||esp_get_free_heap_size()<60000){xSemaphoreGive(telemetry_lock);continue;}
+        LOCK();int64_t now=now_ms();telemetry_config_t c=telemetry_config;
+        bool due=telemetry_due(&c,terms_accepted,wifi_online,
+            ota_in_progress||restarting||backup_in_progress||boot_validation_pending,now,telemetry_next_at);
+        telemetry_runtime_t runtime={
+            .charging_requested=settings.enabled||evcc_control.enabled,
+            .phase_busy=phase_config_saving||(settings.phase_switch_enabled&&
+                (phase_startup||phase_state!=PHASE_READY||phase_shelly_pending||phase_shelly_inflight||
+                 phase_shelly_rechecking||phase_mqtt_pending||phase_mqtt_inflight)),
+            .test_active=phase_test_active,
+            .current_fresh=fresh(now,actual_at,wallbox_meter_ttl()),
+            .shell_configured=evcc_control.configured||settings.shell_limits_auto||
+                settings.shell_setup_host[0]||shell_active_host[0],
+            .shell_known=shell_vehicle_fresh(&evcc_shell,evcc_shell_at,now),
+            .session_present=evcc_shell.session.present,.vehicle_state=evcc_shell.state,
+            .current_a={actual_a[0],actual_a[1],actual_a[2]}};
+#if CONFIG_TEE_HTTP_CONTROL_TRIAL
+        runtime.test_active=runtime.test_active||normal_offset_trial.armed||shell_http_trial.armed;
+#endif
+        UNLOCK();
+        runtime.internal_free=heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);
+        runtime.internal_largest=heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);
+        /* Defer without changing consent, pending deletion or the due time.
+           On a small Atom this may remain pending until enough RAM is free. */
+        if(!due||time(NULL)<1735689600||!telemetry_runtime_ready(&runtime)){xSemaphoreGive(telemetry_lock);continue;}
         char body[288],auth[73];
         if(c.delete_pending)snprintf(body,sizeof(body),"{\"id\":\"%s\"}",c.id);
         else snprintf(body,sizeof(body),"{\"id\":\"%s\",\"version\":\"%s\",\"build\":\"%s\",\"hardware\":\"%s\",\"consent_revision\":\"%s\"}",c.id,VERSION,EMS_BUILD_ID,EMS_HARDWARE_ID,TELEMETRY_REVISION);

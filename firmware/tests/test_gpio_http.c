@@ -1,4 +1,5 @@
 #include "ems_core.h"
+#include "expert_standards.h"
 static bool phase_test_active;
 #include "hardware_profile.h"
 #include "cJSON.h"
@@ -46,22 +47,22 @@ static void fixture(void){settings_defaults(&settings);saved_settings=settings;p
 static httpd_req_t post(const char *json){httpd_req_t req={0};cJSON *o=cJSON_Parse(json);assert(o);assert(gpio_post(&req,o)==0&&!locks);return req;}
 int main(void){
  (void)phase_config_gate_locked;(void)phase_config_gate_message;
- fixture();httpd_req_t r=post("{\"values\":{\"xemex_tx_pin\":8,\"xemex_rx_pin\":9,\"phase_feedback_pin\":15}} ");
- assert(r.status==200&&writes==1&&reboot_required);assert(saved_settings.xemex_tx_pin==8&&settings.xemex_tx_pin==4&&persisted.phase_feedback_pin==15);
- cJSON *snap=gpio_snapshot();assert(cJSON_GetArraySize(cJSON_GetObjectItem(snap,"roles"))==12&&cJSON_GetArraySize(cJSON_GetObjectItem(snap,"pins"))==49);cJSON_Delete(snap);
+ fixture();httpd_req_t r=post("{\"values\":{\"xemex_tx_pin\":8,\"xemex_rx_pin\":9,\"relay1_pin\":15}} ");
+ assert(r.status==200&&writes==1&&reboot_required);assert(saved_settings.xemex_tx_pin==8&&settings.xemex_tx_pin==4&&persisted.relay1_pin==15);
+ cJSON *snap=gpio_snapshot();assert(cJSON_GetArraySize(cJSON_GetObjectItem(snap,"roles"))==10&&cJSON_GetArraySize(cJSON_GetObjectItem(snap,"pins"))==49);cJSON_Delete(snap);
  fixture();settings.enabled=true;r=post("{\"values\":{\"xemex_tx_pin\":8}}");assert(r.status==409&&!writes);
  fixture();actual_at=1000;r=post("{\"values\":{\"xemex_tx_pin\":8}}");assert(r.status==409&&!writes);
  fixture();actual_at=9000;actual_a[0]=1.1;r=post("{\"values\":{\"xemex_tx_pin\":8}}");assert(r.status==409&&!writes);
  fixture();race_start=1;r=post("{\"values\":{\"xemex_tx_pin\":8}}");assert(r.status==409&&!writes&&!reboot_required);
  fixture();save_error=ESP_FAIL;r=post("{\"values\":{\"xemex_tx_pin\":8}}");assert(r.status==500&&writes==1&&!reboot_required&&saved_settings.xemex_tx_pin==4);
- const char *bad[]={"{\"values\":{\"relay1_pin\":0}}","{\"values\":{\"xemex_tx_pin\":17}}","{\"values\":{\"xemex_tx_pin\":8.5}}","{\"values\":{\"xemex_tx_pin\":8,\"xemex_tx_pin\":9}}","{\"values\":{\"wifi_password\":1}}","{\"values\":{}}"};
+ const char *bad[]={"{\"values\":{\"relay1_pin\":17}}","{\"values\":{\"relay1_pin\":0}}","{\"values\":{\"xemex_tx_pin\":17}}","{\"values\":{\"xemex_tx_pin\":8.5}}","{\"values\":{\"xemex_tx_pin\":8,\"xemex_tx_pin\":9}}","{\"values\":{\"wifi_password\":1}}","{\"values\":{}}"};
  for(unsigned i=0;i<sizeof(bad)/sizeof(*bad);i++){fixture();r=post(bad[i]);assert(r.status==400&&!writes&&!reboot_required);}
- fixture();phase_state=PHASE_FAULT;r=post("{\"values\":{\"phase_feedback_pin\":15}}");assert(r.status==200&&writes==1);
+ fixture();phase_state=PHASE_FAULT;r=post("{\"values\":{\"relay1_pin\":15}}");assert(r.status==200&&writes==1);
  fixture();settings.phase_actuator_type=saved_settings.phase_actuator_type=1;phase_state=PHASE_MOVING;phase_startup=true;actual_at=9000;
- r=post("{\"values\":{\"phase_feedback_pin\":15}}");assert(r.status==200&&writes==1);
- fixture();phase_config_saving=true;r=post("{\"values\":{\"phase_feedback_pin\":15}}");assert(r.status==409&&!writes);phase_config_saving=false;
- fixture();phase_state=PHASE_MOVING;phase_startup=false;r=post("{\"values\":{\"phase_feedback_pin\":15}}");assert(r.status==409&&!writes);
- fixture();phase_state=PHASE_MOVING;phase_startup=true;phase_shelly_inflight=true;r=post("{\"values\":{\"phase_feedback_pin\":15}}");assert(r.status==409&&!writes);phase_shelly_inflight=false;phase_startup=false;
+ r=post("{\"values\":{\"relay1_pin\":15}}");assert(r.status==200&&writes==1);
+ fixture();phase_config_saving=true;r=post("{\"values\":{\"relay1_pin\":15}}");assert(r.status==409&&!writes);phase_config_saving=false;
+ fixture();phase_state=PHASE_MOVING;phase_startup=false;r=post("{\"values\":{\"relay1_pin\":15}}");assert(r.status==409&&!writes);
+ fixture();phase_state=PHASE_MOVING;phase_startup=true;phase_shelly_inflight=true;r=post("{\"values\":{\"relay1_pin\":15}}");assert(r.status==409&&!writes);phase_shelly_inflight=false;phase_startup=false;
  puts("PASS: actual GPIO endpoint: first setup, no live remap, commit reservation, active/stale/current locks, write failure rollback, conflicting/duplicate/unknown values and two-step stop recheck");
  return 0;
 }

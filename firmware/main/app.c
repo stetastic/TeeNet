@@ -1,25 +1,42 @@
 #include "ems_core.h"
+#include "charge_voltage.h"
 #include "opendtu_mqtt.h"
 #include "github_release.h"
 #include "esp_flash.h"
 #include "mbedtls/sha256.h"
 #include "charge_sessions.h"
+#include "charge_counter.h"
+#include "charge_curve.h"
+#include "soc_goal.h"
+#include "expert_standards.h"
+#include "plan_store.h"
+#include "meter_hold.h"
 #include "ems_features.h"
 #include "diagnostic_store.h"
 #include "firmware_check.h"
 #include "hardware_profile.h"
 #include "http_encoding.h"
 #include "boot_check.h"
+#include "mdns.h"
 #include "ems_build.h"
 
 #include "evcc_bridge.h"
+#include "http_display_estimate.h"
+#include "shell_http_runtime.h"
+#include "normal_offset_trial.h"
 #include "meter_json.h"
 #include "shelly_modbus.h"
+#include "wallbox_modbus_session.h"
 #include "shelly_phase.h"
 #include "em24_modbus.h"
 #include "huawei_modbus.h"
+#include "sungrow_modbus.h"
 
 #include <math.h>
+#include "vehicle_profiles.h"
+#include "mbedtls/base64.h"
+static float vehicle_limit_current_locked(float current);
+static float vehicle_phase_surplus_locked(float watts);
 #include <limits.h>
 
 #include <stdio.h>
@@ -99,8 +116,6 @@
 #define HOUSE_UART UART_NUM_0
 
 #define STATUS_LED_GPIO settings.status_led_pin
-#define PHASE_FEEDBACK_GPIO settings.phase_feedback_pin
-#define PHASE_FEEDBACK_SECOND_GPIO settings.phase_feedback_second_pin
 
 #define LOCK() xSemaphoreTake(state_lock,portMAX_DELAY)
 
@@ -113,6 +128,12 @@ static evcc_shell_t evcc_shell={.state='?',.reason="pending"};
 static char evcc_host[64],evcc_key[33];
 static int64_t evcc_shell_at;
 static int evcc_shell_http_code;
+static shell_http_runtime_t http_regulator;
+#if CONFIG_TEE_HTTP_CONTROL_TRIAL
+static shell_http_control_t shell_http_trial;
+static normal_offset_trial_t normal_offset_trial;
+static uint32_t trial_uart_sequence,trial_http_sequence;
+#endif
 static uint32_t evcc_poll_generation;
 static bool evcc_configuring;
 #define TERMS_REVISION "2026-10-09.2"
@@ -121,6 +142,8 @@ static void telemetry_json(cJSON *o);
 static uint32_t loaded_settings_version;
 
 static energy_t energy;
+static charge_counter_t charge_counter;
+typedef struct {uint32_t version;energy_store_t totals;charge_counter_checkpoint_t counter;} meter_totals_t;
 static double energy_reset_wh[EMS_SOURCES];
 static uint32_t energy_reset_date;
 static sessions_t sessions;
@@ -130,6 +153,7 @@ static bool fault_dirty,fault_storage_ok=true;
 static uint32_t fault_revision;
 static int64_t fault_save_attempt;
 static charge_plan_t charge_plan;
+static soc_goal_t soc_goal;
 static plan_phase_t plan_phase;
 static bool plan_dirty;
 static bool plan_storage_ok=true;
@@ -162,7 +186,7 @@ static struct {
 } meter_preview;
 static int64_t shelly_scan_started;
 
-static SemaphoreHandle_t state_lock,wifi_action_lock;
+static SemaphoreHandle_t state_lock,wifi_action_lock,status_snapshot_lock;
 
 static esp_mqtt_client_handle_t mqtt_client;
 
@@ -349,10 +373,8 @@ static void load_settings(void) {
     settings.wallbox_address=1;
     settings.house_xemex_coils=3;
     settings.reserved_http_meter_enabled=false;
-    /* Repeated vehicle tests established 6.0 kW as the reliable three-phase
-       floor. Normalize earlier 8.0/8.8 A commissioning values accordingly. */
-    if(settings.min_charge_a>=8.0f && settings.min_charge_a<=8.81f)
-        settings.min_charge_a=8.7f;
+    /* The authenticated expert loader applies the saved current floor.
+       Do not overwrite an explicitly commissioned value with an older floor. */
     if(settings.manual_current_a>0 && settings.manual_current_a<settings.min_charge_a)
         settings.manual_current_a=settings.min_charge_a;
     settings.reserved_http_meter_host[0]=0;
@@ -421,6 +443,8 @@ static esp_err_t save_config(const settings_t *config) {
 
 }
 
+#include "session_storage.inc"
+#include "charge_curve_runtime.inc"
 static void load_energy(void) {
 
     energy.store.version=2;
@@ -431,6 +455,8 @@ static void load_energy(void) {
     nvs_handle_t nvs;
 
     if(stats_storage_ok && nvs_open_from_partition("stats","energy",NVS_READONLY,&nvs)==ESP_OK) {
+
+        load_charge_curve(nvs);
 
         size_t size=0; esp_err_t err=nvs_get_blob(nvs,"totals",NULL,&size);
         if(err==ESP_OK) {
@@ -447,6 +473,13 @@ static void load_energy(void) {
             storage_error=true; stats_storage_ok=false;
         }
 
+        meter_totals_t *meter_saved=malloc(sizeof(*meter_saved));
+        if(meter_saved){size=sizeof(*meter_saved);err=nvs_get_blob(nvs,"meter_totals",meter_saved,&size);
+            if(err==ESP_OK&&size==sizeof(*meter_saved)&&meter_saved->version==1&&energy_store_valid(&meter_saved->totals)&&charge_counter_checkpoint_valid(&meter_saved->counter)){
+                energy.store=meter_saved->totals;charge_counter.saved=meter_saved->counter;charge_counter.restored=true;
+            }
+            free(meter_saved);
+        }
         size=0;
         err=nvs_get_blob(nvs,"sessions",NULL,&size);
         if(err==ESP_OK){
@@ -455,6 +488,7 @@ static void load_energy(void) {
             else{err=nvs_get_blob(nvs,"sessions",blob,&size);if(err==ESP_OK&&!sessions_restore(&sessions,blob,size,settings.price_kwh,settings.solar_price_kwh))err=ESP_ERR_INVALID_SIZE;free(blob);}
         }
         if(err!=ESP_OK&&err!=ESP_ERR_NVS_NOT_FOUND){storage_error=true;stats_storage_ok=false;}
+        if(session_chunks_load(nvs)<0){storage_error=true;stats_storage_ok=false;}
 
         size=sizeof(energy_reset_wh);
         err=nvs_get_blob(nvs,"reset_base",energy_reset_wh,&size);
@@ -472,21 +506,33 @@ static void load_energy(void) {
 static bool save_energy(void) {
 
     if(!stats_storage_ok) return false;
+    /* Never compete with a status tree, and never stall the control loop while
+       a slow HTTP client retains one. A skipped checkpoint is retried soon. */
+    if(xSemaphoreTake(status_snapshot_lock,0)!=pdTRUE)return false;
 
-    energy_store_t *snapshot=malloc(sizeof(*snapshot));
-    session_store_t *session_snapshot=malloc(sizeof(*session_snapshot));
-
-    if(!snapshot||!session_snapshot) { free(snapshot);free(session_snapshot);LOCK(); storage_error=true; UNLOCK(); return false; }
-
-    double reset_snapshot[EMS_SOURCES];uint32_t reset_date_snapshot;
-    LOCK(); *snapshot=energy.store;*session_snapshot=sessions.store;memcpy(reset_snapshot,energy_reset_wh,sizeof(reset_snapshot));reset_date_snapshot=energy_reset_date; UNLOCK();
+    meter_totals_t *snapshot=malloc(sizeof(*snapshot));
+    session_checkpoint_t *session_snapshot=NULL;
+    double reset_snapshot[EMS_SOURCES]={0};uint32_t reset_date_snapshot=0;
+    bool captured=false;
+    for(unsigned attempt=0;snapshot&&attempt<3&&!captured;attempt++){
+        LOCK();unsigned count=sessions.store.count;UNLOCK();
+        if(count>CHARGE_SESSION_CAPACITY)break;
+        session_snapshot=malloc(sizeof(*session_snapshot)+count*sizeof(session_snapshot->records[0]));
+        if(!session_snapshot)break;
+        LOCK();captured=session_checkpoint_copy(session_snapshot,count,&sessions.store);
+        if(captured){*snapshot=(meter_totals_t){.version=1,.totals=energy.store,.counter=charge_counter.saved};if(!snapshot->counter.version)snapshot->counter.version=1;memcpy(reset_snapshot,energy_reset_wh,sizeof(reset_snapshot));reset_date_snapshot=energy_reset_date;}
+        UNLOCK();
+        if(!captured){free(session_snapshot);session_snapshot=NULL;}
+    }
+    if(!captured){free(snapshot);free(session_snapshot);LOCK();storage_error=true;UNLOCK();xSemaphoreGive(status_snapshot_lock);ESP_LOGW(TAG,"Energy snapshot allocation failed");return false;}
 
     nvs_handle_t nvs; esp_err_t err=nvs_open_from_partition("stats","energy",NVS_READWRITE,&nvs);
 
     if(err==ESP_OK) {
 
-        err=nvs_set_blob(nvs,"totals",snapshot,sizeof(*snapshot));
-        if(err==ESP_OK)err=nvs_set_blob(nvs,"sessions",session_snapshot,sizeof(*session_snapshot));
+        err=nvs_set_blob(nvs,"meter_totals",snapshot,sizeof(*snapshot));
+        if(err==ESP_OK)err=nvs_set_blob(nvs,"totals",&snapshot->totals,sizeof(snapshot->totals));
+        if(err==ESP_OK)err=session_chunks_save_checkpoint(nvs,session_snapshot);
         if(err==ESP_OK)err=nvs_set_blob(nvs,"reset_base",reset_snapshot,sizeof(reset_snapshot));
         if(err==ESP_OK)err=nvs_set_u32(nvs,"reset_date",reset_date_snapshot);
 
@@ -497,6 +543,8 @@ static bool save_energy(void) {
     }
 
     free(snapshot);free(session_snapshot); LOCK(); storage_error=err!=ESP_OK; if(err==ESP_OK){last_saved_ms=now_ms();sessions.checkpoint=false;} UNLOCK();
+    xSemaphoreGive(status_snapshot_lock);
+    if(err!=ESP_OK)ESP_LOGW(TAG,"Energy save failed: %s",esp_err_to_name(err));
 
     return err==ESP_OK;
 
@@ -510,7 +558,7 @@ static bool network_wallbox_meter(void) {
     return shelly_meter_type(settings.wallbox_meter_type) || !strcmp(settings.wallbox_meter_type,"em24_tcp");
 }
 static bool network_house_meter(void) {
-    return !strcmp(settings.house_meter_type,"tasmota") || !strcmp(settings.house_meter_type,"huawei") || !strcmp(settings.house_meter_type,"em24_tcp") || shelly_meter_type(settings.house_meter_type);
+    return !strcmp(settings.house_meter_type,"tasmota") || !strcmp(settings.house_meter_type,"sungrow") || !strcmp(settings.house_meter_type,"huawei") || !strcmp(settings.house_meter_type,"em24_tcp") || shelly_meter_type(settings.house_meter_type);
 }
 /* A missed network poll must not stop charging immediately. Direct RS485
    measurements keep their tighter timeout; network meters get a short grace
@@ -524,6 +572,18 @@ static int64_t house_meter_ttl(void) {
 static bool feedback_ready(int64_t now) {
     return meter_ready && (!network_wallbox_meter() || fresh(now,actual_at,wallbox_meter_ttl()));
 }
+static bool http_regulation_ready_locked(int64_t now) {
+    return !evcc_control.configured&&shell_vehicle_fresh(&evcc_shell,evcc_shell_at,now)&&evcc_shell.state!='F'&&
+        shell_http_trial_fresh(&evcc_shell.http_control,evcc_shell_at,now)&&!http_regulator.control.fault;
+}
+static bool control_currents_locked(int64_t now,float out[3]) {
+    if(settings.shell_http_control_enabled){
+        shell_http_runtime_currents(settings.enabled,http_regulator.control.fault,&evcc_shell.http_control,
+            evcc_shell_at,now,settings.charge_phases,out);
+        return http_regulation_ready_locked(now);
+    }
+    memcpy(out,actual_a,sizeof(actual_a));return fresh(now,actual_at,wallbox_meter_ttl());
+}
 static bool serial_house_meter(void) { return !strcmp(settings.house_meter_type,"xemex") || sdm_profile(settings.house_meter_type)!=NULL; }
 static bool house_power_capable(void) { return network_house_meter() || sdm_profile(settings.house_meter_type)!=NULL; }
 static bool house_three_phase_current(void) {
@@ -534,22 +594,22 @@ static bool house_three_phase_current(void) {
 }
 
 static bool unsupported_meter(void) {
-    return strcmp(settings.wallbox_meter_type,"xemex") && !sdm_meter() && !network_wallbox_meter();
+    return !settings.shell_http_control_enabled && strcmp(settings.wallbox_meter_type,"xemex") && !sdm_meter() && !network_wallbox_meter();
 }
 
 static float active_min_a(void) { return settings.min_charge_a; }
 
     /* Fixed contact assignment: GPIO13 closed to GND confirms three phases;
        optional GPIO14 closed confirms one phase. Two contacts must be opposite. */
+#include "phase_voltage_runtime.inc"
 #include "phase_mqtt_runtime.inc"
 #include "phase_shelly_runtime.inc"
 #include "phase_config_guard.inc"
 #include "phase_test_runtime.inc"
 static uint8_t phase_observed(void) {
     if(phase_shelly_remote())return (uint8_t)phase_shelly_observed_locked(now_ms());
-    return settings.phase_feedback_enabled?(uint8_t)phase_feedback_contacts(gpio_get_level(PHASE_FEEDBACK_GPIO)==0,
-        settings.phase_feedback_count==2&&gpio_get_level(PHASE_FEEDBACK_SECOND_GPIO)==0,
-        settings.phase_feedback_count,settings.phase_feedback_closed_is_single):0;
+    if(phase_uses_voltage(&settings))return (uint8_t)phase_voltage_observed_locked(now_ms());
+    return 0; /* No auxiliary contacts: only optional downstream voltage is observed. */
 }
 
 static bool phase_can_unlock_locked(int64_t now) {
@@ -598,13 +658,7 @@ static void phase_setup(void) {
     relay_ready=gpio_config(&output)==ESP_OK;
     relay_set(0,false);
     if(!settings.phase_switch_enabled) return;
-    if(!settings.phase_feedback_enabled) phase_gpio_ready=relay_ready;
-    else {
-        gpio_config_t input={.pin_bit_mask=(1ULL<<PHASE_FEEDBACK_GPIO)|
-            (settings.phase_feedback_count==2?(1ULL<<PHASE_FEEDBACK_SECOND_GPIO):0),.mode=GPIO_MODE_INPUT,
-            .pull_up_en=GPIO_PULLUP_ENABLE,.pull_down_en=GPIO_PULLDOWN_DISABLE,.intr_type=GPIO_INTR_DISABLE};
-        phase_gpio_ready=relay_ready && gpio_config(&input)==ESP_OK;
-    }
+    phase_gpio_ready=relay_ready;
     if(!phase_gpio_ready) phase_state=PHASE_FAULT;
     else {
         /* Let the deenergized contactor return before evaluating position.
@@ -653,12 +707,22 @@ static void contacts_step_locked(int64_t now) {
     else evu_contact.stable=false;
 }
 
+static charge_voltage_t wallbox_voltage;
+static bool selected_meter_voltage_locked(int64_t now){
+    float values[3];bool valid=charge_voltage_get(&wallbox_voltage,&settings,wallbox_meter_revision,
+        wifi_online,now,wallbox_meter_ttl(),values);
+    if(valid)ems_phase_voltage_override(values,true);
+    return valid;
+}
+#include "personal_runtime.inc"
+
 static battery_power_t battery_power_locked(int64_t now) {
     return battery_power_normalize(battery_charge_w,battery_discharge_w,battery_charge_at,battery_discharge_at,now,EMS_INPUT_TTL);
 }
 static float allocation_grid_locked(int64_t now,float grid_w) {
     battery_power_t power=battery_power_locked(now);
-    return pv_allocation_grid(&settings,actual_a,grid_w,power.charge_w,power.discharge_w,battery_soc,
+    float currents[3];control_currents_locked(now,currents);
+    return pv_allocation_grid(&settings,currents,grid_w,power.charge_w,power.discharge_w,battery_soc,
         power.fresh && fresh(now,battery_soc_at,EMS_INPUT_TTL));
 }
 
@@ -680,9 +744,11 @@ static float phase_surplus_w_locked(int64_t now) {
 #include "phase_status.inc"
 #include "phase_controller.inc"
 
+#include "meter_hold_runtime.inc"
+
 static bool pv_fresh_locked(int64_t now) {
 
-    return settings.zero_feed_enabled?(fresh(now,house_power_at,house_meter_ttl()) && fresh(now,pv_at,house_meter_ttl())):fresh(now,pv_at,EMS_INPUT_TTL);
+    return settings.zero_feed_enabled?(fresh(now,house_power_at,house_meter_ttl()) && (fresh(now,pv_at,house_meter_ttl())||wallbox_meter_hold_locked(now))):fresh(now,pv_at,EMS_INPUT_TTL);
 
 }
 
@@ -695,8 +761,9 @@ static bool battery_ready_locked(int64_t now) {
 static float pv_available_current_locked(int64_t now,float grid_w) {
     grid_w=allocation_grid_locked(now,grid_w);
     battery_power_t power=battery_power_locked(now);
-    bool charging=pv_control.target_a>0 && fmaxf(actual_a[0],fmaxf(actual_a[1],actual_a[2]))>=1;
-    return battery_support_current(&battery_buffer,&settings,actual_a,grid_w,battery_soc,
+    float currents[3];control_currents_locked(now,currents);
+    bool charging=pv_control.target_a>0 && fmaxf(currents[0],fmaxf(currents[1],currents[2]))>=1;
+    return battery_support_current(&battery_buffer,&settings,currents,grid_w,battery_soc,
         fresh(now,battery_soc_at,EMS_INPUT_TTL),power.discharge_w,power.fresh,
         battery_use,battery_start_use,charging,active_min_a(),now);
 }
@@ -708,9 +775,9 @@ static bool pv_permitted_locked(int64_t now) {
 
         !phase_test_active && !restart_pending() && !restarting && !ota_in_progress && !phase_mqtt_saving && !unsupported_meter() &&
 
-        feedback_ready(now) && wallbox_ready && fresh(now,meter_at,wallbox_meter_ttl()) &&
+        wallbox_control_ready_locked(now) && wallbox_ready &&
 
-        fresh(now,actual_at,wallbox_meter_ttl()) && fresh(now,wallbox_at,ems_param_ms(EP_SHELL_TTL)) && pv_fresh_locked(now);
+        fresh(now,wallbox_at,ems_param_ms(EP_SHELL_TTL)) && pv_fresh_locked(now);
 
 }
 
@@ -719,6 +786,13 @@ static bool house_currents_ready_locked(int64_t now) {
 }
 
 static float unlatched_target_locked(int64_t now) {
+#if CONFIG_TEE_HTTP_CONTROL_TRIAL
+    if(!normal_offset_trial_ready(&normal_offset_trial,now))return 0;
+    if(shell_http_trial.armed&&(settings.mode!=MODE_MANUAL||
+       !shell_http_trial_ready(&shell_http_trial,&evcc_shell.http_control,evcc_shell_at,now)||
+       !shell_vehicle_fresh(&evcc_shell,evcc_shell_at,now)||evcc_shell.state=='F'))return 0;
+#endif
+    if(settings.shell_http_control_enabled&&(!http_regulation_ready_locked(now)||!http_regulator.running))return 0;
     if(!terms_accepted || evcc_configuring || phase_mqtt_saving)return 0;
     if(evcc_control.configured && (!evcc_control.enabled || evcc_control.inhibited || evcc_control.expired ||
        evcc_control.last_contact<=0 || now<evcc_control.last_contact || now-evcc_control.last_contact>=EVCC_LEASE_MS ||
@@ -728,6 +802,10 @@ static float unlatched_target_locked(int64_t now) {
 
     if(phase_config_saving || phase_test_active || restart_pending() || restarting || ota_in_progress || unsupported_meter()) return 0;
     if(settings.phase_switch_enabled && (phase_state!=PHASE_READY || phase_idle_inhibit)) return 0;
+    /* A manual phase request is committed before the controller's candidate
+       debounce. Keep UART start permission blocked on the old physical phases. */
+    if(settings.phase_switch_enabled && !evcc_control.configured && settings.mode==MODE_MANUAL &&
+       settings.manual_phases!=settings.charge_phases) return 0;
     if(charge_plan.active && plan_phase==PLAN_CLOCK)return 0;
 
     if(settings.mode==MODE_PV) {
@@ -745,10 +823,10 @@ static float unlatched_target_locked(int64_t now) {
 
     }
 
-    float target=control_target(&settings,feedback_ready(now) && wallbox_ready && fresh(now,meter_at,wallbox_meter_ttl()),
+    float target=control_target(&settings,wallbox_ready && wallbox_control_ready_locked(now),
 
-        fresh(now,actual_at,wallbox_meter_ttl()),pv_fresh_locked(now));
-    if(evcc_control.configured && settings.charge_phases==1)target=fminf(target,3500/settings.nominal_v);
+        wallbox_control_ready_locked(now),pv_fresh_locked(now));
+    if(evcc_control.configured && settings.charge_phases==1)target=fminf(target,3500/ems_phase_voltage_sum(&settings,1));
     if(settings.evu_input_enabled && evu_contact.stable)
         target=settings.evu_limit_a>0?fminf(target,settings.evu_limit_a):0;
     return grid_guard_target(&settings,target,house_currents_ready_locked(now));
@@ -758,18 +836,20 @@ static float unlatched_target_locked(int64_t now) {
 static float target_locked(int64_t now) {
 
     float requested=unlatched_target_locked(now);
+    if(wallbox_meter_hold_locked(now))requested=fminf(requested,wallbox_meter_hold.target_a);
 
-    return charge_guard_blocked(&charge_guard,now)?0:requested;
+    return charge_guard_blocked(&charge_guard,now)?0:vehicle_limit_current_locked(requested);
 
 }
 
 static void mode_transition_locked(control_mode_t previous,float previous_target,int64_t now) {
     if(settings.mode==MODE_PV && previous==MODE_MANUAL && settings.enabled) {
-        if(settings.zero_feed_enabled && fresh(now,house_power_at,house_meter_ttl()) && fresh(now,actual_at,wallbox_meter_ttl())) {
+        float policy_a[3];bool policy_fresh=control_currents_locked(now,policy_a);
+        if(settings.zero_feed_enabled && fresh(now,house_power_at,house_meter_ttl()) && policy_fresh) {
             settings.pv_surplus_a=pv_available_current_locked(now,house_power_w);pv_at=now;
         }
         if(pv_control_takeover(&pv_control,pv_permitted_locked(now) && !charge_guard_blocked(&charge_guard,now),
-            previous_target,actual_a,settings.charge_phases,active_min_a(),settings.max_charge_a,now))return;
+            previous_target,policy_a,settings.charge_phases,active_min_a(),settings.max_charge_a,now))return;
     }
     pv_control_step(&pv_control,false,0,active_min_a(),settings.max_charge_a,now);
 }
@@ -798,6 +878,7 @@ static const char *block_reason_locked(int64_t now) {
 
     if(unsupported_meter()) return "unsupported_meter";
 
+    if(settings.shell_http_control_enabled&&http_regulator.control.fault)return "http_control";
     if(!settings.enabled || settings.mode==MODE_OFF) return "off";
     if(charge_plan.active && plan_phase==PLAN_CLOCK)return "plan_clock";
     if(settings.evu_input_enabled && evu_contact.stable && settings.evu_limit_a<=0) return "evu_stop";
@@ -815,9 +896,13 @@ static const char *block_reason_locked(int64_t now) {
 
     if(!wallbox_ready) return "uart";
 
-    if(!feedback_ready(now) || !fresh(now,meter_at,wallbox_meter_ttl())) return "meter";
-
-    if(!fresh(now,actual_at,wallbox_meter_ttl())) return "feedback";
+    if(wallbox_meter_hold_locked(now)&&target_locked(now)>0)return "meter_hold";
+    if(settings.shell_http_control_enabled){
+        if(!http_regulation_ready_locked(now))return "http_control";
+    }else{
+        if(!feedback_ready(now)||!fresh(now,meter_at,wallbox_meter_ttl()))return "meter";
+        if(!fresh(now,actual_at,wallbox_meter_ttl()))return "feedback";
+    }
 
     if(settings.mode==MODE_PV && !pv_fresh_locked(now)) return settings.zero_feed_enabled?"house_meter":"pv_stale";
 
@@ -856,17 +941,20 @@ static void grid_guard_report_locked(int64_t now,float reported[3]) {
 static void event_locked(const char *reason) {
     int64_t epoch,midnight,now=now_ms();bool clock_ok=calendar(&epoch,&midnight)!=0;
     ems_event_add(&event_log,reason,clock_ok?epoch/1000:0,now/1000,
-        target_locked(now)*settings.charge_phases*settings.nominal_v/1000,
+        target_locked(now)*ems_phase_voltage_sum(&settings,settings.charge_phases)/1000,
         fresh(now,meter_at,wallbox_meter_ttl())?estimated_charge_power(&settings,meter_a)/1000:NAN,
         fresh(now,house_power_at,house_meter_ttl())?house_power_w/1000:NAN,
         fresh(now,battery_soc_at,EMS_INPUT_TTL)?battery_soc:NAN);
     if(diagnostic_store_add(&fault_log,ems_event_recent(&event_log,0))){fault_dirty=true;fault_revision++;}
 }
+#include "vehicle_runtime.inc"
+#include "vehicle_storage.inc"
+static float plan_car_soc_locked(int64_t now){return settings.vehicle_soc_enabled&&fresh(now,car_soc_at,ems_param_ms(EP_CAR_TTL))&&soc_value_valid(car_soc)?car_soc:NAN;}
 static bool save_plan(void) {
     if(xSemaphoreTake(plan_save_lock,ticks(2000))!=pdTRUE)return false;
-    charge_plan_t snapshot;LOCK();snapshot=charge_plan;uint32_t revision=plan_revision;plan_save_attempt=now_ms();UNLOCK();
+    vehicle_saved_plan_t snapshot;LOCK();snapshot=(vehicle_saved_plan_t){.version=3,.plan=charge_plan,.vehicle=vehicle_plan,.soc=soc_goal};uint32_t revision=plan_revision;plan_save_attempt=now_ms();UNLOCK();
     nvs_handle_t handle;if(!config_storage_ok||nvs_open("teenet_plan",NVS_READWRITE,&handle)!=ESP_OK){LOCK();plan_storage_ok=false;UNLOCK();xSemaphoreGive(plan_save_lock);return false;}
-    esp_err_t error=nvs_set_blob(handle,"plan",&snapshot,sizeof(snapshot));
+    esp_err_t error=nvs_set_blob(handle,"plan_v2",&snapshot,sizeof(snapshot));
     if(error==ESP_OK)error=nvs_commit(handle);
     nvs_close(handle);
     LOCK();plan_storage_ok=error==ESP_OK;if(error==ESP_OK && revision==plan_revision)plan_dirty=false;UNLOCK();
@@ -875,12 +963,26 @@ static bool save_plan(void) {
 }
 static void load_plan(void) {
     nvs_handle_t handle;if(!config_storage_ok||nvs_open("teenet_plan",NVS_READONLY,&handle)!=ESP_OK)return;
-    size_t size=sizeof(charge_plan);esp_err_t error=nvs_get_blob(handle,"plan",&charge_plan,&size);nvs_close(handle);
+    vehicle_saved_plan_t stored={0};size_t size=sizeof(stored);esp_err_t error=nvs_get_blob(handle,"plan_v2",&stored,&size);
+    if(error==ESP_ERR_NVS_NOT_FOUND){size=sizeof(charge_plan);error=nvs_get_blob(handle,"plan",&charge_plan,&size);}
+    else if(error==ESP_OK&&plan_store_decode(&stored,size,&stored)){charge_plan=stored.plan;vehicle_plan=stored.vehicle;soc_goal=stored.soc;size=sizeof(charge_plan);}
+    else error=ESP_ERR_INVALID_SIZE;
+    nvs_close(handle);
     if(error!=ESP_OK||size!=sizeof(charge_plan)||charge_plan.version!=1||!isfinite(charge_plan.target_wh)||
-       charge_plan.target_wh<500||charge_plan.target_wh>100000||!isfinite(charge_plan.delivered_wh)||
+       charge_plan.target_wh<=0||charge_plan.target_wh>800000||!isfinite(charge_plan.delivered_wh)||
        charge_plan.delivered_wh<0||charge_plan.delivered_wh>charge_plan.target_wh||
        charge_plan.deadline_s<1704067200||charge_plan.deadline_s>4102444800LL)
-        memset(&charge_plan,0,sizeof(charge_plan));
+        {memset(&charge_plan,0,sizeof(charge_plan));soc_goal_clear(&soc_goal,false);}
+    if(vehicle_plan.active&&(!vehicles.enabled||vehicle_plan.version!=1||vehicle_plan.slot>=VEHICLE_COUNT||
+       !isfinite(vehicle_plan.capacity_kwh)||vehicle_plan.capacity_kwh<5||vehicle_plan.capacity_kwh>200||
+       !isfinite(vehicle_plan.efficiency)||vehicle_plan.efficiency<.5f||vehicle_plan.efficiency>1||
+       !isfinite(vehicle_plan.target_soc)||vehicle_plan.target_soc<=0||vehicle_plan.target_soc>100||
+       !isfinite(vehicle_plan.last_soc)||vehicle_plan.last_soc<0||vehicle_plan.last_soc>100||
+       !isfinite(vehicle_plan.maximum_kw)||vehicle_plan.maximum_kw<1.4f||vehicle_plan.maximum_kw>22||
+       !isfinite(vehicle_plan.anchor_wh)||vehicle_plan.anchor_wh<0||vehicle_plan.anchor_wh>charge_plan.delivered_wh||
+       !memchr(vehicle_plan.card,0,sizeof(vehicle_plan.card))||!memchr(vehicle_plan.identity,0,sizeof(vehicle_plan.identity)))){
+        memset(&charge_plan,0,sizeof(charge_plan));vehicle_plan_clear_locked();
+    }
     charge_plan.last_total_wh=energy.store.total_wh[0];
     if(!settings.charge_plan_enabled){charge_plan.active=false;charge_plan.complete=false;charge_plan.expired=false;}
     plan_phase=charge_plan.active?PLAN_PAUSED:charge_plan.complete?PLAN_COMPLETE:charge_plan.expired?PLAN_EXPIRED:PLAN_OFF;
@@ -978,22 +1080,25 @@ static bool read_sdm(float out[3],float *total_w) {
 
 }
 
-static bool read_wallbox_network(float out[3],float *total_w);
+static bool read_wallbox_network(wallbox_modbus_session_t *session,float out[3],float *total_w,float voltage[3],bool *voltage_valid);
 
 static void meter_task(void *arg) {
     unsigned network_failures=0;
+    wallbox_modbus_session_t network_session={.sock=-1};
     while(true) {
         boot_task_seen[2]=(uint32_t)now_ms();
         uint32_t delay_ms=1000;
-        float values[3],watts=0; bool sdm=sdm_meter(),network=network_wallbox_meter();
+        float values[3],voltage[3]={0},watts=0; bool voltage_valid=false,sdm=sdm_meter(),network=network_wallbox_meter();
         LOCK();uint32_t revision=wallbox_meter_revision;UNLOCK();
 
-        bool ok=!unsupported_meter() && (network?read_wallbox_network(values,&watts):sdm?read_sdm(values,&watts):read_meter(values));
+        if(!network)wallbox_modbus_session_close(&network_session);
+        bool ok=!unsupported_meter() && (network?read_wallbox_network(&network_session,values,&watts,voltage,&voltage_valid):sdm?read_sdm(values,&watts):read_meter(values));
 
         if(ok && !sdm && !network) ok=reconstruct_currents(values,settings.xemex_coils);
 
         LOCK();
         if(network && revision!=wallbox_meter_revision){UNLOCK();continue;}
+        if(phase_voltage_shared_locked())phase_voltage_sample(&phase_voltage,voltage,ok&&voltage_valid,now_ms());
         if(ok) {
             if(settings.phase_switch_enabled && phase_state==PHASE_READY &&
                wallbox_inactive_phase_current(&settings,values)) phase_state=PHASE_FAULT;
@@ -1004,10 +1109,12 @@ static void meter_task(void *arg) {
             memcpy(xemex_a,values,sizeof(values));
             memcpy(meter_a,values,sizeof(values)); meter_at=now;
             memcpy(actual_a,values,sizeof(values)); actual_at=now;
+            charge_voltage_sample(&wallbox_voltage,voltage,voltage_valid,revision,now);
+            personal_sync_locked(now);
             if(sdm || network) { wallbox_w=watts; power_at=now; }
             network_failures=0;
 
-        } else { meter_failures++;if(network){if(network_failures<10)network_failures++;delay_ms=network_failures>=5?60000:network_failures>=3?15000:5000;} }
+        } else { wallbox_voltage.at=0;personal_sync_locked(now_ms());meter_failures++;if(network){if(network_failures<10)network_failures++;delay_ms=phase_voltage_shared_locked()?500:settings.enabled?2000:network_failures>=5?60000:network_failures>=3?15000:5000;} }
 
         UNLOCK(); vTaskDelay(ticks(delay_ms));
 
@@ -1058,7 +1165,37 @@ static void wallbox_task(void *arg) {
 
         int64_t report_now=now_ms();float request=target_locked(report_now);
         control_report(&settings,actual_a,request,house_power_w,house_ok,currents);
-        manual_report_smooth(&manual_filter,&settings,request,report_now,currents);
+        bool private_smoothed=false;
+#if CONFIG_TEE_HTTP_CONTROL_TRIAL
+        bool private_reply_current=false;
+        unsigned private_reply_phases=settings.charge_phases;
+        float private_reply_neutral=settings.grid_limit_a+shell_http_trial.normal_offset_a;
+        float private_reply_stop=settings.grid_limit_a+settings.max_charge_a+1;
+        int64_t private_reply_trigger=0;
+        if(shell_http_trial.armed){
+            bool current_reply=req[0]==settings.wallbox_address&&req[1]==3&&req[2]==0x50&&req[3]==0x0c&&req[4]==0&&req[5]==6;
+            shell_http_trial_report(&shell_http_trial,&evcc_shell.http_control,evcc_shell_at,report_now,
+                request,settings.charge_phases,settings.grid_limit_a,settings.min_charge_a,settings.max_charge_a,current_reply,currents);
+            if(settings.charge_phases==1||settings.charge_phases==3){
+                shell_http_trial_smooth(&shell_http_trial,&manual_filter,&settings,request,report_now,current_reply,currents);
+                private_smoothed=true;
+                private_reply_current=current_reply;private_reply_trigger=shell_http_trial.coast_trigger_at;
+            }
+        }
+#endif
+        bool http_reply_current=settings.shell_http_control_enabled&&http_regulator.running&&
+            req[0]==settings.wallbox_address&&req[1]==3&&req[2]==0x50&&req[3]==0x0c&&req[4]==0&&req[5]==6;
+        int64_t http_reply_trigger=0;
+        if(settings.shell_http_control_enabled&&http_regulator.running){
+            shell_http_trial_report(&http_regulator.control,&evcc_shell.http_control,evcc_shell_at,report_now,
+                request,settings.charge_phases,settings.grid_limit_a,settings.min_charge_a,settings.max_charge_a,http_reply_current,currents);
+            shell_http_trial_smooth(&http_regulator.control,&manual_filter,&settings,request,report_now,http_reply_current,currents);
+            http_reply_trigger=http_regulator.control.coast_trigger_at;private_smoothed=true;
+        }
+        if(!private_smoothed)manual_report_smooth(&manual_filter,&settings,request,report_now,currents);
+        bool holding=wallbox_meter_hold_locked(report_now);
+        meter_hold_report(&settings,holding,request,currents);
+        if(holding)manual_filter.active=false;
         grid_guard_report_locked(report_now,currents);
 
         size_t len=modbus_reply(req,8,response,&settings,currents);
@@ -1078,6 +1215,16 @@ static void wallbox_task(void *arg) {
                 if(req[1]==3 && req[2]==0x50 && req[3]==0x0c && req[4]==0 && req[5]==6 && len==17) {
 
                     memcpy(last_sent_a,currents,sizeof(last_sent_a)); last_sent_current_at=wallbox_at;
+                    if(http_reply_current)shell_http_trial_transmitted(&http_regulator.control,report_now,
+                        http_reply_trigger,wallbox_at,request,settings.charge_phases,
+                        settings.grid_limit_a+http_regulator.control.normal_offset_a,settings.grid_limit_a+settings.max_charge_a+1,currents);
+#if CONFIG_TEE_HTTP_CONTROL_TRIAL
+                    trial_uart_sequence++;
+                    /* PRIVATE_HTTP_CURRENT_SENT_BEGIN */
+                    if(private_reply_current)shell_http_trial_transmitted(&shell_http_trial,report_now,
+                        private_reply_trigger,wallbox_at,request,private_reply_phases,private_reply_neutral,private_reply_stop,currents);
+                    /* PRIVATE_HTTP_CURRENT_SENT_END */
+#endif
                     if(settings.phase_switch_enabled && settings.charge_phases==1 && phase_state==PHASE_READY && request>=settings.min_charge_a && !phase_attempt_at)
                         phase_attempt_at=wallbox_at;
 
@@ -1148,10 +1295,13 @@ static esp_err_t http_body_event(esp_http_client_event_t *event) {
 #include "rs485_transport.inc"
 
 #include "huawei_network.inc"
+#include "sungrow_network.inc"
 
 #include "wallbox_network.inc"
+#include "phase_voltage_network.inc"
 
 #include "heatpump_runtime.inc"
+#include "solis_hold_runtime.inc"
 
 static bool read_house_meter(float currents[3],float *watts,bool *currents_valid) {
 
@@ -1205,7 +1355,7 @@ static void house_meter_task(void *arg) {
                 }
                 UNLOCK();
             }
-        } else if(network_house_meter() && strcmp(settings.house_meter_type,"huawei") && (settings.zero_feed_enabled || settings.grid_guard_enabled)) {
+        } else if(network_house_meter() && strcmp(settings.house_meter_type,"sungrow") && strcmp(settings.house_meter_type,"huawei") && (settings.zero_feed_enabled || settings.grid_guard_enabled)) {
             float watts,values[3]={0};bool current_valid=false;
             LOCK();uint32_t revision=house_meter_revision;UNLOCK();
             if(read_house_meter(values,&watts,&current_valid)) {
@@ -1239,11 +1389,12 @@ static const char *vehicle_state_name(char state) {
     }
 }
 
+#include "http_display_status.inc"
 static cJSON *status_json_profile(bool include_token,bool include_diagnostics) {
 
     cJSON *o=cJSON_CreateObject(); if(!o) return NULL;
 
-    int64_t epoch,midnight,now=now_ms(); uint32_t date=calendar(&epoch,&midnight);
+    int64_t epoch,midnight; uint32_t date=calendar(&epoch,&midnight);
 
     wifi_mode_t wifi_mode=WIFI_MODE_NULL;
     wifi_ap_record_t access_point={0}; bool wifi_signal_ok=false;
@@ -1254,24 +1405,55 @@ static cJSON *status_json_profile(bool include_token,bool include_diagnostics) {
 
     LOCK();
 
+    int64_t now=now_ms();
     bool meter_ok=feedback_ready(now) && fresh(now,meter_at,wallbox_meter_ttl()),power_ok=fresh(now,power_at,(sdm_meter()||network_wallbox_meter())?wallbox_meter_ttl():EMS_INPUT_TTL),actual_ok=feedback_ready(now) && fresh(now,actual_at,wallbox_meter_ttl());
 
     float reported[3]; bool house_current_ok=fresh(now,house_power_at,house_meter_ttl());
 
     control_report(&settings,actual_a,target_locked(now),house_power_w,house_current_ok,reported);
+#if CONFIG_TEE_HTTP_CONTROL_TRIAL
+    if(shell_http_trial.armed)shell_http_trial_report(&shell_http_trial,&evcc_shell.http_control,evcc_shell_at,now,
+        target_locked(now),settings.charge_phases,settings.grid_limit_a,settings.min_charge_a,settings.max_charge_a,false,reported);
+#endif
+    if(settings.shell_http_control_enabled&&http_regulator.running)shell_http_trial_report(&http_regulator.control,&evcc_shell.http_control,evcc_shell_at,now,
+        target_locked(now),settings.charge_phases,settings.grid_limit_a,settings.min_charge_a,settings.max_charge_a,false,reported);
+    meter_hold_report(&settings,wallbox_meter_hold_locked(now),target_locked(now),reported);
     grid_guard_report_locked(now,reported);
 
     cJSON_AddBoolToObject(o,"terms_accepted",terms_accepted);
     cJSON_AddStringToObject(o,"terms_revision",TERMS_REVISION);
     telemetry_json(o);
     cJSON_AddBoolToObject(o,"evcc_test_enabled",evcc_control.configured);
+#if CONFIG_TEE_HTTP_CONTROL_TRIAL
+    cJSON_AddBoolToObject(o,"http_control_trial_available",true);
+    cJSON_AddBoolToObject(o,"http_control_trial_armed",shell_http_trial.armed);
+    cJSON_AddBoolToObject(o,"http_control_trial_fault",shell_http_trial.fault);
+    cJSON_AddStringToObject(o,"http_control_trial_stage",shell_http_trial_stage(shell_http_trial.stage));
+    cJSON_AddNumberToObject(o,"http_control_trial_steps",shell_http_trial.steps);
+
+
+#endif
+    cJSON_AddBoolToObject(o,"shell_http_control_available",!evcc_control.configured);
+    cJSON_AddBoolToObject(o,"shell_http_control_enabled",settings.shell_http_control_enabled);
+    cJSON_AddBoolToObject(o,"shell_http_control_fault",http_regulator.control.fault);
+    cJSON_AddStringToObject(o,"shell_http_control_block",evcc_control.configured?"evcc zuerst deaktivieren.":"");
+    nullable(o,"http_pilot_a",evcc_shell.http_control.pilot_a,evcc_shell.http_control.pilot_valid);
+    nullable(o,"http_delayed_current_a",evcc_shell.http_control.current_a,evcc_shell.http_control.current_valid);
+    nullable(o,"http_control_sample_age_ms",now-evcc_shell_at,evcc_shell_at>0);
+    bool http_selected=settings.shell_http_control_enabled;
+#if CONFIG_TEE_HTTP_CONTROL_TRIAL
+    http_selected=http_selected||shell_http_trial.armed;
+#endif
+    cJSON_AddStringToObject(o,"http_control_regulation_source",http_selected?"shell_http_pilot":"normal");
+    cJSON_AddStringToObject(o,"http_control_phase_guard","independent_meter");
+    http_display_status(o,now);
     cJSON_AddBoolToObject(o,"evcc_local_stop",evcc_control.inhibited);
     cJSON_AddBoolToObject(o,"evcc_lease_expired",evcc_control.expired);
     cJSON_AddBoolToObject(o,"evcc_status_known",evcc_shell_fresh(&evcc_shell,evcc_shell_at,now));
     if(include_diagnostics) {
         cJSON_AddStringToObject(o,"evcc_statuscar",evcc_shell.raw);
     }
-    bool vehicle_status_enabled=evcc_control.configured||settings.shell_limits_auto;
+    bool vehicle_status_enabled=evcc_control.configured||settings.shell_limits_auto||settings.shell_http_control_enabled;
     bool vehicle_status_known=vehicle_status_enabled&&shell_vehicle_fresh(&evcc_shell,evcc_shell_at,now);
     cJSON_AddBoolToObject(o,"vehicle_status_enabled",vehicle_status_enabled);
     cJSON_AddBoolToObject(o,"vehicle_status_known",vehicle_status_known);
@@ -1286,6 +1468,7 @@ static cJSON *status_json_profile(bool include_token,bool include_diagnostics) {
     if(include_diagnostics) {
         cJSON_AddNumberToObject(o,"rs485_modules",2);
     }
+    solis_hold_json_locked(o,now);
     cJSON_AddStringToObject(o,"hardware",EMS_HARDWARE_NAME);
     cJSON_AddStringToObject(o,"hardware_id",EMS_HARDWARE_ID);
     cJSON_AddNumberToObject(o,"default_shell_tx_pin",EMS_DEFAULT_SHELL_TX_PIN);
@@ -1311,21 +1494,33 @@ static cJSON *status_json_profile(bool include_token,bool include_diagnostics) {
     nullable(ages,"pv",pv_generation_at?(now-pv_generation_at)/1000:0,pv_generation_at>0);
     cJSON_AddStringToObject(o,"mode",mode_name(settings.mode));
     cJSON_AddBoolToObject(o,"charge_plan_enabled",settings.charge_plan_enabled);
+    cJSON_AddBoolToObject(o,"energy_counter_enabled",energy.primary_metered);
+    cJSON_AddBoolToObject(o,"energy_counter_ready",charge_counter.ready);
+    if(include_diagnostics){cJSON_AddNumberToObject(o,"energy_counter_resets",charge_counter.resets);cJSON_AddNumberToObject(o,"energy_counter_rejected",charge_counter.rejected);cJSON_AddBoolToObject(o,"energy_counter_gap",charge_counter.gap);}
     cJSON_AddBoolToObject(o,"huawei_enabled",settings.huawei_enabled);
     cJSON_AddBoolToObject(o,"huawei_ok",fresh(now,huawei_at,15000));
     if(include_diagnostics) {
         cJSON_AddStringToObject(o,"huawei_model",huawei_model);
     }
-    cJSON_AddStringToObject(o,"battery_source",settings.huawei_enabled && settings.huawei_battery?"Huawei":"MQTT");
-    cJSON_AddStringToObject(o,"pv_source",settings.huawei_enabled && settings.huawei_pv?"Huawei":"MQTT");
+    if(settings.sungrow_enabled){cJSON_AddBoolToObject(o,"sungrow_enabled",true);cJSON_AddBoolToObject(o,"sungrow_ok",fresh(now,sungrow_at,15000));cJSON_AddStringToObject(o,"sungrow_model",settings.sungrow_model);}
+    cJSON_AddStringToObject(o,"battery_source",settings.sungrow_enabled&&settings.sungrow_battery?"Sungrow":settings.huawei_enabled && settings.huawei_battery?"Huawei":"MQTT");
+    cJSON_AddStringToObject(o,"pv_source",settings.sungrow_enabled&&settings.sungrow_pv?"Sungrow":settings.huawei_enabled && settings.huawei_pv?"Huawei":"MQTT");
     cJSON *plan=cJSON_AddObjectToObject(o,"charge_plan");
     cJSON_AddBoolToObject(plan,"active",charge_plan.active);
     cJSON_AddStringToObject(plan,"phase",charge_plan_phase_name(plan_phase));
     cJSON_AddNumberToObject(plan,"target_kwh",charge_plan.target_wh/1000);
     cJSON_AddNumberToObject(plan,"delivered_kwh",charge_plan.delivered_wh/1000);
     cJSON_AddNumberToObject(plan,"deadline_epoch",charge_plan.deadline_s);
+    cJSON_AddStringToObject(plan,"kind",soc_goal.active?"soc":vehicle_plan.active?"vehicle":"kwh");
+    cJSON_AddStringToObject(plan,"mode",soc_goal.manual?"manual":"pv");
+    if(soc_goal.active){
+        cJSON_AddNumberToObject(plan,"capacity_kwh",soc_goal.capacity_kwh);
+        cJSON_AddNumberToObject(plan,"target_soc",soc_goal.target_soc);
+        nullable(plan,"estimated_soc",soc_goal_estimate(&soc_goal,&charge_plan,plan_car_soc_locked(now)),true);
+    }
+
     cJSON_AddBoolToObject(o,"expert_mode",settings.expert_mode);
-    cJSON_AddBoolToObject(o,"expert_parameters_modified",expert_modified(&expert_saved)||settings_gpio_modified(&saved_settings));
+    cJSON_AddBoolToObject(o,"expert_parameters_modified",expert_standards_modified(&expert_saved,&saved_settings));
     cJSON_AddBoolToObject(o,"phase_mqtt_allowed",phase_mqtt_allowed);
     cJSON_AddBoolToObject(o,"phase_mqtt_ready",phase_mqtt_supported_locked());
     cJSON_AddBoolToObject(o,"phase_output_base_ready",phase_switch_meter_supported(&saved_settings));
@@ -1359,31 +1554,30 @@ static cJSON *status_json_profile(bool include_token,bool include_diagnostics) {
     if(settings.relay_board_enabled) {
         cJSON_AddBoolToObject(o,"relay1_on",relay_on[0]);
     }
-    cJSON_AddNumberToObject(o,"power_per_amp_kw",settings.charge_phases*settings.nominal_v*settings.power_factor/1000);
-    cJSON_AddNumberToObject(o,"single_power_per_amp_kw",settings.nominal_v*settings.power_factor/1000);
+    cJSON_AddNumberToObject(o,"power_per_amp_kw",ems_phase_voltage_sum(&settings,settings.charge_phases)*settings.power_factor/1000);
+    cJSON_AddNumberToObject(o,"single_power_per_amp_kw",ems_phase_voltage_sum(&settings,1)*settings.power_factor/1000);
+    cJSON_AddNumberToObject(o,"three_power_per_amp_kw",ems_phase_voltage_sum(&settings,3)*settings.power_factor/1000);
+    cJSON_AddStringToObject(o,"charging_voltage_source",ems_phase_voltage_active()?(!strcmp(settings.wallbox_meter_type,"shelly_gen2")?"wallbox_meter":"private"):"nominal");
+    {
+        float values[3],previous=0;for(unsigned i=0;i<3;i++){float sum=ems_phase_voltage_sum(&settings,i+1);values[i]=sum-previous;previous=sum;}
+        json_add_owned_to_object(o,"charging_voltage_v",number_array(values,3,true));
+    }
     cJSON_AddNumberToObject(o,"phase_actuator_type",settings.phase_actuator_type);
     if(phase_shelly_remote()){
         cJSON_AddBoolToObject(o,"phase_shelly_connected",phase_shelly_observed_locked(now)!=0);
         cJSON_AddBoolToObject(o,"phase_shelly_config_ok",phase_shelly_config_ok);
-        cJSON_AddBoolToObject(o,"phase_shelly_no_closed",phase_shelly_feedback_value.no_closed);
-        cJSON_AddBoolToObject(o,"phase_shelly_nc_closed",phase_shelly_feedback_value.nc_closed);
         cJSON_AddBoolToObject(o,"phase_shelly_output",phase_shelly_feedback_value.output);
+        cJSON_AddBoolToObject(o,"phase_shelly_status_ok",fresh(now,phase_shelly_at,SHELLY_PHASE_TTL_MS));
     }
     cJSON_AddBoolToObject(o,"phase_switch_enabled",settings.phase_switch_enabled);
     cJSON_AddBoolToObject(o,"phase_feedback_enabled",settings.phase_feedback_enabled);
-    cJSON_AddNumberToObject(o,"phase_feedback_count",settings.phase_feedback_count);
-    bool contact_values_ok=settings.phase_switch_enabled&&settings.phase_feedback_enabled&&
-        (phase_shelly_remote()?(phase_shelly_config_ok&&fresh(now,phase_shelly_at,SHELLY_PHASE_TTL_MS)):
-         settings.phase_actuator_type==0&&phase_gpio_ready);
-    if(contact_values_ok){
-        cJSON_AddBoolToObject(o,"phase_contact1_closed",phase_shelly_remote()?phase_shelly_feedback_value.no_closed:gpio_get_level(PHASE_FEEDBACK_GPIO)==0);
-        if(settings.phase_feedback_count==2)
-            cJSON_AddBoolToObject(o,"phase_contact2_closed",phase_shelly_remote()?phase_shelly_feedback_value.nc_closed:gpio_get_level(PHASE_FEEDBACK_SECOND_GPIO)==0);
-        else cJSON_AddNullToObject(o,"phase_contact2_closed");
-    }else{
-        cJSON_AddNullToObject(o,"phase_contact1_closed");cJSON_AddNullToObject(o,"phase_contact2_closed");
+    cJSON_AddBoolToObject(o,"phase_contactor_reconfigure",settings.phase_contactor_reconfigure);
+    cJSON_AddNumberToObject(o,"phase_feedback_source",settings.phase_feedback_source);
+    if(phase_uses_voltage(&settings)){
+        cJSON_AddBoolToObject(o,"phase_voltage_ok",phase_voltage_observed_locked(now)!=0);
+        cJSON_AddNumberToObject(o,"phase_voltage_position",phase_voltage_observed_locked(now));
+        json_add_owned_to_object(o,"phase_voltage_v",number_array(phase_voltage.voltage,3,phase_voltage.sample_at>0&&fresh(now,phase_voltage.sample_at,PHASE_VOLTAGE_TTL_MS)));
     }
-    cJSON_AddBoolToObject(o,"phase_feedback_closed_is_single",settings.phase_feedback_closed_is_single);
     cJSON_AddNumberToObject(o,"fixed_charge_phases",settings.fixed_charge_phases);
     cJSON_AddBoolToObject(o,"shell_limits_auto",settings.shell_limits_auto);
     cJSON_AddBoolToObject(o,"shell_limits_ok",settings.shell_limits_auto && fresh(now,shell_limits_at,900000));
@@ -1526,15 +1720,15 @@ static cJSON *status_json_profile(bool include_token,bool include_diagnostics) {
     cJSON_AddNumberToObject(o,"grid_limit_a",settings.grid_limit_a); cJSON_AddNumberToObject(o,"max_charge_a",settings.max_charge_a);
 
     cJSON_AddNumberToObject(o,"current_a",settings.manual_current_a); cJSON_AddNumberToObject(o,"target_current_a",target_locked(now));
-    cJSON_AddNumberToObject(o,"manual_power_kw",settings.manual_current_a*settings.manual_phases*settings.nominal_v*settings.power_factor/1000);
+    cJSON_AddNumberToObject(o,"manual_power_kw",settings.manual_current_a*ems_phase_voltage_sum(&settings,settings.manual_phases)*settings.power_factor/1000);
 
     cJSON_AddBoolToObject(o,"stop_requested",target_locked(now)<=0);
 
     cJSON_AddBoolToObject(o,"stop_current_below_1a",target_locked(now)<=0 && actual_ok && actual_a[0]<1 && actual_a[1]<1 && actual_a[2]<1);
 
-    if(include_diagnostics) {
-        json_add_owned_to_object(o,"last_sent_a",number_array(last_sent_a,3,last_sent_current_at>0));
-    }
+    /* Three transmitted values let the private measurement client use the
+       smaller dashboard snapshot instead of allocating full diagnostics. */
+    json_add_owned_to_object(o,"last_sent_a",number_array(last_sent_a,3,last_sent_current_at>0));
 
     nullable(o,"last_sent_age_ms",now-last_sent_current_at,last_sent_current_at>0);
 
@@ -1606,14 +1800,14 @@ static cJSON *status_json_profile(bool include_token,bool include_diagnostics) {
 
         for(int d=0;d<EMS_DAYS;d++) if(energy.store.days[d].date==date && date) { today=energy.store.days[d].wh[s]; covered=energy.store.days[d].covered_ms[s]; charging=energy.store.days[d].charging_ms; }
 
-        cJSON_AddStringToObject(item,"source",s==0?"current_estimate":sdm_meter()?settings.wallbox_meter_type:"wallbox_mqtt");
+        cJSON_AddStringToObject(item,"source",s==0?(energy.primary_metered?"wallbox_counter":"current_estimate"):sdm_meter()?settings.wallbox_meter_type:"wallbox_mqtt");
 
         cJSON_AddNumberToObject(item,"total_kwh",fmax(0,energy.store.total_wh[s]-energy_reset_wh[s])/1000); cJSON_AddNumberToObject(item,"boot_kwh",energy.boot_wh[s]/1000);
         cJSON_AddNumberToObject(item,"total_reset_date",energy_reset_date);
 
         cJSON_AddNumberToObject(item,"undated_kwh",energy.store.undated_wh[s]/1000);
 
-        nullable(item,"today_kwh",today/1000,date!=0 && covered>0); cJSON_AddNumberToObject(item,"today_covered_s",covered/1000);
+        nullable(item,"today_kwh",today/1000,date!=0 && (covered>0||today>0)); cJSON_AddNumberToObject(item,"today_covered_s",covered/1000);
         cJSON_AddNumberToObject(item,"today_charging_s",charging/1000);
 
         nullable(item,"today_cost",today/1000*settings.price_kwh,date!=0 && covered>0); json_add_owned_to_array(sources,item);
@@ -1632,6 +1826,8 @@ static cJSON *status_json_profile(bool include_token,bool include_diagnostics) {
 static cJSON *status_json(bool include_token) {
     return status_json_profile(include_token,true);
 }
+
+#include "mqtt_status_snapshot.inc"
 
 static void publish_value(const char *name,cJSON *value) {
 
@@ -1697,9 +1893,9 @@ static void homeassistant_discovery(bool enabled) {
     homeassistant_publish_entity("select","mode",o,true);
     o=homeassistant_entity("Gewünschte Ladeleistung","charging_power_setpoint","sensor/manual_power_kw");
     snprintf(topic,sizeof(topic),"%s/command/power_kw",settings.mqtt_prefix);cJSON_AddStringToObject(o,"command_topic",topic);
-    cJSON_AddNumberToObject(o,"min",(settings.phase_switch_enabled || settings.fixed_charge_phases==1)?2.0:6.0);
-    cJSON_AddNumberToObject(o,"max",floorf(settings.max_charge_a*(settings.phase_switch_enabled?3:settings.fixed_charge_phases)*settings.nominal_v*settings.power_factor/500)/2);
-    cJSON_AddNumberToObject(o,"step",0.5);cJSON_AddStringToObject(o,"unit_of_measurement","kW");cJSON_AddStringToObject(o,"mode","slider");
+    cJSON_AddNumberToObject(o,"min",manual_minimum_power_kw(&settings,(settings.phase_switch_enabled || settings.fixed_charge_phases==1)?1:3));
+    cJSON_AddNumberToObject(o,"max",floorf(settings.max_charge_a*ems_phase_voltage_sum(&settings,settings.phase_switch_enabled?3:settings.fixed_charge_phases)*settings.power_factor/100)/10);
+    cJSON_AddNumberToObject(o,"step",0.1);cJSON_AddStringToObject(o,"unit_of_measurement","kW");cJSON_AddStringToObject(o,"mode","slider");
     homeassistant_publish_entity("number","charging_power_setpoint",o,true);
     o=homeassistant_entity("Akku-Wolkenpuffer","cloud_buffer","sensor/battery_use");
     snprintf(topic,sizeof(topic),"%s/command/battery_use",settings.mqtt_prefix);cJSON_AddStringToObject(o,"command_topic",topic);cJSON_AddStringToObject(o,"payload_on","true");cJSON_AddStringToObject(o,"payload_off","false");
@@ -1723,15 +1919,18 @@ static void homeassistant_discovery(bool enabled) {
 
 static void mqtt_state(void) {
 
-    LOCK(); bool online=mqtt_online; UNLOCK();
+    LOCK(); bool online=mqtt_online,full_json=settings.mqtt_state_json; UNLOCK();
 
     if(!online || !mqtt_client || esp_mqtt_client_get_outbox_size(mqtt_client)>8000) return;
 
-    cJSON *o=status_json(false); if(!o) return;
+    /* HTTP and MQTT must not retain two large status trees at the same time
+       on the Atom without PSRAM. Skipping one periodic publish is harmless. */
+    if(xSemaphoreTake(status_snapshot_lock,0)!=pdTRUE)return;
+    cJSON *o=full_json?status_json_profile(false,true):mqtt_status_snapshot();if(!o){xSemaphoreGive(status_snapshot_lock);return;}
 
-    if(settings.mqtt_state_json) {
+    if(full_json) {
 
-        char *body=cJSON_PrintUnformatted(o); char topic[100]; snprintf(topic,sizeof(topic),"%s/state",settings.mqtt_prefix);
+        char *body=json_print_compact(o); char topic[100]; snprintf(topic,sizeof(topic),"%s/state",settings.mqtt_prefix);
 
         if(body) esp_mqtt_client_enqueue(mqtt_client,topic,body,0,1,1,false);
 
@@ -1788,7 +1987,7 @@ static void mqtt_state(void) {
     }
 
     cJSON_Delete(o);
-
+    xSemaphoreGive(status_snapshot_lock);
 }
 
 static bool apply_control(cJSON *o) {
@@ -1799,6 +1998,17 @@ static bool apply_control(cJSON *o) {
     int64_t command_epoch,command_midnight;uint32_t command_date=calendar(&command_epoch,&command_midnight);
     LOCK();
     if(evcc_configuring || phase_mqtt_saving){UNLOCK();return false;}
+#if CONFIG_TEE_HTTP_CONTROL_TRIAL
+    /* Test clients must not overwrite a user command arriving between their
+       last observation and this mutation. Check the revision under the same
+       lock as the control update. Unconditional Stop remains available. */
+    const cJSON *expected_sequence=cJSON_GetObjectItemCaseSensitive(o,"expected_event_sequence");
+    if(expected_sequence&&(!cJSON_IsNumber(expected_sequence)||!isfinite(expected_sequence->valuedouble)||
+       expected_sequence->valuedouble<0||expected_sequence->valuedouble>UINT32_MAX||
+       expected_sequence->valuedouble!=(double)event_log.sequence)){UNLOCK();return false;}
+    for(const cJSON *item=expected_sequence?expected_sequence->next:NULL;item;item=item->next)
+        if(!strcmp(item->string,"expected_event_sequence")){UNLOCK();return false;}
+#endif
     if(evcc_control.configured) {
         char *body=cJSON_PrintUnformatted(o);
         bool stop=evcc_emergency_stop_json(body);free(body);
@@ -1813,6 +2023,9 @@ static bool apply_control(cJSON *o) {
 
     for(cJSON *i=o->child;i;i=i->next) {
 
+#if CONFIG_TEE_HTTP_CONTROL_TRIAL
+        if(!strcmp(i->string,"expected_event_sequence"))continue;
+#endif
         if(!strcmp(i->string,"mode")) { valid=cJSON_IsString(i) && parse_mode(i->valuestring,&next.mode); if(valid && next.mode==MODE_MANUAL) manual_mode_requested=true; }
         else if(!strcmp(i->string,"manual_phases")) { valid=cJSON_IsNumber(i) && (i->valuedouble==1 || i->valuedouble==3) && (i->valueint==(settings.fixed_charge_phases) || settings.phase_switch_enabled); if(valid){next.manual_phases=i->valueint;manual_phases_explicit=true;} }
 
@@ -1850,6 +2063,7 @@ static bool apply_control(cJSON *o) {
         restore_control_memory_locked(change_at,command_date?command_epoch:0,true);
 
         transition=next.mode!=settings.mode || next.enabled!=settings.enabled;
+        if(transition||next.manual_phases!=settings.manual_phases)memset(&wallbox_meter_hold,0,sizeof(wallbox_meter_hold));
         if(phase_test_active&&user_override&&!next.enabled)phase_test_end_locked();
 
         if((restart && charge_guard.latched) || (next.enabled && !settings.enabled)) memset(&charge_guard,0,sizeof(charge_guard));
@@ -1884,6 +2098,7 @@ static bool apply_control(cJSON *o) {
             }
         }
 
+        if(next.enabled!=settings.enabled){memset(&http_regulator,0,sizeof(http_regulator));memset(&manual_filter,0,sizeof(manual_filter));}
         settings.mode=next.mode; settings.enabled=next.enabled;
 
         settings.manual_current_a=next.manual_current_a; settings.manual_phases=next.manual_phases; settings.pv_surplus_a=next.pv_surplus_a;
@@ -1909,10 +2124,11 @@ static bool apply_control(cJSON *o) {
 static bool mqtt_input(const char *suffix,const char *payload) {
 
     if(!settings.mqtt_enabled) return false;
+    LOCK();bool vehicle_input=vehicle_soc_message_locked(suffix,payload);UNLOCK();if(vehicle_input)return true;
     /* Retired command/phases and outgoing boolean topics have no input handler. */
     if(settings.mqtt_input_source==2 && (!strncmp(suffix,"input/battery_",14)||!strncmp(suffix,"input/pv_generation",19)))return true;
-    if((!settings.battery_protect || (settings.huawei_enabled && settings.huawei_battery)) && !strncmp(suffix,"input/battery_",14))return true;
-    if((!settings.pv_display_enabled || (settings.huawei_enabled && settings.huawei_pv)) && !strncmp(suffix,"input/pv_generation",19))return true;
+    if((!settings.battery_protect || (settings.huawei_enabled && settings.huawei_battery) || (settings.sungrow_enabled && settings.sungrow_battery)) && !strncmp(suffix,"input/battery_",14))return true;
+    if((!settings.pv_display_enabled || (settings.huawei_enabled && settings.huawei_pv) || (settings.sungrow_enabled && settings.sungrow_pv)) && !strncmp(suffix,"input/pv_generation",19))return true;
     double value;
     if(!strcmp(suffix,"input/car_soc_valid")) {
         if(strcmp(payload,"false") && strcmp(payload,"0")) return false;
@@ -1981,14 +2197,14 @@ static bool mqtt_input(const char *suffix,const char *payload) {
     } else if(!strcmp(key,"power_kw")) {
         parsed=parse_number(payload,0,11,&value);
         if(parsed){
-            double half=round(value*2)/2;
+            double requested_kw=round(value*10)/10;
             unsigned phases=settings.phase_switch_enabled?(value>0 && value<=3.5?1:3):settings.fixed_charge_phases;
-            double minimum=phases==1?2.0:6.0;
-            parsed=(value==0 || (value>=minimum && (phases==3 || value<=3.5) && fabs(value-half)<.001)) &&
-                half<=settings.max_charge_a*phases*settings.nominal_v*settings.power_factor/1000.0+.05;
+            double minimum=manual_minimum_power_kw(&settings,phases);
+            parsed=(value==0 || (value>=minimum-.001 && (phases==3 || value<=3.5) && fabs(value-requested_kw)<.001)) &&
+                requested_kw<=settings.max_charge_a*ems_phase_voltage_sum(&settings,phases)*settings.power_factor/1000.0+.001;
             if(parsed){
                 double current=value==0?0:fmax(settings.min_charge_a,
-                    half*1000/(phases*settings.nominal_v*settings.power_factor));
+                    requested_kw*1000/(ems_phase_voltage_sum(&settings,phases)*settings.power_factor));
                 parsed=current<=settings.max_charge_a+.001;
                 if(parsed){cJSON_AddStringToObject(o,"mode","manual");cJSON_AddNumberToObject(o,"current_a",fmin(current,settings.max_charge_a));cJSON_AddNumberToObject(o,"manual_phases",phases);cJSON_AddBoolToObject(o,"enabled",value>0);}
             }
@@ -2021,6 +2237,7 @@ static void mqtt_event(void *arg,esp_event_base_t base,int32_t id,void *data) {
         LOCK();if(settings.phase_output_transport==0)phase_mqtt_seen_connection=true;UNLOCK();
 
         LOCK(); mqtt_online=true; UNLOCK(); char subscription[192];
+        snprintf(subscription,sizeof(subscription),"%s/private/grid_voltages",settings.mqtt_prefix);esp_mqtt_client_subscribe(e->client,subscription,0);
 
         snprintf(subscription,sizeof(subscription),"%s/command/#",settings.mqtt_prefix); esp_mqtt_client_subscribe(e->client,subscription,1);
 
@@ -2028,6 +2245,7 @@ static void mqtt_event(void *arg,esp_event_base_t base,int32_t id,void *data) {
 
         snprintf(subscription,sizeof(subscription),"%s/input/+",settings.mqtt_prefix); esp_mqtt_client_subscribe(e->client,subscription,1);
         opendtu_subscribe(e->client);
+        snprintf(subscription,sizeof(subscription),"%s/solis/hold/status",settings.mqtt_prefix);esp_mqtt_client_subscribe(e->client,subscription,0);
         if(settings.heatpump_enabled&&!settings.basic_mode&&!strcmp(settings.heatpump_source,"mqtt"))
             esp_mqtt_client_subscribe(e->client,settings.heatpump_input_topic,1);
 
@@ -2041,7 +2259,7 @@ static void mqtt_event(void *arg,esp_event_base_t base,int32_t id,void *data) {
 
     } else if(id==MQTT_EVENT_DISCONNECTED) {
 
-        LOCK();if(settings.phase_output_transport==0&&phase_mqtt_seen_connection)phase_mqtt_cancel_locked(true);memset(&opendtu,0,sizeof(opendtu)); mqtt_online=false; if(!strcmp(settings.heatpump_source,"mqtt"))heatpump_at=0; if(!(settings.huawei_enabled && settings.huawei_battery)){battery_soc_at=0;battery_charge_at=0;battery_discharge_at=0;} car_soc_at=0; if(!(settings.huawei_enabled && settings.huawei_pv))pv_generation_at=0; if(!sdm_meter() && !network_wallbox_meter()) power_at=0; if(!settings.zero_feed_enabled) pv_at=0; UNLOCK(); expected=received=0;
+        LOCK();if(settings.phase_output_transport==0&&phase_mqtt_seen_connection)phase_mqtt_cancel_locked(true);memset(&opendtu,0,sizeof(opendtu)); mqtt_online=false;personal_sync_locked(now_ms()); if(!strcmp(settings.heatpump_source,"mqtt"))heatpump_at=0; if(!(settings.huawei_enabled && settings.huawei_battery)&&!(settings.sungrow_enabled && settings.sungrow_battery)){battery_soc_at=0;battery_charge_at=0;battery_discharge_at=0;} car_soc_at=0;memset(vehicle_soc_at,0,sizeof(vehicle_soc_at)); if(!(settings.huawei_enabled && settings.huawei_pv)&&!(settings.sungrow_enabled && settings.sungrow_pv))pv_generation_at=0; if(!sdm_meter() && !network_wallbox_meter()) power_at=0; if(!settings.zero_feed_enabled) pv_at=0; UNLOCK(); expected=received=0;
 
     } else if(id==MQTT_EVENT_DATA) {
 
@@ -2069,7 +2287,10 @@ static void mqtt_event(void *arg,esp_event_base_t base,int32_t id,void *data) {
 
             bool ok=false;
             if(!memchr(payload,0,received)) {
-                if(settings.heatpump_enabled&&!strcmp(settings.heatpump_source,"mqtt")&&!strcmp(topic,settings.heatpump_input_topic)){
+                char solis_topic[128];snprintf(solis_topic,sizeof(solis_topic),"%s/solis/hold/status",settings.mqtt_prefix);
+                if(!retained&&!strcmp(topic,solis_topic)){LOCK();solis_hold_ack_locked(payload);UNLOCK();ok=true;}
+                else if(!retained&&!strncmp(topic,prefix,strlen(prefix))&&!strcmp(topic+strlen(prefix),"private/grid_voltages")){LOCK();ok=personal_voltage_message_locked(payload);UNLOCK();}
+                else if(settings.heatpump_enabled&&!strcmp(settings.heatpump_source,"mqtt")&&!strcmp(topic,settings.heatpump_input_topic)){
                     LOCK();ok=heatpump_mqtt_locked(topic,payload,retained);UNLOCK();
                 }
                 else if(settings.mqtt_input_source==2 && opendtu_message(topic,payload,retained))ok=true;
@@ -2120,7 +2341,7 @@ static esp_err_t send_json(httpd_req_t *req,cJSON *o) {
 
     if(!o) return httpd_resp_send_err(req,HTTPD_500_INTERNAL_SERVER_ERROR,"Out of memory");
 
-    char *body=cJSON_PrintUnformatted(o); cJSON_Delete(o);
+    char *body=json_print_compact(o); cJSON_Delete(o);
 
     if(!body) return httpd_resp_send_err(req,HTTPD_500_INTERNAL_SERVER_ERROR,"Out of memory");
 
@@ -2170,7 +2391,7 @@ static esp_err_t theme_get(httpd_req_t *req) {
     cJSON_AddStringToObject(o,"theme",selected==2?"dark":selected==1?"light":"unset");
     cJSON_AddStringToObject(o,"view",view==1?"graphic":"standard");
     cJSON_AddStringToObject(o,"density",density==1?"compact":"standard");
-    cJSON_AddBoolToObject(o,"graphic_notice_pending",graphic_seen<1);
+    cJSON_AddBoolToObject(o,"graphic_notice_pending",false);
     return send_json(req,o);
 }
 
@@ -2196,13 +2417,27 @@ static esp_err_t theme_post(httpd_req_t *req) {
     return theme_get(req);
 }
 
+#if CONFIG_TEE_HTTP_CONTROL_TRIAL
+#include "tcp_pcb_diagnostic.inc"
+#include "shell_http_trial_snapshot.inc"
+#endif
 static esp_err_t status_handler(httpd_req_t *req) {
     char query[96],profile[24];
-    bool dashboard=httpd_req_get_url_query_str(req,query,sizeof(query))==ESP_OK &&
-        httpd_query_key_value(query,"profile",profile,sizeof(profile))==ESP_OK &&
-        strcmp(profile,"dashboard")==0;
-    return send_json(req,dashboard?status_json_profile(true,false):status_json(true));
+    bool has_profile=httpd_req_get_url_query_str(req,query,sizeof(query))==ESP_OK &&
+        httpd_query_key_value(query,"profile",profile,sizeof(profile))==ESP_OK;
+    bool dashboard=has_profile&&strcmp(profile,"dashboard")==0;
+    if(xSemaphoreTake(status_snapshot_lock,ticks(1000))!=pdTRUE){httpd_resp_set_status(req,"503 Service Unavailable");return httpd_resp_sendstr(req,"Status kurz beschaeftigt. Erneut abfragen.");}
+    cJSON *snapshot;
+#if CONFIG_TEE_HTTP_CONTROL_TRIAL
+    if(has_profile&&!strcmp(profile,"http-trial"))snapshot=shell_http_trial_snapshot();
+    else
+#endif
+    snapshot=dashboard?status_json_profile(true,false):status_json(true);
+    esp_err_t result=send_json(req,snapshot);
+    xSemaphoreGive(status_snapshot_lock);return result;
 }
+
+#include "solis_hold_http.inc"
 
 static esp_err_t control_handler(httpd_req_t *req) {
 
@@ -2228,25 +2463,26 @@ static const field_t fields[]={
     FIELD(shell_rs485_host,'s'),FIELD(meter_rs485_host,'s'),FIELD(house_rs485_host,'s'),FIELD(evcc_feature_enabled,'b'),
     FIELD(wifi_ssid,'s'),FIELD(wifi_password,'p'),FIELD(mqtt_uri,'s'),FIELD(mqtt_username,'s'),FIELD(mqtt_password,'p'),FIELD(mqtt_prefix,'s'),
 
-    FIELD(grid_limit_a,'f'),FIELD(max_charge_a,'f'),FIELD(shell_limits_auto,'b'),FIELD(shell_setup_host,'s'),FIELD(xemex_address,'u'),FIELD(wallbox_tx_pin,'i'),FIELD(wallbox_rx_pin,'i'),
+    FIELD(shell_http_control_enabled,'b'),FIELD(grid_limit_a,'f'),FIELD(max_charge_a,'f'),FIELD(shell_limits_auto,'b'),FIELD(shell_setup_host,'s'),FIELD(xemex_address,'u'),FIELD(wallbox_tx_pin,'i'),FIELD(wallbox_rx_pin,'i'),
 
 
     FIELD(fixed_charge_phases,'u'),FIELD(nominal_v,'f'),FIELD(price_kwh,'f'),FIELD(solar_price_kwh,'f'),FIELD(control_verified,'b'),
 
-    FIELD(zero_feed_enabled,'b'),FIELD(house_meter_type,'s'),FIELD(house_meter_host,'s'),FIELD(zero_reserve_w,'f'),FIELD(xemex_coils,'u'),FIELD(wallbox_meter_type,'s'),FIELD(meter_baud,'i'),FIELD(meter_format,'u'),FIELD(house_power_path,'s'),FIELD(mqtt_state_json,'b'),FIELD(battery_protect,'b'),FIELD(battery_reserve_soc,'f'),FIELD(battery_cloud_limit_w,'f'),FIELD(battery_assist_limit_w,'f'),FIELD(phase_switch_enabled,'b'),FIELD(phase_feedback_enabled,'b'),FIELD(phase_feedback_closed_is_single,'b'),
+    FIELD(zero_feed_enabled,'b'),FIELD(house_meter_type,'s'),FIELD(house_meter_host,'s'),FIELD(zero_reserve_w,'f'),FIELD(xemex_coils,'u'),FIELD(wallbox_meter_type,'s'),FIELD(meter_baud,'i'),FIELD(meter_format,'u'),FIELD(house_power_path,'s'),FIELD(mqtt_state_json,'b'),FIELD(battery_protect,'b'),FIELD(battery_reserve_soc,'f'),FIELD(battery_cloud_limit_w,'f'),FIELD(battery_assist_limit_w,'f'),FIELD(phase_switch_enabled,'b'),FIELD(phase_feedback_source,'u'),FIELD(phase_voltage_protocol,'u'),FIELD(phase_voltage_host,'s'),
     FIELD(expert_mode,'b'),FIELD(basic_mode,'b'),FIELD(pv_allocation_enabled,'b'),FIELD(pv_priority,'u'),FIELD(pv_house_priority_w,'f'),FIELD(pv_car_priority_w,'f'),FIELD(control_status_visible,'b'),FIELD(vehicle_soc_enabled,'b'),FIELD(external_mode_input_enabled,'b'),FIELD(evu_input_enabled,'b'),
     FIELD(evu_limit_a,'f'),FIELD(grid_guard_enabled,'b'),
     FIELD(xemex_tx_pin,'i'),FIELD(xemex_rx_pin,'i'),FIELD(house_tx_pin,'i'),FIELD(house_rx_pin,'i'),
     FIELD(external_mode_input_pin,'i'),FIELD(evu_input_pin,'i'),FIELD(relay1_pin,'i'),
-    FIELD(phase_feedback_pin,'i'),FIELD(phase_feedback_second_pin,'i'),FIELD(status_led_pin,'i'),
+    FIELD(status_led_pin,'i'),
     FIELD(house_address,'u'),FIELD(house_meter_baud,'i'),FIELD(house_meter_format,'u'),
     FIELD(relay_board_enabled,'b'),FIELD(relay_active_low,'b'),
     FIELD(relay1_mode,'u'),
     FIELD(mqtt_enabled,'b'),FIELD(homeassistant_enabled,'b'),FIELD(pv_display_enabled,'b'),FIELD(mqtt_input_source,'u'),
     FIELD(heatpump_enabled,'b'),FIELD(heatpump_publish_enabled,'b'),FIELD(heatpump_source,'s'),
     FIELD(heatpump_host,'s'),FIELD(heatpump_input_topic,'s'),FIELD(heatpump_output_topic,'s'),
-    FIELD(phase_actuator_type,'u'),FIELD(phase_shelly_host,'s'),FIELD(phase_shelly_password,'p'),
-    FIELD(phase_feedback_count,'u'),FIELD(phase_shelly_model,'u'),FIELD(phase_shelly_pulse,'b'),FIELD(phase_shelly_true_three_phase,'b'),
+    FIELD(phase_mqtt_topic,'s'),FIELD(phase_mqtt_true_three_phase,'b'),FIELD(phase_actuator_type,'u'),FIELD(phase_shelly_host,'s'),FIELD(phase_shelly_password,'p'),
+    FIELD(phase_shelly_model,'u'),FIELD(phase_shelly_true_three_phase,'b'),
+    FIELD(wallbox_shelly_reverse,'b'),FIELD(vehicle_fixed_profile,'u'),FIELD(vehicle_manual_soc_prompt,'b'),FIELD(sungrow_enabled,'b'),FIELD(sungrow_pv,'b'),FIELD(sungrow_battery,'b'),FIELD(sungrow_profile,'u'),FIELD(sungrow_unit_id,'u'),FIELD(sungrow_port,'i'),FIELD(sungrow_host,'s'),FIELD(sungrow_model,'s'),
     FIELD(wallbox_meter_host,'s'),FIELD(charge_plan_enabled,'b'),FIELD(huawei_enabled,'b'),FIELD(huawei_host,'s'),FIELD(huawei_unit_id,'u'),FIELD(huawei_battery,'b'),FIELD(huawei_pv,'b'),FIELD(opendtu_prefix,'s'),FIELD(opendtu_pv_topic,'s'),FIELD(opendtu_pv_valid_topic,'s'),FIELD(opendtu_current_positive_discharge,'b')};
 
 /* Read-only status metadata must not turn a settings backup into an invalid
@@ -2262,6 +2498,7 @@ static void config_remove_readonly(cJSON *config) {
 static cJSON *config_json(bool secrets) {
 
     cJSON *o=cJSON_CreateObject(); if(!o) return NULL; LOCK();
+    cJSON_AddBoolToObject(o,"shell_http_control_available",!evcc_control.configured);
 
     for(size_t f=0;f<sizeof(fields)/sizeof(fields[0]);f++) {
 
@@ -2283,9 +2520,7 @@ static cJSON *config_json(bool secrets) {
 
     cJSON_AddBoolToObject(o,"mqtt_password_set",saved_settings.mqtt_password[0]!=0);
     cJSON_AddBoolToObject(o,"phase_shelly_password_set",saved_settings.phase_shelly_password[0]!=0);
-    cJSON_AddStringToObject(o,"phase_mqtt_topic",saved_settings.phase_mqtt_topic);
     cJSON_AddBoolToObject(o,"phase_mqtt_output_enabled",saved_settings.phase_mqtt_output_enabled);
-    cJSON_AddBoolToObject(o,"phase_mqtt_true_three_phase",saved_settings.phase_mqtt_true_three_phase);
     cJSON_AddNumberToObject(o,"phase_output_transport",saved_settings.phase_output_transport);
     cJSON_AddNumberToObject(o,"phase_output_switch_id",saved_settings.phase_output_switch_id);
     cJSON_AddStringToObject(o,"phase_output_host",saved_settings.phase_output_host);
@@ -2296,16 +2531,24 @@ static cJSON *config_json(bool secrets) {
 
 }
 
+static esp_err_t config_field_error(httpd_req_t *req,const char *field,const char *message){
+    cJSON *o=cJSON_CreateObject();
+    if(!o||!cJSON_AddStringToObject(o,"error",message)||!cJSON_AddStringToObject(o,"field",field)){cJSON_Delete(o);return httpd_resp_send_err(req,HTTPD_500_INTERNAL_SERVER_ERROR,"Out of memory");}
+    httpd_resp_set_status(req,"400 Bad Request");return send_json(req,o);
+}
 static esp_err_t config_apply(httpd_req_t *req,cJSON *o,bool restore) {
     if(!cJSON_IsObject(o)){
         cJSON_Delete(o);
         return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Fehlerhafte Einstellungsdaten. Seite neu laden und erneut speichern.");
     }
-    if(cJSON_HasObjectItem(o,"phase_mqtt_output_enabled")||cJSON_HasObjectItem(o,"phase_mqtt_topic")||
-       cJSON_HasObjectItem(o,"phase_mqtt_true_three_phase")||cJSON_HasObjectItem(o,"phase_output_transport")||
+#if CONFIG_TEE_HTTP_CONTROL_TRIAL
+    LOCK();bool offset_testing=normal_offset_trial.armed||shell_http_trial.armed;UNLOCK();
+    if(offset_testing){cJSON_Delete(o);httpd_resp_set_status(req,"409 Conflict");return httpd_resp_sendstr(req,"Reglertest zuerst stoppen und beenden.");}
+#endif
+    if(cJSON_HasObjectItem(o,"phase_mqtt_output_enabled")||cJSON_HasObjectItem(o,"phase_output_transport")||
        cJSON_HasObjectItem(o,"phase_output_host")||cJSON_HasObjectItem(o,"phase_output_switch_id")||
        cJSON_HasObjectItem(o,"phase_output_password")){
-        cJSON_Delete(o);return httpd_resp_send_err(req,HTTPD_403_FORBIDDEN,"Ohne Rueckmeldung im Expertenmodus gesondert freigeben.");
+        cJSON_Delete(o);return httpd_resp_send_err(req,HTTPD_403_FORBIDDEN,"Schuetzsteuerung unter Phasenumschaltung einrichten.");
     }
     for(unsigned role=2;role<EMS_GPIO_ROLES&&!restore;role++){
         cJSON *pin=cJSON_GetObjectItemCaseSensitive(o,gpio_roles[role].id);
@@ -2313,15 +2556,12 @@ static esp_err_t config_apply(httpd_req_t *req,cJSON *o,bool restore) {
             cJSON_Delete(o);return httpd_resp_send_err(req,HTTPD_403_FORBIDDEN,"GPIO-Belegung im Expertenmodus aendern.");
         }
     }
-    cJSON *mqtt_profile=cJSON_GetObjectItemCaseSensitive(o,"phase_actuator_type");
-    if(cJSON_IsNumber(mqtt_profile)&&mqtt_profile->valuedouble==2&&saved_settings.phase_actuator_type!=2){
-        cJSON_Delete(o);return httpd_resp_send_err(req,HTTPD_403_FORBIDDEN,"MQTT-Schuetzsteuerung erfordert Warnbestaetigungen und erneutes Experten-Passwort.");
-    }
     LOCK();bool maintenance=phase_test_active||boot_validation_pending||ota_in_progress||restarting||evcc_configuring||(evcc_control.configured&&evcc_control.enabled);UNLOCK();
     if(maintenance){cJSON_Delete(o);httpd_resp_set_status(req,"409 Conflict");return httpd_resp_sendstr(req,"Sicherung oder Update laeuft. Danach erneut versuchen.");}
 
 
     settings_t next; LOCK(); next=saved_settings; UNLOCK(); bool valid=true;
+    bool restore_http_present=cJSON_HasObjectItem(o,"shell_http_control_enabled");
     char invalid_field[64]={0};
 
     for(cJSON *i=o->child;i && valid;i=i->next) {
@@ -2332,6 +2572,20 @@ static esp_err_t config_apply(httpd_req_t *req,cJSON *o,bool restore) {
             if(previous->string&&!strcmp(previous->string,i->string)){valid=false;break;}
         if(!valid)break;
 
+
+        if(!strcmp(i->string,"phase_shelly_pulse")){
+            if(!cJSON_IsBool(i)){cJSON_Delete(o);return config_field_error(req,"phase_actuator_type","Schuetztyp ungueltig.");}
+            if(cJSON_IsTrue(i)){
+                if(!restore){cJSON_Delete(o);return config_field_error(req,"phase_actuator_type","Bistabile Impulsansteuerung entfallen. Dauerhaftes Schuetz, z. B. Hager ESC226, einrichten.");}
+                next.phase_contactor_reconfigure=true;
+            }
+            continue;
+        }
+        /* Old backups/forms may contain retired contact settings. Ignore their
+           storage bytes; they cannot allocate a GPIO or enable a contact check. */
+        if(!strcmp(i->string,"phase_feedback_pin")||!strcmp(i->string,"phase_feedback_second_pin")||
+           !strcmp(i->string,"phase_feedback_count")||!strcmp(i->string,"phase_feedback_closed_is_single")||
+           !strcmp(i->string,"phase_feedback_enabled")||!strcmp(i->string,"phase_no_feedback_acknowledged"))continue;
         const field_t *d=NULL;
 
         for(size_t f=0;f<sizeof(fields)/sizeof(fields[0]);f++) if(!strcmp(i->string,fields[f].name)) d=&fields[f];
@@ -2370,7 +2624,7 @@ static esp_err_t config_apply(httpd_req_t *req,cJSON *o,bool restore) {
     if(!valid){
         char message[192];
         snprintf(message,sizeof(message),"Fehlerhafte Einstellungsdaten (%s). Seite neu laden und erneut speichern.",invalid_field);
-        return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,message);
+        return config_field_error(req,invalid_field,message);
     }
     /* These legacy values are intentionally no longer configurable. */
     next.wallbox_rts_pin=-1;
@@ -2382,9 +2636,10 @@ static esp_err_t config_apply(httpd_req_t *req,cJSON *o,bool restore) {
     settings_basic_mode(&next);
     if(!heatpump_settings_valid(&next))
         return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Waermepumpe: Shelly-Adresse oder MQTT-Broker/Topics pruefen. Eingang und Ausgang getrennt halten.");
-    if(!settings_shell_pin_available(&next,next.wallbox_tx_pin,true) ||
-       !settings_shell_pin_available(&next,next.wallbox_rx_pin,false))
-        return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Shell-Pins: freie, geeignete GPIOs fuer TX und RX waehlen; keine Doppelbelegung.");
+    if(!settings_shell_pin_available(&next,next.wallbox_tx_pin,true))
+        return config_field_error(req,"wallbox_tx_pin","Shell TX-Pin: freien, geeigneten GPIO ohne Doppelbelegung waehlen.");
+    if(!settings_shell_pin_available(&next,next.wallbox_rx_pin,false))
+        return config_field_error(req,"wallbox_rx_pin","Shell RX-Pin: freien, geeigneten GPIO ohne Doppelbelegung waehlen.");
     /* The legacy combined /state topic was removed from the user interface. */
     next.mqtt_state_json=false;
     if(!next.relay_board_enabled) next.phase_switch_enabled=false;
@@ -2394,29 +2649,49 @@ static esp_err_t config_apply(httpd_req_t *req,cJSON *o,bool restore) {
     if(next.mqtt_input_source==1)next.mqtt_input_source=0;
     if(!next.mqtt_enabled){next.vehicle_soc_enabled=false;
         if(!strcmp(next.heatpump_source,"mqtt"))next.heatpump_enabled=false;
-        if(!(next.huawei_enabled && next.huawei_pv))next.pv_display_enabled=false;
-        if(!(next.huawei_enabled && next.huawei_battery))next.battery_protect=false;}
-    if(next.phase_actuator_type!=2)next.phase_feedback_enabled=true;
+        if(!(next.huawei_enabled && next.huawei_pv)&&!(next.sungrow_enabled && next.sungrow_pv))next.pv_display_enabled=false;
+        if(!(next.huawei_enabled && next.huawei_battery)&&!(next.sungrow_enabled && next.sungrow_battery))next.battery_protect=false;}
+    if(next.sungrow_enabled&&!next.sungrow_host[0])return config_field_error(req,"sungrow_host","IP-Adresse oder Hostname des Sungrow eintragen.");
+    if(!strcmp(next.house_meter_type,"sungrow")&&(!next.sungrow_enabled||next.sungrow_profile==1))return config_field_error(req,"house_meter_type","Dieses Sungrow-Profil liefert keine Hausanschlussmessung. Separaten Hauszaehler waehlen.");
+    if(next.sungrow_enabled&&next.huawei_enabled&&((next.sungrow_pv&&next.huawei_pv)||(next.sungrow_battery&&next.huawei_battery)))return config_field_error(req,"sungrow_enabled","Je Messwert nur Huawei oder Sungrow als Quelle aktivieren.");
+    LOCK();
+    bool vehicle_selection_changed=next.vehicle_fixed_profile!=saved_settings.vehicle_fixed_profile;
+    bool vehicle_selection_valid=next.vehicle_fixed_profile==0||(next.vehicle_fixed_profile<=VEHICLE_COUNT&&vehicles.rows[next.vehicle_fixed_profile-1].name[0]);
+    bool vehicle_selection_busy=vehicle_selection_changed&&vehicle_plan.active&&charge_plan.active;
+    UNLOCK();
+    if(vehicle_selection_changed&&!vehicle_selection_valid)return config_field_error(req,"vehicle_fixed_profile","Zuerst das gewuenschte Fahrzeugprofil speichern.");
+    if(vehicle_selection_busy)return config_field_error(req,"vehicle_fixed_profile","Fahrzeug-Ladeplan vor dem Profilwechsel beenden.");
+    if(restore&&next.phase_contactor_reconfigure)next.phase_switch_enabled=false;
+    if(next.phase_switch_enabled)next.phase_contactor_reconfigure=false;
+    next.phase_feedback_enabled=phase_uses_voltage(&next);
+    if(next.phase_switch_enabled&&phase_uses_voltage(&next)&&!shelly_phase_endpoint_valid(next.phase_voltage_host,sizeof(next.phase_voltage_host)))
+        return config_field_error(req,"phase_voltage_host","Adresse des Shelly 3EM hinter dem Schuetz eintragen.");
+    if(next.phase_actuator_type==2&&next.phase_switch_enabled){next.phase_mqtt_output_enabled=true;next.phase_output_transport=0;}
+
     next.relay1_mode=next.phase_switch_enabled?3:0;
-    if(next.phase_actuator_type==2)next.phase_feedback_enabled=false;
+
     if(next.phase_actuator_type!=2||!next.phase_switch_enabled||!next.relay_board_enabled||
        (next.phase_output_transport==0&&!next.mqtt_enabled)){
         next.phase_mqtt_output_enabled=false;
         /* Ordinary settings may remove a prerequisite of the protected
            no-feedback profile. Return to the normal feedback profile instead
            of leaving an impossible actuator configuration behind. */
-        if(next.phase_actuator_type==2){next.phase_actuator_type=0;next.phase_feedback_enabled=true;}
+        if(next.phase_actuator_type==2)next.phase_actuator_type=0;
     }
     next.enabled=false; next.mode=MODE_OFF; next.pv_surplus_a=0;
     if(restore)next.control_verified=false;
     /* Clear the retired Solis experiment while retaining its settings-byte slot. */
     next.reserved_solis_discharge=false;
+    if(restore&&!restore_http_present)next.shell_http_control_enabled=false;
+    LOCK();bool http_conflict=next.shell_http_control_enabled&&evcc_control.configured;UNLOCK();
+    if(http_conflict)return config_field_error(req,"shell_http_control_enabled","evcc zuerst deaktivieren.");
+    if(next.shell_http_control_enabled&&!next.shell_setup_host[0])return config_field_error(req,"shell_setup_host","IP-Adresse der Shell-Wallbox eintragen.");
     next.reserved_http_meter_enabled=false;next.reserved_http_meter_host[0]=0;next.reserved_feedback_source=0;
     next.house_meter_password[0]=0;next.wallbox_meter_password[0]=0;
 
     /* A different physical meter invalidates the previous commissioning check. */
 
-    bool meter_changed=next.shell_rs485_interface!=saved_settings.shell_rs485_interface ||
+    bool meter_changed=next.wallbox_shelly_reverse!=saved_settings.wallbox_shelly_reverse || next.shell_rs485_interface!=saved_settings.shell_rs485_interface ||
         next.meter_rs485_interface!=saved_settings.meter_rs485_interface ||
         strcmp(next.shell_rs485_host,saved_settings.shell_rs485_host) ||
         strcmp(next.meter_rs485_host,saved_settings.meter_rs485_host) || strcmp(next.wallbox_meter_type,saved_settings.wallbox_meter_type) ||
@@ -2443,17 +2718,18 @@ static esp_err_t config_apply(httpd_req_t *req,cJSON *o,bool restore) {
         fresh(now_ms(),actual_at,wallbox_meter_ttl()),actual_a);UNLOCK();
     LOCK();bool actuator_change=next.phase_actuator_type!=saved_settings.phase_actuator_type ||
         next.relay_active_low!=saved_settings.relay_active_low ||
+        next.phase_mqtt_true_three_phase!=saved_settings.phase_mqtt_true_three_phase||strcmp(next.phase_mqtt_topic,saved_settings.phase_mqtt_topic)||
         strcmp(next.phase_shelly_host,saved_settings.phase_shelly_host) ||
-        next.phase_shelly_model!=saved_settings.phase_shelly_model||next.phase_shelly_pulse!=saved_settings.phase_shelly_pulse||
+        next.phase_shelly_model!=saved_settings.phase_shelly_model||
         next.phase_shelly_true_three_phase!=saved_settings.phase_shelly_true_three_phase||
         strcmp(next.phase_shelly_password,saved_settings.phase_shelly_password);
     config_gate_t hardware_gate=phase_config_gate_locked(now_ms());
     bool hardware_change_allowed=hardware_gate==CONFIG_GATE_OK;
     bool actuator_change_allowed=!actuator_change||hardware_change_allowed;UNLOCK();
     if(!actuator_change_allowed)return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,phase_config_gate_message(hardware_gate));
-    LOCK();bool feedback_changed=next.phase_feedback_enabled!=saved_settings.phase_feedback_enabled ||
-        next.phase_feedback_count!=saved_settings.phase_feedback_count||
-        next.phase_feedback_closed_is_single!=saved_settings.phase_feedback_closed_is_single;
+    LOCK();bool feedback_changed=next.wallbox_shelly_reverse!=saved_settings.wallbox_shelly_reverse ||
+        next.phase_feedback_source!=saved_settings.phase_feedback_source||next.phase_voltage_protocol!=saved_settings.phase_voltage_protocol||
+        strcmp(next.phase_voltage_host,saved_settings.phase_voltage_host);
     bool feedback_change_allowed=!feedback_changed||hardware_change_allowed;
     bool phase_configuration_changed=actuator_change||feedback_changed||
         next.phase_switch_enabled!=saved_settings.phase_switch_enabled||
@@ -2469,7 +2745,7 @@ static esp_err_t config_apply(httpd_req_t *req,cJSON *o,bool restore) {
         !strcmp(next.house_meter_type,"sdm630") || !strcmp(next.house_meter_type,"sdm630mct") ||
         !strcmp(next.house_meter_type,"shelly_gen2") || !strcmp(next.house_meter_type,"em24_tcp") ||
         (!strcmp(next.house_meter_type,"huawei") && next.huawei_enabled);
-    if(next.battery_protect && (!(next.mqtt_enabled || (next.huawei_enabled && next.huawei_battery)) || !next.zero_feed_enabled || next.zero_reserve_w>0))
+    if(next.battery_protect && (!(next.mqtt_enabled || (next.huawei_enabled && next.huawei_battery) || (next.sungrow_enabled && next.sungrow_battery)) || !next.zero_feed_enabled || next.zero_reserve_w>0))
         return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,
             "Hausakku benoetigt eine Datenquelle, einen PV-Hauszaehler und ein Netzziel von hoechstens 0 W.");
     if(next.phase_switch_enabled && (!next.relay_board_enabled || next.relay1_mode!=3))
@@ -2477,7 +2753,7 @@ static esp_err_t config_apply(httpd_req_t *req,cJSON *o,bool restore) {
             "Phasenumschaltung ist nicht vollstaendig eingerichtet. Verbindung und Schuetzoption pruefen.");
     if((next.phase_actuator_type==1||next.phase_actuator_type==3)&&next.phase_switch_enabled){
         if(!next.phase_shelly_host[0])
-            return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Shelly-Adresse fehlt. Unter Shelly-Schaltgeraet eintragen.");
+            return config_field_error(req,"phase_shelly_host","Shelly-Adresse fehlt. Unter Shelly-Schaltgeraet eintragen.");
         if(!phase_switch_meter_supported(&next)){
             char message[224];
             if(!strcmp(next.wallbox_meter_type,"xemex"))
@@ -2490,8 +2766,30 @@ static esp_err_t config_apply(httpd_req_t *req,cJSON *o,bool restore) {
     if(next.grid_guard_enabled && !next_three_phase_house)
         return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,
             "Hausanschlussschutz benoetigt einen Zaehler mit drei gemessenen Phasenstroemen.");
-    if(!settings_valid(&next) || (next.zero_feed_enabled && next_tasmota_house &&
-       !house_query_url(next.house_meter_type,next.house_meter_host,next.house_power_path,house_url,sizeof(house_url))))
+    bool network_wallbox=!strcmp(next.wallbox_meter_type,"shelly_gen2")||!strcmp(next.wallbox_meter_type,"shelly_em1")||!strcmp(next.wallbox_meter_type,"em24_tcp");
+    bool meter_host_required=network_wallbox&&!next.shell_http_control_enabled;
+#if defined(CONFIG_TEE_BOARD_ATOMS3_LITE) && CONFIG_TEE_BOARD_ATOMS3_LITE
+    meter_host_required=meter_host_required&&(next.control_verified||next.enabled);
+#endif
+    if(meter_host_required&&!next.wallbox_meter_host[0])
+        return config_field_error(req,"wallbox_meter_host","Wallbox-Zaehler: Geraet auswaehlen oder IP-Adresse eintragen.");
+    if(network_wallbox)for(const unsigned char *p=(const unsigned char *)next.wallbox_meter_host;*p;p++)if(!isalnum(*p)&&*p!='.'&&*p!='-'&&*p!=':')
+        return config_field_error(req,"wallbox_meter_host","Wallbox-Zaehler: Nur IP-Adresse oder Hostname, ohne http:// und Pfad eintragen.");
+    if(next.wifi_password[0]&&(strlen(next.wifi_password)<8||strlen(next.wifi_password)>63))
+        return config_field_error(req,"wifi_password","WLAN-Passwort muss 8 bis 63 Zeichen lang sein.");
+    if(next.max_charge_a<EMS_MIN_CHARGE_A||next.max_charge_a>63||next.max_charge_a>next.grid_limit_a||next.max_charge_a<next.min_charge_a)
+        return config_field_error(req,"max_charge_a","Maximalstrom muss zur Ladeuntergrenze und zum Hausanschluss passen.");
+    if(next.shell_rs485_interface==1&&!rs485_endpoint_valid(next.shell_rs485_host,sizeof(next.shell_rs485_host)))
+        return config_field_error(req,"shell_rs485_host","IP-Adresse und Port des Shell-RS485-Gateways pruefen.");
+    if(!network_wallbox&&next.meter_rs485_interface==1&&!rs485_endpoint_valid(next.meter_rs485_host,sizeof(next.meter_rs485_host)))
+        return config_field_error(req,"meter_rs485_host","IP-Adresse und Port des Zaehler-RS485-Gateways pruefen.");
+    bool house_network=!strcmp(next.house_meter_type,"tasmota")||!strcmp(next.house_meter_type,"shelly_gen2")||!strcmp(next.house_meter_type,"shelly_em1")||!strcmp(next.house_meter_type,"em24_tcp");
+    bool house_full_url=!strncmp(next.house_power_path,"http://",7)||!strncmp(next.house_power_path,"https://",8);
+    if(next.zero_feed_enabled&&house_network&&!next.house_meter_host[0]&&!house_full_url)
+        return config_field_error(req,"house_meter_host","Hauszaehler auswaehlen oder seine IP-Adresse eintragen.");
+    if(next.zero_feed_enabled&&next_tasmota_house&&!house_query_url(next.house_meter_type,next.house_meter_host,next.house_power_path,house_url,sizeof(house_url)))
+        return config_field_error(req,"house_power_path","Adresse und Abfragepfad des Hauszaehlers pruefen.");
+    if(!settings_valid(&next))
         return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Einstellungen ungueltig. Pins, Zaehler, Ladegrenzen und WLAN-Passwort pruefen.");
 
     /* Recheck under lock and reserve the controller before flash I/O. A
@@ -2502,6 +2800,11 @@ static esp_err_t config_apply(httpd_req_t *req,cJSON *o,bool restore) {
     if(save_config(&next)!=ESP_OK){
         LOCK();phase_config_saving=false;UNLOCK();
         return httpd_resp_send_err(req,HTTPD_500_INTERNAL_SERVER_ERROR,"Speichern fehlgeschlagen.");
+    }
+    if(restore&&!vehicle_restore_commit()){
+        bool rolled_back=save_config(&saved_settings)==ESP_OK;
+        LOCK();settings.enabled=false;settings.mode=MODE_OFF;phase_config_saving=false;if(!rolled_back){storage_error=true;reboot_required=true;}UNLOCK();
+        return httpd_resp_send_err(req,HTTPD_500_INTERNAL_SERVER_ERROR,rolled_back?"Fahrzeugdaten nicht gespeichert. Bisherige Einstellungen beibehalten.":"Wiederherstellung unvollstaendig. Speicher pruefen; Ladung bleibt gestoppt.");
     }
     if(meter_changed) {
         nvs_handle_t nvs;if(nvs_open("wallbox_ems",NVS_READWRITE,&nvs)==ESP_OK){
@@ -2537,7 +2840,7 @@ static esp_err_t config_apply(httpd_req_t *req,cJSON *o,bool restore) {
     }
     bool applied=settings_apply_live(&settings,&saved_settings,&next);
     if(applied) {
-        if(meter_changed){wallbox_meter_revision++;meter_at=actual_at=power_at=0;}
+        if(meter_changed){wallbox_meter_revision++;meter_at=actual_at=power_at=0;wallbox_voltage.at=0;personal_sync_locked(now_ms());}
         if(house_network_changed){house_meter_revision++;house_power_at=house_current_at=pv_at=0;}
         if(manual_limits_changed){memset(&manual_filter,0,sizeof(manual_filter));memset(&current_calibration,0,sizeof(current_calibration));}
         if(shell_source_changed){shell_active_host[0]=0;shell_limits_at=0;evcc_poll_generation++;}
@@ -2925,6 +3228,7 @@ extern const uint8_t guide_gz_start[] asm("_binary_guide_html_gz_start"),guide_g
 extern const uint8_t guide_js_gz_start[] asm("_binary_guide_js_gz_start"),guide_js_gz_end[] asm("_binary_guide_js_gz_end");
 
 
+extern const uint8_t vehicle_pictures_gz_start[] asm("_binary_vehicle_pictures_js_gz_start"),vehicle_pictures_gz_end[] asm("_binary_vehicle_pictures_js_gz_end");
 extern const uint8_t features_gz_start[] asm("_binary_features_js_gz_start"),features_gz_end[] asm("_binary_features_js_gz_end");
 
 extern const uint8_t health_gz_start[] asm("_binary_health_js_gz_start"),health_gz_end[] asm("_binary_health_js_gz_end");
@@ -2946,6 +3250,7 @@ static esp_err_t asset_send(httpd_req_t *req) {
     if(!strcmp(req->uri,"/firmware.js")) start=firmware_gz_start,end=firmware_gz_end,type="application/javascript; charset=utf-8";
     if(!strcmp(req->uri,"/terms.js")) start=terms_js_gz_start,end=terms_js_gz_end,type="application/javascript; charset=utf-8";
     else if(!strcmp(req->uri,"/evcc-test.js")) start=evcc_js_gz_start,end=evcc_js_gz_end,type="application/javascript; charset=utf-8";
+    if(!strcmp(req->uri,"/vehicle-pictures.js")) start=vehicle_pictures_gz_start,end=vehicle_pictures_gz_end,type="application/javascript; charset=utf-8";
     if(!strcmp(req->uri,"/features.js")) start=features_gz_start,end=features_gz_end,type="application/javascript; charset=utf-8";
     if(!strcmp(req->uri,"/qrcode.js")) start=qr_gz_start,end=qr_gz_end,type="application/javascript; charset=utf-8";
     if(!strcmp(req->uri,"/guide.js")) start=guide_js_gz_start,end=guide_js_gz_end,type="application/javascript; charset=utf-8";
@@ -3089,7 +3394,7 @@ static void shelly_scan_task(void *arg) {
                         bool checked=false;shelly_phase_feedback_t feedback;
                         if(identity.profile!=255&&!identity.protected_device)
                             checked=shelly_discovery_get(host,"/rpc/Shelly.GetStatus",body,8192)==200&&
-                                shelly_phase_feedback_for(body,&feedback,identity.inputs,false);
+                                shelly_phase_feedback(body,&feedback);
                         LOCK();
                         if(phase_shelly_found_count<12){
                             unsigned index=phase_shelly_found_count++;
@@ -3240,12 +3545,17 @@ static esp_err_t meter_preview_post(httpd_req_t *req) {
 #include "telemetry_http.inc"
 #include "evcc_http.inc"
 #include "shell_limits.inc"
+#include "vehicle_http.inc"
+#include "vehicle_estimate_http.inc"
+#if CONFIG_TEE_HTTP_CONTROL_TRIAL
+#include "shell_http_trial_http.inc"
+#endif
 
 #include "http_post_guard.inc"
 static void start_web(void) {
 
     /* Reserve sockets for meters, MQTT and the phase actuator (16 total). */
-    httpd_config_t cfg=HTTPD_DEFAULT_CONFIG(); cfg.stack_size=8192; cfg.max_uri_handlers=72; cfg.max_open_sockets=5; cfg.lru_purge_enable=true; cfg.recv_wait_timeout=2; cfg.send_wait_timeout=4;
+    httpd_config_t cfg=HTTPD_DEFAULT_CONFIG(); cfg.stack_size=8192; cfg.max_uri_handlers=80; cfg.max_open_sockets=5; cfg.lru_purge_enable=true; cfg.recv_wait_timeout=2; cfg.send_wait_timeout=4;
     cfg.open_fn=web_socket_open;
     image_slots=xSemaphoreCreateCounting(2,2);
     if(!image_slots) abort();
@@ -3270,7 +3580,7 @@ static void start_web(void) {
 
         {.uri="/",.method=HTTP_GET,.handler=asset_handler},{.uri="/dashboard.css",.method=HTTP_GET,.handler=asset_handler},
 
-        {.uri="/dashboard.js",.method=HTTP_GET,.handler=asset_handler},{.uri="/energy.js",.method=HTTP_GET,.handler=asset_handler},{.uri="/health.js",.method=HTTP_GET,.handler=asset_handler},{.uri="/firmware.js",.method=HTTP_GET,.handler=asset_handler},{.uri="/features.js",.method=HTTP_GET,.handler=asset_handler},{.uri="/qrcode.js",.method=HTTP_GET,.handler=asset_handler},{.uri="/teennet-logo.png",.method=HTTP_GET,.handler=asset_handler},
+        {.uri="/dashboard.js",.method=HTTP_GET,.handler=asset_handler},{.uri="/energy.js",.method=HTTP_GET,.handler=asset_handler},{.uri="/health.js",.method=HTTP_GET,.handler=asset_handler},{.uri="/firmware.js",.method=HTTP_GET,.handler=asset_handler},{.uri="/vehicle-pictures.js",.method=HTTP_GET,.handler=asset_handler},{.uri="/features.js",.method=HTTP_GET,.handler=asset_handler},{.uri="/qrcode.js",.method=HTTP_GET,.handler=asset_handler},{.uri="/teennet-logo.png",.method=HTTP_GET,.handler=asset_handler},
 
         {.uri="/hardware-plan.svg",.method=HTTP_GET,.handler=asset_handler},
         {.uri="/wiring-plan.jpg",.method=HTTP_GET,.handler=asset_handler},{.uri="/guide",.method=HTTP_GET,.handler=asset_handler},
@@ -3279,11 +3589,14 @@ static void start_web(void) {
 
 
         {.uri="/api/status",.method=HTTP_GET,.handler=status_handler},
+#if CONFIG_TEE_HTTP_CONTROL_TRIAL
+        {.uri="/api/test/http-control",.method=HTTP_POST,.handler=shell_http_trial_post},
+#endif
         {.uri="/api/telemetry",.method=HTTP_POST,.handler=telemetry_post},
 
         {.uri="/api/theme",.method=HTTP_GET,.handler=theme_get},{.uri="/api/theme",.method=HTTP_POST,.handler=theme_post},
 
-        {.uri="/api/history",.method=HTTP_GET,.handler=history_handler},{.uri="/api/sessions",.method=HTTP_GET,.handler=sessions_handler},{.uri="/api/sessions/day",.method=HTTP_GET,.handler=session_day_handler},{.uri="/api/export.csv",.method=HTTP_GET,.handler=csv_handler},
+        {.uri="/api/history",.method=HTTP_GET,.handler=history_handler},{.uri="/api/charge-curve",.method=HTTP_GET,.handler=charge_curve_handler},{.uri="/api/sessions",.method=HTTP_GET,.handler=sessions_handler},{.uri="/api/sessions/day",.method=HTTP_GET,.handler=session_day_handler},{.uri="/api/export.csv",.method=HTTP_GET,.handler=csv_handler},
 
         {.uri="/api/expert",.method=HTTP_POST,.handler=expert_post},
         {.uri="/api/config",.method=HTTP_GET,.handler=config_get},{.uri="/api/config",.method=HTTP_POST,.handler=config_post},
@@ -3294,6 +3607,12 @@ static void start_web(void) {
         {.uri="/api/update/github",.method=HTTP_POST,.handler=github_post},
         {.uri="/api/restore",.method=HTTP_POST,.handler=restore_handler},
         {.uri="/api/plan",.method=HTTP_POST,.handler=plan_handler},
+        {.uri="/api/vehicles",.method=HTTP_GET,.handler=vehicles_get},
+        {.uri="/api/vehicles",.method=HTTP_POST,.handler=vehicles_post},
+        {.uri="/api/vehicles/plan",.method=HTTP_POST,.handler=vehicle_plan_post},
+        {.uri="/api/vehicles/estimate",.method=HTTP_POST,.handler=vehicle_estimate_post},
+        {.uri="/api/vehicles/photo",.method=HTTP_GET,.handler=vehicle_photo_get},
+        {.uri="/api/vehicles/photo",.method=HTTP_POST,.handler=vehicle_photo_post},
         {.uri="/api/huawei/scan",.method=HTTP_GET,.handler=huawei_scan_get},
         {.uri="/api/huawei/scan",.method=HTTP_POST,.handler=huawei_scan_post},
         {.uri="/api/huawei/preview",.method=HTTP_GET,.handler=huawei_preview_get},
@@ -3301,6 +3620,7 @@ static void start_web(void) {
         {.uri="/api/meters/scan",.method=HTTP_GET,.handler=shelly_scan_get},{.uri="/api/meters/scan",.method=HTTP_POST,.handler=shelly_scan_post},
         {.uri="/api/meters/preview",.method=HTTP_GET,.handler=meter_preview_get},{.uri="/api/meters/preview",.method=HTTP_POST,.handler=meter_preview_post},
 
+        {.uri="/api/solis/hold",.method=HTTP_POST,.handler=solis_hold_post},
         {.uri="/api/control",.method=HTTP_POST,.handler=control_handler},{.uri="/api/time",.method=HTTP_POST,.handler=time_handler},{.uri="/api/energy/reset",.method=HTTP_POST,.handler=energy_reset_handler},{.uri="/api/sessions/reset",.method=HTTP_POST,.handler=sessions_reset_handler},
 
         {.uri="/api/phase-test",.method=HTTP_POST,.handler=phase_test_handler},
@@ -3330,7 +3650,7 @@ static void wifi_event(void *arg,esp_event_base_t base,int32_t id,void *data) {
 
     }
 
-    if(base==WIFI_EVENT && id==WIFI_EVENT_STA_DISCONNECTED) { LOCK(); wifi_online=false; station_ip[0]=0; if(!wifi_lost_at) wifi_lost_at=now_ms(); house_power_at=0;if(network_house_meter() || settings.house_rs485_interface)house_current_at=0;if(network_wallbox_meter() || settings.meter_rs485_interface)meter_at=actual_at=power_at=0; UNLOCK(); }
+    if(base==WIFI_EVENT && id==WIFI_EVENT_STA_DISCONNECTED) { LOCK(); wifi_online=false; station_ip[0]=0; if(!wifi_lost_at) wifi_lost_at=now_ms(); house_power_at=0;if(network_house_meter() || settings.house_rs485_interface==1)house_current_at=0;if(network_wallbox_meter() || settings.meter_rs485_interface==1)meter_at=actual_at=power_at=0; UNLOCK(); }
 
     if(base==IP_EVENT && id==IP_EVENT_STA_GOT_IP) {
 
@@ -3340,6 +3660,16 @@ static void wifi_event(void *arg,esp_event_base_t base,int32_t id,void *data) {
 
     }
 
+}
+
+static void start_local_name(void){
+    esp_err_t err=mdns_init();
+    if(err!=ESP_OK){ESP_LOGW(TAG,"mDNS initialization failed: %s",esp_err_to_name(err));return;}
+    err=mdns_hostname_set("teenet");
+    if(err==ESP_OK)err=mdns_instance_name_set("TeeNet");
+    if(err==ESP_OK)err=mdns_service_add(NULL,"_http","_tcp",80,NULL,0);
+    if(err!=ESP_OK){mdns_free();ESP_LOGW(TAG,"mDNS setup failed: %s",esp_err_to_name(err));}
+    else ESP_LOGI(TAG,"Local web address: http://teenet.local");
 }
 
 static void start_wifi(void) {
@@ -3452,14 +3782,24 @@ static void relay_signals_locked(int64_t now) {
 
 static void status_task(void *arg) {
 
-    int64_t checkpoint=now_ms(),publish=0,reconnect=0,console=0; double saved_total[2]={energy.store.total_wh[0],energy.store.total_wh[1]};
+    int64_t checkpoint=now_ms(),publish=0,reconnect=0,console=0; double saved_total[2]={energy.store.total_wh[0],energy.store.total_wh[1]};bool checkpoint_retry=false;
+#if CONFIG_TEE_HTTP_CONTROL_TRIAL
+    tcp_pcb_diag_start();
+#endif
 
     while(true) {
         boot_task_seen[0]=(uint32_t)now_ms();
+#if CONFIG_TEE_HTTP_CONTROL_TRIAL
+        tcp_pcb_diag_schedule(now_ms());
+#endif
 
-        int64_t now=now_ms(),epoch,midnight; uint32_t date=calendar(&epoch,&midnight); LOCK();
+        int64_t epoch,midnight; uint32_t date=calendar(&epoch,&midnight); LOCK();
+        /* A producer may publish while this task waits for state_lock.
+           Freshness must use a decision time no older than that snapshot. */
+        int64_t now=now_ms();
+        personal_sync_locked(now);
         restore_control_memory_locked(now,date?epoch:0,false);
-        if(reset_count_pending && now>=reset_clear_at && !backup_in_progress) { UNLOCK(); reset_sequence_clear(); LOCK(); }
+        if(reset_count_pending && now>=reset_clear_at && !backup_in_progress) { UNLOCK(); reset_sequence_clear(); LOCK(); now=now_ms(); }
 
         opendtu_apply_locked(now);
         if(evcc_tick(&evcc_control,now)) {
@@ -3468,26 +3808,40 @@ static void status_task(void *arg) {
         if(evcc_control.configured && !evcc_control.enabled && settings.enabled) {
             settings.enabled=false;settings.mode=MODE_OFF;
         }
+        if(!shell_http_runtime_tick(&http_regulator,settings.shell_http_control_enabled,settings.enabled,
+            settings.current_offset_a,&evcc_shell.http_control,evcc_shell_at,now,
+            !evcc_control.configured&&shell_vehicle_fresh(&evcc_shell,evcc_shell_at,now)&&evcc_shell.state!='F')){
+            settings.enabled=false;settings.mode=MODE_OFF;event_locked("http_control");
+        }
+        float policy_a[3];bool policy_fresh=control_currents_locked(now,policy_a);
         contacts_step_locked(now);
         phase_test_tick_locked(now);
         if(!boot_validation_pending&&!boot_validation_failed)phase_step_locked(now);
         relay_signals_locked(now);
-        if(settings.mode==MODE_PV && settings.zero_feed_enabled && fresh(now,house_power_at,house_meter_ttl()) && fresh(now,actual_at,wallbox_meter_ttl())) {
+        if(settings.mode==MODE_PV && settings.zero_feed_enabled && fresh(now,house_power_at,house_meter_ttl()) && policy_fresh) {
             settings.pv_surplus_a=pv_available_current_locked(now,house_power_w);pv_at=now;
         }
         bool assisted_start=battery_start_use && settings.battery_protect && battery_ready_locked(now) && battery_soc>settings.battery_reserve_soc;
-        pv_control_step_timed(&pv_control,pv_permitted_locked(now),pv_ramp_available_phases(settings.pv_surplus_a,pv_control.target_a,actual_a,settings.charge_phases),active_min_a(),settings.max_charge_a,
+        pv_control_step_timed(&pv_control,pv_permitted_locked(now),pv_ramp_available_phases(settings.pv_surplus_a,pv_control.target_a,policy_a,settings.charge_phases),active_min_a(),settings.max_charge_a,
             assisted_start?active_min_a():pv_start_threshold(&settings),assisted_start?0:EMS_PV_START_MS,now);
         /* Keep the anti-cycle detector on the deterministic one-second
            controller clock. HTTP rendering and frequent Wallbox requests
            must be read-only views of this state. */
         float unguarded_target=unlatched_target_locked(now);
         charge_guard_step(&charge_guard,unguarded_target>0,
-            fresh(now,actual_at,wallbox_meter_ttl()),actual_a,active_min_a(),now);
-        bool learn=feedback_ready(now) && fresh(now,wallbox_at,5000) && fresh(now,last_sent_current_at,5000) &&
+            policy_fresh,policy_a,active_min_a(),now);
+        bool learn=!settings.shell_http_control_enabled && feedback_ready(now) && fresh(now,wallbox_at,5000) && fresh(now,last_sent_current_at,5000) &&
             !charge_guard_blocked(&charge_guard,now) && !settings.phase_switch_enabled &&
             !settings.grid_guard_enabled && !(settings.evu_input_enabled && evu_contact.stable) &&
             !restart_pending() && !restarting && !ota_in_progress && !charge_plan.active;
+#if CONFIG_TEE_HTTP_CONTROL_TRIAL
+        learn=learn&&!normal_offset_trial.armed&&!shell_http_trial.armed;
+        if(normal_offset_trial.armed&&!normal_offset_trial_ready(&normal_offset_trial,now)){
+            normal_offset_trial.fault=true;settings.enabled=false;settings.mode=MODE_OFF;
+            if(fresh(now,actual_at,wallbox_meter_ttl())&&phase_measured_zero(&settings,actual_a,1))
+                settings.current_offset_a=normal_offset_trial.original;
+        }
+#endif
         if(current_calibration_step(&current_calibration,&settings,learn,unguarded_target,actual_a,actual_at,now)){
             saved_settings.current_offset_a=settings.current_offset_a;calibration_dirty=true;
         }
@@ -3496,16 +3850,29 @@ static void status_task(void *arg) {
 
         int64_t expires[2]={meter_at?meter_at+wallbox_meter_ttl():0,power_at?power_at+((sdm_meter()||network_wallbox_meter())?wallbox_meter_ttl():EMS_INPUT_TTL):0};
 
+        bool counter_enabled=evcc_control.configured||settings.shell_setup_host[0]||shell_active_host[0];
+        charge_counter_input_t counter_input={.fresh=evcc_shell_at>0&&now>=evcc_shell_at&&now-evcc_shell_at<EVCC_SHELL_TTL_MS,
+            .present=evcc_shell.session.present,.idle=evcc_shell.state=='A',.host=evcc_control.configured?evcc_host:shell_active_host[0]?shell_active_host:settings.shell_setup_host,
+            .identity=evcc_shell.session.identity,.card=evcc_shell.session.card,.energy_valid=evcc_shell.session.energy_valid,.raw_wh=evcc_shell.session.consumed_wh,
+            .sample_ms=evcc_shell_at,.now_ms=now,.epoch_ms=date?epoch:0};
+        charge_counter_delta_t counter_delta=charge_counter_step(&charge_counter,counter_enabled,&counter_input);
+        energy.primary_metered=counter_enabled;sessions_meter_mode(&sessions,counter_enabled,counter_delta.new_session);
         energy_step(&energy,now,epoch,date,midnight,power,expires);
+        if(counter_enabled)energy_add_metered(&energy,counter_delta.from_ms,counter_delta.to_ms,counter_delta.from_epoch_ms,counter_delta.to_epoch_ms,date,midnight,counter_delta.wh);
         sessions_step(&sessions,now,epoch,date,power[0],expires[0],house_power_w,
             house_power_at?house_power_at+house_meter_ttl():0,settings.price_kwh,settings.solar_price_kwh);
+        if(counter_enabled&&counter_delta.to_ms>0)sessions_add_metered(&sessions,now,epoch,date,counter_delta.wh,counter_delta.gap);
 
         plan_phase_t previous_plan=plan_phase;
         float maximum_kw=charge_plan_maximum_kw(&settings,house_currents_ready_locked(now),evu_contact.stable);
+        vehicle_estimate_step_locked(now);vehicle_plan_step_locked(now);maximum_kw=vehicle_plan_maximum_locked(maximum_kw);
+        if(soc_goal_step(&soc_goal,&charge_plan,settings.enabled,plan_car_soc_locked(now))){plan_dirty=true;plan_revision++;}
+        if(soc_goal.manual)maximum_kw=fminf(maximum_kw,settings.manual_current_a*ems_phase_voltage_sum(&settings,settings.manual_phases)/1000);
         plan_phase=charge_plan_step(&charge_plan,epoch/1000,date!=0,settings.enabled,
             energy.store.total_wh[0],maximum_kw);
         if(!evcc_control.configured && charge_plan.active&&plan_phase==PLAN_GRID&&settings.mode!=MODE_MANUAL) {
             settings.mode=MODE_MANUAL;settings.manual_phases=settings.phase_switch_enabled?3:settings.fixed_charge_phases;settings.manual_current_a=settings.max_charge_a;
+            if(vehicle_plan.active)vehicle_grid_current_locked(maximum_kw);
             pv_control_step(&pv_control,false,0,active_min_a(),settings.max_charge_a,now);
             event_locked("plan_grid");plan_dirty=true;plan_revision++;
         }
@@ -3513,9 +3880,19 @@ static void status_task(void *arg) {
             settings.enabled=false;settings.mode=MODE_OFF;plan_dirty=true;plan_revision++;
             event_locked(plan_phase==PLAN_COMPLETE?"plan_complete":"plan_expired");
         }
+        meter_hold_sample(&wallbox_meter_hold,&settings,network_wallbox_meter(),
+            meter_ready&&wallbox_ready&&(!settings.phase_switch_enabled||phase_state==PHASE_READY),now,actual_at,actual_a,target_locked(now));
+        bool curve_power=fresh(now,power_at,5000);
+        bool curve_fresh=feedback_ready(now)&&fresh(now,actual_at,5000)&&
+            (curve_power||fresh(now,meter_at,wallbox_meter_ttl()));
+        bool curve_flow=actual_a[0]>=1||actual_a[1]>=1||actual_a[2]>=1;
+        bool curve_finished=fresh(now,evcc_shell_at,EVCC_SHELL_TTL_MS)&&(evcc_shell.state=='A'||evcc_shell.state=='D');
+        charge_curve_step(&charge_curve,(uint32_t)(now/1000),date?(uint32_t)(epoch/1000):0,
+            settings.enabled,curve_finished,curve_fresh,curve_flow,curve_power?wallbox_w:(float)power[0],
+            target_locked(now)*ems_phase_voltage_sum(&settings,settings.charge_phases)*settings.power_factor);
         uint32_t previous_event_sequence=event_log.sequence;
         ems_event_observe(&event_log,block_reason_locked(now),date?epoch/1000:0,now/1000,
-            target_locked(now)*settings.charge_phases*settings.nominal_v/1000,
+            target_locked(now)*ems_phase_voltage_sum(&settings,settings.charge_phases)/1000,
             fresh(now,meter_at,wallbox_meter_ttl())?power[0]/1000:NAN,
             fresh(now,house_power_at,house_meter_ttl())?house_power_w/1000:NAN,
             fresh(now,battery_soc_at,EMS_INPUT_TTL)?battery_soc:NAN);
@@ -3529,10 +3906,14 @@ static void status_task(void *arg) {
         bool mqtt_restart_ready=!phase_mqtt_inflight&&fresh(now,actual_at,wallbox_meter_ttl())&&
             actual_a[0]>=0&&actual_a[0]<1&&actual_a[1]>=0&&actual_a[1]<1&&actual_a[2]>=0&&actual_a[2]<1&&
             (!phase_mqtt_allowed||(phase_state==PHASE_READY&&phase_mqtt_known&&phase_mqtt_assumed==3));
-        bool reboot=restarting && (phase_fault_restart_safe_locked(now) || !settings.phase_switch_enabled || (phase_mqtt_remote()?mqtt_restart_ready:phase_shelly_remote()?remote_restart_ready:!relay_on[0])),online=wifi_online,session_checkpoint=sessions.checkpoint,changed=energy.store.total_wh[0]!=saved_total[0] || energy.store.total_wh[1]!=saved_total[1]; UNLOCK();
+        bool reboot=restarting && (phase_fault_restart_safe_locked(now) || !settings.phase_switch_enabled || (phase_mqtt_remote()?mqtt_restart_ready:phase_shelly_remote()?remote_restart_ready:!relay_on[0])),online=wifi_online,session_checkpoint=sessions.checkpoint,changed=energy.store.total_wh[0]!=saved_total[0] || energy.store.total_wh[1]!=saved_total[1],retry_storage=storage_error; UNLOCK();
         bool flash_finished=false;
         if(xSemaphoreTake(maintenance_flash_lock,0)==pdTRUE){
+        bool essential_saved=!reboot;
         LOCK();bool persist_calibration=calibration_dirty && (reboot || now-calibration_saved_at>=1800000);
+#if CONFIG_TEE_HTTP_CONTROL_TRIAL
+            persist_calibration=persist_calibration&&!normal_offset_trial.armed&&!shell_http_trial.armed;
+#endif
         float offset_to_save=settings.current_offset_a;UNLOCK();
         if(persist_calibration && config_storage_ok){
             nvs_handle_t nvs;if(nvs_open("wallbox_ems",NVS_READWRITE,&nvs)==ESP_OK){
@@ -3543,22 +3924,28 @@ static void status_task(void *arg) {
             }
         }
 
-        if((now-checkpoint>=900000 && changed) || session_checkpoint || reboot) {
+        if(((now-checkpoint>=900000 && changed)||session_checkpoint||reboot||retry_storage||checkpoint_retry)&&
+           (!checkpoint_retry||now-checkpoint>=10000)) {
 
-            bool saved=save_energy(); checkpoint=now;
+            bool saved=save_energy();checkpoint=now;checkpoint_retry=!saved;essential_saved=saved;
 
-            if(saved) { LOCK(); saved_total[0]=energy.store.total_wh[0]; saved_total[1]=energy.store.total_wh[1]; bool has_plan=charge_plan.active||plan_dirty; UNLOCK(); if(has_plan)save_plan(); }
+            if(saved) { LOCK(); saved_total[0]=energy.store.total_wh[0]; saved_total[1]=energy.store.total_wh[1]; bool has_plan=charge_plan.active||plan_dirty; UNLOCK(); if(has_plan)essential_saved&=save_plan(); }
 
         }
         LOCK();bool persist_plan=plan_dirty && now-plan_save_attempt>=60000;UNLOCK();
-        if(persist_plan)save_plan();
+        if(persist_plan)essential_saved&=save_plan();
 
         save_diagnostics(reboot);
-        save_control_memory(reboot);
-        flash_finished=true;
+        save_charge_curve(now,reboot);
+        essential_saved&=save_control_memory(reboot);
+        /* A restart must not discard counters after a deferred/failed save. */
+        if(reboot&&!essential_saved)checkpoint_retry=true;
+        flash_finished=essential_saved;
         xSemaphoreGive(maintenance_flash_lock);
         }
-        if(reboot && flash_finished) {
+        /* An explicitly requested factory erase does not depend on being able
+           to save the data the user has chosen to erase. */
+        if(reboot && (flash_finished||factory_reset_requested)) {
 
             vTaskDelay(ticks(1000));
 
@@ -3568,6 +3955,8 @@ static void status_task(void *arg) {
 
         }
 
+        LOCK();personal_sync_locked(now_ms());UNLOCK();
+        solis_hold_publish();
         maintain_wifi(now);
 
         if(now-publish>=ems_param_ms(EP_MQTT_PUBLISH)) { mqtt_state(); publish=now; }
@@ -3603,7 +3992,7 @@ void app_main(void) {
         snprintf(mqtt_device_id,sizeof(mqtt_device_id),"teenet_%02x%02x%02x%02x%02x%02x",
             mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
 
-    state_lock=xSemaphoreCreateMutex(); wifi_action_lock=xSemaphoreCreateMutex(); plan_save_lock=xSemaphoreCreateMutex();maintenance_flash_lock=xSemaphoreCreateMutex();phase_mqtt_send_lock=xSemaphoreCreateMutex(); if(!phase_mqtt_send_lock||!state_lock || !wifi_action_lock || !plan_save_lock||!maintenance_flash_lock) abort();
+    status_snapshot_lock=xSemaphoreCreateMutex();state_lock=xSemaphoreCreateMutex(); wifi_action_lock=xSemaphoreCreateMutex(); plan_save_lock=xSemaphoreCreateMutex();maintenance_flash_lock=xSemaphoreCreateMutex();phase_mqtt_send_lock=xSemaphoreCreateMutex(); if(!status_snapshot_lock||!phase_mqtt_send_lock||!state_lock || !wifi_action_lock || !plan_save_lock||!maintenance_flash_lock) abort();
 
     /* Never erase settings or accumulated energy automatically on storage errors. */
 
@@ -3621,7 +4010,8 @@ void app_main(void) {
 
     }
 
-    load_settings(); expert_load(); load_control_memory(); terms_load(); telemetry_load(); evcc_load(); load_energy(); load_plan(); load_diagnostics();
+    solis_hold_init();
+    load_settings(); expert_load(); expert_standards_load(); personal_load(); load_control_memory(); terms_load(); telemetry_load(); evcc_load(); load_energy(); vehicle_load(); vehicle_assets_boot(); load_plan(); load_diagnostics();
     if(evcc_control.configured&&charge_plan.active){charge_plan.active=false;plan_phase=PLAN_OFF;plan_dirty=true;plan_revision++;} phase_setup(); contact_setup(); setenv("TZ","CET-1CEST,M3.5.0,M10.5.0/3",1); tzset();
     LOCK();esp_reset_reason_t reset=esp_reset_reason();event_locked(reset==ESP_RST_TASK_WDT||reset==ESP_RST_INT_WDT||reset==ESP_RST_WDT?"boot_watchdog":reset==ESP_RST_BROWNOUT?"boot_brownout":"boot");UNLOCK();
 
@@ -3654,8 +4044,11 @@ void app_main(void) {
 
     if(phase_mqtt_remote()&&settings.phase_switch_enabled&&
        xTaskCreate(phase_mqtt_task,"phase_output",settings.phase_output_transport?6144:4096,NULL,6,NULL)!=pdPASS){phase_state=PHASE_FAULT;phase_gpio_ready=false;}
+    if(settings.phase_switch_enabled&&phase_uses_voltage(&settings)&&
+       xTaskCreate(phase_voltage_task,"phase_voltage",4096,NULL,4,NULL)!=pdPASS){phase_state=PHASE_FAULT;phase_gpio_ready=false;}
     if(phase_shelly_remote()&&settings.phase_switch_enabled &&
        xTaskCreate(phase_shelly_task,"phase_shelly",6144,NULL,6,NULL)!=pdPASS){phase_state=PHASE_FAULT;phase_gpio_ready=false;}
+    if(settings.sungrow_enabled&&xTaskCreate(sungrow_task,"sungrow",4096,NULL,4,NULL)!=pdPASS)ESP_LOGE(TAG,"Sungrow reader task failed");
     huawei_io=xSemaphoreCreateMutex();
     if(xTaskCreate(shell_limits_task,"shell_limits",6144,NULL,4,NULL)!=pdPASS)ESP_LOGE(TAG,"Shell limits task failed");
     if(huawei_io)xTaskCreate(huawei_task,"huawei",4096,NULL,6,NULL);
@@ -3671,6 +4064,9 @@ void app_main(void) {
 
     if(xTaskCreate(status_task,"status",6144,NULL,5,NULL)!=pdPASS) abort();
     if(xTaskCreate(boot_check_task,"boot_check",3072,NULL,4,NULL)!=pdPASS)abort();
+    /* Optional name service starts after the metering/control tasks, so a
+       discovery allocation failure cannot take resources away from them. */
+    start_local_name();
 
     ESP_LOGI(TAG,"Ready; setup AP %s is available when no home network is configured or after 5 minutes offline",SETUP_SSID);
 

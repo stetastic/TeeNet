@@ -1,7 +1,7 @@
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
 const src=fs.readFileSync('main/dashboard.js','utf8');
 const calls=[],messages=[];let submit;
-const context=vm.createContext({state:{},Number,api:async(path,body)=>calls.push({path,body}),toast:t=>messages.push(t),pollStatus:async()=>{},dirty:true,selectedCurrent:()=>9.42,selectedPower:()=>6.5,phaseForPower:()=>3,action:fn=>fn(),$:id=>id==='control-form'?{addEventListener:(_,fn)=>submit=fn}:{value:'manual'}});
+const context=vm.createContext({state:{},window:{},Number,api:async(path,body)=>calls.push({path,body}),toast:t=>messages.push(t),pollStatus:async()=>{},dirty:true,selectedCurrent:()=>9.42,selectedPower:()=>6.5,phaseForPower:()=>3,action:fn=>fn(),$:id=>id==='control-form'?{addEventListener:(_,fn)=>submit=fn}:{value:'manual'}});
 vm.runInContext(src.slice(src.indexOf('let preferredChargeMode='),src.indexOf('reasons.charge_ended=')),context);
 vm.runInContext(src.slice(src.indexOf('function chargeButtonLabel('),src.indexOf('function render(){')),context);
 vm.runInContext(src.slice(src.indexOf("$('control-form').addEventListener('submit'"),src.indexOf("$('unlock-control').addEventListener")),context);

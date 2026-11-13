@@ -26,7 +26,7 @@ function setup(script,fetch){
   try{
     const fields=generate(temporary),shim=fs.readFileSync(path.join(temporary,'status-profile-demo.js'),'utf8');
     assert(fields.includes('wallbox_rx_tail_hex')&&fields.includes('largest_free_block'));
-    assert(fields.includes('last_sent_a')&&fields.includes('house_a'),'owned array fields follow the same diagnostic guards as scalar fields');
+    assert(!fields.includes('last_sent_a')&&fields.includes('house_a'),'live output array is shared; diagnostic house array follows its guard');
     assert(!fields.includes('last_sent_age_ms')&&!fields.includes('measurement_age_s')&&!fields.includes('token'));
     const installed=fs.readFileSync(path.join(temporary,'index.html'),'utf8');
     assert(installed.indexOf('/expert-demo-api.js')<installed.indexOf('/status-profile-demo.js'));

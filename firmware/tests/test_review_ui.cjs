@@ -20,7 +20,7 @@ assert(!choices().some(x=>[0,3,19,20,26,35,36,37,45,46,48].includes(x.pin)));
 ctx.values.relay_board_enabled=true;assert(choices().find(x=>x.pin===12).reason);
 ctx.values.evu_input_enabled=true;assert(choices().find(x=>x.pin===7).reason);
 ctx.values.external_mode_input_enabled=true;assert(choices().find(x=>x.pin===6).reason);
-ctx.values.phase_switch_enabled=true;assert(choices().find(x=>x.pin===13).reason);
+ctx.values.phase_switch_enabled=true;assert.equal(choices().find(x=>x.pin===13).reason,'','retired feedback contacts reserve no pin');
 ctx.values.house_meter_type='sdm630';assert(choices().find(x=>x.pin===43).reason);
 ctx.values.house_meter_type='huawei';assert.equal(choices().find(x=>x.pin===43).reason,'');
 assert.equal(run('localDateValue({getFullYear:()=>2026,getMonth:()=>9,getDate:()=>5})'),'2026-10-05');

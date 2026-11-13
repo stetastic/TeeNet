@@ -13,21 +13,23 @@
   "phase-switching.svg": {
     "source": "Original TeeNet functional diagram",
     "references": [
-      "https://cdn-reichelt.de/documents/datenblatt/A300/ANLEITUNGHLRELMDEUTSCH.pdf",
-      "https://hager.com/intl-en/catalogue/information/esc441-contactor-40a-4nc-230v"
+      "https://hager.com/de/katalog/produkt/esc226-installationsschuetze-25a-2oe-230v",
+      "https://shelly-api-docs.shelly.cloud/gen2/ComponentsAndServices/Switch/"
     ]
   },
-  "guide.html#flow-title": {
+  "guide.html#atom-plan-title": {
     "source": "Original TeeNet functional diagram",
-    "description": "Separate Shell, wallbox meter, house meter and optional PV/battery data paths."
+    "description": "Four wires from the wallbox to Tail485: A, B, DC plus and minus. Functional labels, not physical terminal order.",
+    "references": [
+      "https://docs.m5stack.com/en/core/AtomS3-Lite",
+      "https://docs.m5stack.com/en/atom/Tail_RS485"
+    ]
   },
-  "guide.html#shelly-plan-title": {
+  "guide.html#phase-plan-title": {
     "source": "Original TeeNet functional diagram",
     "references": [
-      "https://shelly-api-docs.shelly.cloud/gen2/Devices/Gen2/ShellyPro1/",
-      "https://shelly-api-docs.shelly.cloud/gen2/ComponentsAndServices/Switch/",
-      "https://shelly-api-docs.shelly.cloud/gen2/ComponentsAndServices/Input/"
-    ],
-    "description": "Logical control/feedback overview only, not mains-voltage wiring."
+      "https://hager.com/de/katalog/produkt/esc226-installationsschuetze-25a-2oe-230v",
+      "https://shelly-api-docs.shelly.cloud/gen2/ComponentsAndServices/Switch/"
+    ]
   }
 }

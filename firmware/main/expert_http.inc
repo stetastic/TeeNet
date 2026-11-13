@@ -31,23 +31,35 @@ static cJSON *expert_values_snapshot(void){
         json_add_owned_to_array(values,cJSON_CreateNumber(expert_saved.values[p]));
         json_add_owned_to_array(active,cJSON_CreateNumber(ems_param(p)));
     }
+    cJSON *standards=cJSON_AddObjectToObject(root,"standards");
+    for(unsigned p=0;p<EP_COUNT;p++)if(expert_standard_set[p])cJSON_AddNumberToObject(standards,expert_meta[p].id,expert_standard_value(p));
     bool pending=false;for(unsigned p=0;p<EP_COUNT;p++)pending|=fabsf(expert_saved.values[p]-ems_param(p))>.00001f;
     cJSON_AddBoolToObject(root,"pending",pending);
     return root;
 }
 #include "expert_storage.inc"
+#include "expert_standards.inc"
 #include "phase_mqtt_storage.inc"
 #include "phase_mqtt_http.inc"
+#include "personal_http.inc"
 static esp_err_t expert_post(httpd_req_t *req){
     if(!authorized(req))return ESP_OK;
     cJSON *o=read_json(req);if(!o)return ESP_OK;
     cJSON *pin=cJSON_GetObjectItemCaseSensitive(o,"pin"),*action=cJSON_GetObjectItemCaseSensitive(o,"action");
+#if CONFIG_TEE_HTTP_CONTROL_TRIAL
+    LOCK();bool control_test_active=normal_offset_trial.armed||shell_http_trial.armed;UNLOCK();
+    bool readonly=cJSON_IsString(action)&&(!strcmp(action->valuestring,"read")||!strcmp(action->valuestring,"read_gpio")||!strcmp(action->valuestring,"authorize"));
+    bool revoke=cJSON_IsString(action)&&!strcmp(action->valuestring,"mqtt_phase_output")&&cJSON_IsFalse(cJSON_GetObjectItemCaseSensitive(o,"enabled"));
+    if(control_test_active&&!readonly&&!revoke){cJSON_Delete(o);httpd_resp_set_status(req,"409 Conflict");return httpd_resp_sendstr(req,"Reglertest vor Parameteraenderungen beenden.");}
+#endif
     /* Authenticated local users may always revoke; enabling still needs both
        password checks and warnings. A duplicate enabled field is rejected by
        phase_mqtt_post before any permission is changed. */
     if(cJSON_IsString(action)&&!strcmp(action->valuestring,"mqtt_phase_output")&&
        cJSON_IsFalse(cJSON_GetObjectItemCaseSensitive(o,"enabled")))return phase_mqtt_post(req,o);
     if(now_ms()<expert_wrong_until){cJSON_Delete(o);httpd_resp_set_status(req,"429 Too Many Requests");return httpd_resp_sendstr(req,"Kurz warten und erneut versuchen.");}
+    if(cJSON_IsString(action)&&!strcmp(action->valuestring,"personal"))return personal_post(req,o);
+    if(cJSON_IsString(pin)&&personal_pin_valid(pin->valuestring)&&cJSON_IsString(action)&&!strcmp(action->valuestring,"read")){cJSON_Delete(o);return send_json(req,personal_snapshot());}
     if(!cJSON_IsString(pin)||!expert_pin_valid(pin->valuestring)){
         expert_wrong_until=now_ms()+2000;cJSON_Delete(o);
         return httpd_resp_send_err(req,HTTPD_403_FORBIDDEN,"Experten-Passwort falsch.");
@@ -63,6 +75,7 @@ static esp_err_t expert_post(httpd_req_t *req){
     if(!strcmp(action->valuestring,"gpio"))return gpio_post(req,o);
     LOCK();bool stopped=expert_stopped_locked();UNLOCK();
     if(!stopped){cJSON_Delete(o);httpd_resp_set_status(req,"409 Conflict");return httpd_resp_sendstr(req,"Ladung zuerst stoppen; frische Messwerte unter 1 A erforderlich.");}
+    if(!strcmp(action->valuestring,"standard"))return expert_standard_post(req,o);
     if(!strcmp(action->valuestring,"config")){
         cJSON *changes=cJSON_DetachItemFromObjectCaseSensitive(o,"changes");cJSON_Delete(o);
         if(!cJSON_IsObject(changes)){cJSON_Delete(changes);return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Einstellungen fehlen.");}

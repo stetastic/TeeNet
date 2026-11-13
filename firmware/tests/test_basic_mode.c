@@ -41,7 +41,7 @@ int main(void) {
     assert(s.mqtt_input_source==0);
     assert(s.mqtt_enabled && s.homeassistant_enabled && s.basic_mode && settings_valid(&s));
     s.mode=MODE_MANUAL;s.enabled=true;settings_basic_mode(&s);
-    assert(s.enabled && s.mode==MODE_MANUAL && s.manual_current_a==8.7f);
+    assert(s.enabled && s.mode==MODE_MANUAL && s.manual_current_a==EMS_DEFAULT_MIN_CHARGE_A);
     settings_t old;settings_defaults(&old);old.version=24;
     old.phase_switch_enabled=old.relay_board_enabled=true;old.relay1_mode=3;
     old.zero_feed_enabled=old.battery_protect=true;

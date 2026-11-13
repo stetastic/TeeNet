@@ -1,0 +1,34 @@
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+const nodes={};function el(id){return nodes[id]??={value:'',hidden:false,listeners:{},children:[],addEventListener(k,fn){this.listeners[k]=fn;},replaceChildren(){this.children=[];},append(c){this.children.push(c);}};}
+function field(value,checked=false){return {value,checked,options:[],listeners:{},required:false,addEventListener(k,fn){this.listeners[k]=fn;},dispatchEvent(){this.changed=true;}};}
+const f=Object.fromEntries(Object.entries({phase_feedback_source:'2',phase_voltage_host:'',phase_voltage_protocol:'0',phase_shelly_model:'4',phase_shelly_true_three_phase:'false',phase_actuator_type:'1',phase_shelly_host:'192.0.2.11',phase_shelly_password:'',relay1_mode:'3',phase_switch_enabled:'true'}).map(([k,v])=>[k,field(v,k==='phase_switch_enabled')]));
+el('config-form').elements=f;el('phase-shelly-connection').options=[{value:'1'},{value:'3'}];el('phase-feedback-choice').options=['none','voltage'].map(value=>({value}));
+const state={phase_switch_enabled:true,phase_actuator_type:1,phase_feedback_source:2,phase_feedback:0,hardware_id:'andreas-testboard'};
+const context={window:{addEventListener(){}},$:el,state,online:true,busy:false,Event:function(){},document:{createElement(){return {};}},setTimeout(){return 1;},clearTimeout(){},api:async()=>({family:'shelly_switch',running:false,devices:[]})};
+const source=fs.readFileSync('tools/phase_shelly_ui.js','utf8');vm.runInNewContext(source,context);
+const ui=context.window.teenetShellyPhase,feedback=el('phase-feedback-choice');
+assert.equal(feedback.value,'none');assert.equal(f.phase_shelly_true_three_phase.value,'false');
+feedback.value='voltage';feedback.listeners.change();assert.equal(f.phase_feedback_source.value,'1');assert(f.phase_voltage_host.required&&!el('phase-voltage-settings').hidden);
+state.phase_voltage_v=[230,0,0];state.phase_voltage_position=1;state.phase_feedback=1;ui.updateLive();assert.match(el('phase-contact-status').textContent,/L1: 230 V.*L2: 0 V.*Einphasig bestätigt/);
+f.wallbox_meter_type=field('shelly_gen2');f.wallbox_meter_host=field('192.0.2.33');f.phase_voltage_host.value='';feedback.value='voltage';feedback.listeners.change();
+assert.equal(f.phase_voltage_host.value,'192.0.2.33');assert.equal(f.phase_voltage_protocol.value,'0');assert.equal(el('phase-voltage-meter').value,'wallbox');assert(el('phase-voltage-meter').children[0].textContent.includes('192.0.2.33'));
+f.wallbox_shelly_reverse={value:'false'};ui.update();
+assert.equal(el('phase-voltage-wiring-note').textContent,'Shelly A/L1 → Wallbox L1, B/L2 → L2, C/L3 → L3.');
+f.wallbox_shelly_reverse.value='true';ui.update();
+assert.equal(el('phase-voltage-wiring-note').textContent,'Shelly C/L3 → Wallbox L1, B/L2 → L2, A/L1 → L3.');
+f.wallbox_shelly_reverse.value='false';f.phase_voltage_host.value='192.0.2.44';ui.update();
+assert.equal(el('phase-voltage-wiring-note').textContent,'Shelly C/L3 → Wallbox L1, B/L2 → L2, A/L1 → L3.','A separate voltage meter retains its fixed channel order');
+f.phase_voltage_host.value='192.0.2.33';ui.update();
+state.phase_shelly_config_ok=false;state.phase_feedback=0;state.phase_voltage_position=3;state.phase_voltage_v=[238,238,237];ui.updateLive();assert.match(el('phase-contact-status').textContent,/Dreiphasig bestätigt/);assert(!el('phase-shelly-diagnostic').hidden);assert.match(el('phase-shelly-diagnostic').textContent,/Detached/);
+feedback.value='none';feedback.listeners.change();assert.equal(f.phase_feedback_source.value,'2');assert(f.phase_feedback_source.changed&&!f.phase_voltage_host.required);
+assert(!('phase-unverified-dialog' in nodes),'No confirmation dialog should be instantiated');
+f.phase_actuator_type.value='2';f.phase_actuator_type.listeners.change();assert(!el('phase-mqtt-normal').hidden&&el('phase-shelly-settings').hidden);
+f.phase_actuator_type.value='1';f.phase_shelly_model.value='12';ui.update();assert(!el('phase-shelly-connection').options[1].disabled);
+el('phase-shelly-auth').value='1';ui.update();assert(!f.phase_shelly_password.disabled&&f.phase_shelly_password.required);
+f.phase_actuator_type.value='3';ui.update();assert(f.phase_shelly_password.disabled&&!f.phase_shelly_password.required);
+f.phase_actuator_type.value='0';ui.update();assert.match(el('phase-connection-note').textContent,/GPIO7/);
+const html=fs.readFileSync('main/dashboard.html','utf8');
+for(const retired of ['name="phase_feedback_pin"','name="phase_feedback_second_pin"','name="phase_feedback_count"','name="phase_shelly_pulse"','id="phase-unverified-dialog"','id="expert-phase-mqtt"'])assert(!html.includes(retired),retired);
+assert(html.includes('Öffner (NC)'));
+assert(fs.readFileSync('main/dashboard.js','utf8').replace(/\r\n/g,'\n').includes(source.replace(/\r\n/g,'\n').trim()));
+console.log('PASS: no contact or pulse fields, Hager default, normal save events, optional voltage, MQTT and both Shelly transports');

@@ -1,4 +1,7 @@
 static void phase_step_locked(int64_t now) {
+    bool requested=settings.enabled||(evcc_control.configured&&evcc_control.enabled);
+    if(!requested){phase_attempt_at=0;phase_no_load_since=0;}
+    if(phase_state!=PHASE_READY)phase_no_load_since=0;
     if(phase_config_saving||(reboot_required&&!restarting&&!ota_in_progress))return;
     phase_mqtt_guard_locked();
     phase_shelly_guard_locked(now);
@@ -9,7 +12,7 @@ static void phase_step_locked(int64_t now) {
     if(phase_state==PHASE_FAULT) return;
     /* Network components cannot be ready before Wi-Fi. During boot stay
        blocked without a command; never reuse the short mechanical timeout. */
-    if(phase_startup&&phase_shelly_remote()&&phase_state==PHASE_MOVING&&!observed){
+    if(phase_startup&&(phase_shelly_remote()||phase_uses_voltage(&settings))&&phase_state==PHASE_MOVING&&!observed){
         if(now-phase_move_at>ems_param_ms(EP_PHASE_STOP_MAX))phase_state=PHASE_FAULT;
         return;
     }
@@ -17,8 +20,12 @@ static void phase_step_locked(int64_t now) {
         if(now-phase_stop_at>ems_param_ms(EP_PHASE_STOP_MAX))phase_state=PHASE_FAULT;
         return;
     }
+    if(phase_state==PHASE_READY&&fresh(now,actual_at,wallbox_meter_ttl())&&
+       actual_at>phase_move_at&&phase_current_mismatch(&settings,actual_a)){
+        phase_state=PHASE_FAULT;return;
+    }
     if(phase_state==PHASE_READY && !phase_feedback_matches(settings.phase_feedback_enabled,observed,settings.charge_phases)) { phase_state=PHASE_FAULT; return; }
-    if(phase_state==PHASE_READY && settings.charge_phases==1 &&
+    if(requested && phase_state==PHASE_READY && settings.charge_phases==1 &&
        fresh(now,actual_at,wallbox_meter_ttl())) {
         float peak=fmaxf(actual_a[0],fmaxf(actual_a[1],actual_a[2]));
         if(peak>=1) {
@@ -67,7 +74,7 @@ static void phase_step_locked(int64_t now) {
     if(phase_state==PHASE_MOVING) {
         if(phase_mqtt_remote()?phase_mqtt_motion_complete_locked(phase_goal,now):
            phase_shelly_remote()?phase_shelly_motion_complete_locked(phase_goal,now):
-           phase_motion_complete(settings.phase_feedback_enabled,observed,phase_goal,now-phase_move_at)) {
+           (phase_motion_complete(settings.phase_feedback_enabled,observed,phase_goal,now-phase_move_at)&&(!phase_uses_voltage(&settings)||phase_voltage.at>phase_move_at))) {
             settings.charge_phases=phase_goal;
             phase_move_at=now; phase_state=PHASE_SETTLING;
             phase_attempt_at=phase_no_load_since=0;
@@ -77,10 +84,22 @@ static void phase_step_locked(int64_t now) {
         return;
     }
     if(phase_state==PHASE_SETTLING) {
+        if(phase_shelly_remote()&&phase_shelly_rechecking){
+            if(phase_shelly_uncertain||(observed&&observed!=phase_goal)||
+               (fresh(now,actual_at,wallbox_meter_ttl())&&phase_current_mismatch(&settings,actual_a))||
+               now-phase_shelly_recheck_at>ems_param_ms(EP_PHASE_DATA_MAX)){
+                phase_shelly_rechecking=false;phase_state=PHASE_FAULT;return;
+            }
+            if(!observed||phase_shelly_at<=phase_shelly_recheck_at||
+               (phase_uses_voltage(&settings)&&phase_voltage.at<=phase_shelly_recheck_at)){
+                phase_move_at=now;return;
+            }
+        }
         if(!phase_feedback_matches(settings.phase_feedback_enabled,observed,phase_goal)) { phase_state=PHASE_FAULT; return; }
         if(now-phase_move_at>=ems_param_ms(EP_PHASE_SETTLE) && meter_at>phase_move_at && (wallbox_at>phase_move_at||
            (phase_test_active&&!settings.enabled&&!evcc_control.enabled&&fresh(now,actual_at,wallbox_meter_ttl())&&actual_at>phase_move_at))) {
             phase_state=PHASE_READY;
+            phase_shelly_rechecking=false;
             /* Bootstrap and a completed explicit Stop are not PV oscillations.
                The dwell protects ongoing automatic changes, not an idle start. */
             phase_hold_until=phase_startup||!settings.enabled?0:now+ems_param_ms(EP_PHASE_HOLD);
@@ -95,17 +114,17 @@ static void phase_step_locked(int64_t now) {
     else if(evcc_control.configured)desired=(uint8_t)evcc_desired_phases(&evcc_control,settings.charge_phases);
     else if(settings.enabled && settings.mode==MODE_MANUAL) desired=settings.manual_phases;
     else if(settings.enabled && settings.mode==MODE_PV && settings.zero_feed_enabled) {
-        float surplus=phase_surplus_w_locked(now);
-        float down=settings.min_charge_a*3*settings.nominal_v*settings.power_factor-300;
+        float surplus=vehicle_phase_surplus_locked(phase_surplus_w_locked(now));
+        float down=settings.min_charge_a*ems_phase_voltage_sum(&settings,3)*settings.power_factor-300;
         float up=fmaxf(6300,down+800);
         /* A 6 kW vehicle-priority ceiling must not prevent return to the
            tested 6 kW three-phase range after the two-minute dwell. */
-        float three_phase_min=settings.min_charge_a*3*settings.nominal_v;
+        float three_phase_min=settings.min_charge_a*ems_phase_voltage_sum(&settings,3);
         if(settings.pv_allocation_enabled && settings.pv_priority==1 &&
            settings.pv_car_priority_w>=three_phase_min-5)
             up=fminf(up,fmaxf(three_phase_min,settings.pv_car_priority_w));
         if(isfinite(surplus)) {
-            if(settings.charge_phases==3 && surplus<down && surplus>=settings.min_charge_a*settings.nominal_v) desired=1;
+            if(settings.charge_phases==3 && surplus<down && surplus>=settings.min_charge_a*ems_phase_voltage_sum(&settings,1)) desired=1;
             else if(settings.charge_phases==1 && surplus+5>=up) desired=3;
             else desired=settings.charge_phases;
         } else desired=settings.charge_phases;

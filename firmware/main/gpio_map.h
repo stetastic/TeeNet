@@ -1,6 +1,6 @@
 #pragma once
 /* Included after settings_t. Only pins usable on the selected board are assignable. */
-#define EMS_GPIO_ROLES 12
+#define EMS_GPIO_ROLES 10
 typedef struct { const char *id,*label,*help; size_t offset; int standard; } gpio_role_t;
 extern const gpio_role_t gpio_roles[EMS_GPIO_ROLES];
 int settings_gpio_value(const settings_t *s,unsigned role);

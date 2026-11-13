@@ -6,7 +6,7 @@ source = (root / 'main/app.c').read_text(encoding='utf-8')
 pv_start = source.index('static bool pv_permitted_locked(int64_t now) {')
 pv_end = source.index('static bool house_currents_ready_locked', pv_start)
 target_start = source.index('static float unlatched_target_locked(int64_t now) {')
-target_end = source.index('static float target_locked', target_start)
+target_end = source.index('static void mode_transition_locked', target_start)
 resume_start = source.index('        if(phase_idle_inhibit && next.enabled &&')
 resume_end = source.index('\n\n', resume_start)
 fragment = source[pv_start:pv_end] + source[target_start:target_end]

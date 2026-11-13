@@ -20,12 +20,19 @@ static opendtu_state_t opendtu;
 static bool mqtt_online,phase_mqtt_seen_connection,phase_mqtt_allowed,phase_mqtt_pending;
 static unsigned phase_goal,mqtt_rejected,apply_calls,cancel_calls,subscriptions;
 static int locks;
+static unsigned solis_ack_calls;
+static unsigned personal_voltage_calls;
 static int64_t battery_soc_at,battery_charge_at,battery_discharge_at,car_soc_at,pv_generation_at,power_at,pv_at;
 static float car_soc,battery_soc,battery_charge_w,battery_discharge_w,pv_generation_w,wallbox_w;
 static char subscribed[20][192];
 #define LOCK() assert(locks++==0)
 #define UNLOCK() assert(--locks==0)
 static int64_t now_ms(void){return 10000;}
+static void solis_hold_ack_locked(const char *payload){assert(locks==1&&payload);solis_ack_calls++;}
+static bool personal_voltage_message_locked(const char *payload){assert(locks==1&&payload);personal_voltage_calls++;return true;}
+static void personal_sync_locked(int64_t now){(void)now;assert(locks==1);}
+static bool vehicle_soc_message_locked(const char *s,const char *p){(void)s;(void)p;return false;}
+static int64_t vehicle_soc_at[4];
 static bool sdm_meter(void){return false;}
 static bool network_wallbox_meter(void){return false;}
 static void phase_mqtt_cancel_locked(bool stop){assert(locks==1);(void)stop;cancel_calls++;}
@@ -91,6 +98,11 @@ int main(void){
         deliver("wallbox-ems/command/enabled","true",true,false);assert(apply_calls==1);
         if(transport){mqtt_event(NULL,NULL,MQTT_EVENT_DISCONNECTED,&event);assert(cancel_calls==0&&phase_mqtt_allowed==(bool)allowed);}
     }
+    settings_defaults(&settings);settings.mqtt_enabled=true;settings.nominal_v=236;
+    assert(mqtt_input("command/power_kw","6"));
+    assert(!mqtt_input("command/power_kw","5.5"));
+    assert(mqtt_input("command/power_kw","5.6"));
+    assert(!mqtt_input("command/power_kw","5.55"));
     settings_defaults(&settings);settings.basic_mode=false;settings.heatpump_enabled=true;
     strcpy(settings.heatpump_source,"mqtt");strcpy(settings.heatpump_input_topic,"external/hp/watts");
     subscriptions=0;esp_mqtt_client_subscribe(1,settings.heatpump_input_topic,1);mqtt_online=true;
@@ -102,5 +114,20 @@ int main(void){
     settings.heatpump_enabled=false;deliver("external/hp/watts","5000",false,false);assert(heatpump_power_w==2200);
     assert(!heatpump_fresh_locked(now_ms()));settings.heatpump_enabled=true;
     mqtt_test_event_t disconnect={.client=1};mqtt_event(NULL,NULL,MQTT_EVENT_DISCONNECTED,&disconnect);assert(!heatpump_at);
-    printf("PASS: %u phase MQTT isolation cases plus real heat-pump custom topic, fragments, zero, unavailable, retained/disabled and disconnect handling\n",checked);
+    unsigned applied=apply_calls;
+    deliver("wallbox-ems/solis/hold/status","{}",false,true);assert(solis_ack_calls==1&&apply_calls==applied);
+    deliver("wallbox-ems/solis/hold/status","{}",true,false);assert(solis_ack_calls==1);
+    deliver("wallbox-ems/solis/hold/request","true",false,false);assert(solis_ack_calls==1&&apply_calls==applied);
+    deliver("wallbox-ems/private/grid_voltages","{}",false,true);assert(personal_voltage_calls==1&&apply_calls==applied);
+    deliver("wallbox-ems/private/grid_voltages","{}",true,false);assert(personal_voltage_calls==1&&apply_calls==applied);
+    settings_defaults(&settings);settings.basic_mode=false;settings.sungrow_enabled=settings.sungrow_pv=settings.sungrow_battery=true;
+    settings.battery_protect=settings.pv_display_enabled=true;
+    battery_soc=73;pv_generation_w=6000;battery_soc_at=battery_charge_at=battery_discharge_at=pv_generation_at=9000;
+    deliver("wallbox-ems/input/battery_soc_pct","4",false,false);
+    deliver("wallbox-ems/input/battery_power_valid","false",false,false);
+    deliver("wallbox-ems/input/pv_generation_w","123",false,false);
+    assert(battery_soc==73&&pv_generation_w==6000&&battery_charge_at==9000);
+    mqtt_event(NULL,NULL,MQTT_EVENT_DISCONNECTED,&disconnect);
+    assert(battery_soc_at==9000&&battery_charge_at==9000&&battery_discharge_at==9000&&pv_generation_at==9000);
+    printf("PASS: %u phase MQTT isolation cases, heat-pump routing and Solis acknowledgements isolated from control commands and retained messages\n",checked);
 }

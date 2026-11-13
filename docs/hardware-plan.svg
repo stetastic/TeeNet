@@ -34,10 +34,10 @@
 <text class="small" x="420" y="630">Die Stromzangen gehören an den passenden externen Zähler, nicht an den ESP.</text>
 <rect class="optional" x="45" y="675" width="1110" height="235" rx="18"/TeeNet/>
 <text class="heading" x="70" y="712">Optional · Relaisboard und externe Kontakte</text>
-<text x="70" y="750">GPIO12 → Relais</text><text x="800" y="750">GPIO13 → Rückmeldung</text>
+<text x="70" y="750">GPIO12 → Relais</text><text x="800" y="750">Keine Hilfskontakte</text>
 <text class="small" x="70" y="779">GPIO12 → Relais-Kanal 1. Dessen COM/NO schaltet den Steuerkreis der Schützspule A1/A2.</text>
-<text class="small" x="70" y="807">Beispiel ESC441: vier Öffner; zwei davon in L2/L3. L1, N und PE bleiben verbunden.</text>
-<text class="small" x="70" y="835">GPIO13: Schützstellung nur über galvanisch getrennten Hilfskontakt gegen GND zurückmelden.</text>
+<text class="small" x="70" y="807">Standard Hager ESC226: zwei Öffner für L2/L3. L1, N und PE bleiben verbunden.</text>
+<text class="small" x="70" y="835">Optional: Spannungen vom Shelly 3EM hinter dem Schütz prüfen; kein GPIO-Eingang nötig.</text>
 <text class="small" x="70" y="863">GPIO6 gegen GND: Manuell / PV-Überschuss · GPIO7 gegen GND: EVU · nur potentialfrei.</text>
 <text class="small" x="70" y="891">Netz- und Spulenkreis nach Gerätehandbuch; Netzspannung nie an ESP oder ESP-GND.</text>
 <rect class="box" x="45" y="940" width="1110" height="120" rx="18"/TeeNet/>

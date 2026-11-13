@@ -5,6 +5,7 @@
 enum {PHASE_READY,PHASE_STOPPING,PHASE_MOVING,PHASE_SETTLING,PHASE_FAULT};
 static settings_t settings;
 static bool phase_startup,phase_link;
+static bool phase_shelly_rechecking;static int64_t phase_shelly_recheck_at;
 static bool phase_shelly_remote(void){return settings.phase_actuator_type==1||settings.phase_actuator_type==3;}
 static bool phase_mqtt_remote(void){return settings.phase_actuator_type==2;}
 static bool phase_output_link_locked(void){return phase_link;}
@@ -21,8 +22,8 @@ int main(void){
     e.values[EP_PHASE_FEEDBACK]=8;e.values[EP_PHASE_SETTLE]=12;e.values[EP_PHASE_DATA_MAX]=60;
     e.values[EP_PHASE_DOWN]=45;e.values[EP_PHASE_UP]=180;assert(expert_activate(&e));
     check(3000,"zero_hold",17000);phase_zero_at=0;check(3000,"current_zero",91000);
-    phase_state=PHASE_MOVING;settings.phase_feedback_enabled=true;check(3000,"contact",10000);
-    settings.phase_feedback_enabled=false;check(3000,"motion",4000);
+    phase_state=PHASE_MOVING;settings.phase_feedback_source=1;settings.phase_feedback_enabled=true;check(3000,"voltage",10000);
+    settings.phase_feedback_source=2;settings.phase_feedback_enabled=false;check(3000,"motion",4000);
     phase_state=PHASE_SETTLING;check(13999,"settle",14000);check(14000,"fresh_data",62000);
     phase_state=PHASE_READY;settings.enabled=true;settings.mode=MODE_PV;
     check(4000,"candidate",48000);phase_candidate=3;check(4000,"candidate",183000);
@@ -31,5 +32,8 @@ int main(void){
     phase_startup=true;settings.phase_actuator_type=1;phase_state=PHASE_MOVING;check(4000,"connection",92000);
     settings.phase_actuator_type=2;phase_state=PHASE_STOPPING;phase_link=false;check(4000,"connection",91000);
     phase_link=true;check(4000,"current_zero",91000);
+    settings.phase_actuator_type=0;settings.phase_feedback_source=1;settings.phase_feedback_enabled=true;
+    phase_state=PHASE_MOVING;check(4000,"connection",92000);
+    phase_startup=false;check(4000,"voltage",10000);
     puts("PASS: phase countdowns match active parameters and bounded network startup");
 }

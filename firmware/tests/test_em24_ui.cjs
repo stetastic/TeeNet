@@ -2,9 +2,10 @@ const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/st
 const source=fs.readFileSync('main/dashboard.js','utf8');
 function part(a,b){const start=source.indexOf(a),end=source.indexOf(b,start);assert(start>=0&&end>start);return source.slice(start,end);}
 const fields={wallbox_meter_type:{value:'shelly_gen2'},wallbox_meter_host:{value:'wallbox.demo'},xemex_address:{value:'9'},house_meter_type:{value:'em24_tcp'},house_meter_host:{value:'192.168.178.20:1502'},house_address:{value:'7'},house_power_path:{value:'old.path'}};
+for(const field of Object.values(fields))field.dataset={};
 const nodes={'config-form':{elements:fields}};
-function $(id){return nodes[id]??=(id.endsWith('select')?{value:''}:{});}
-const ctx=vm.createContext({$,Number,Map,JSON,scanTarget:'house',scanFamily:'',meterScanning:false,previewKeys:{house:'',wallbox:''}});
+function $(id){return nodes[id]??=(id.endsWith('select')?{value:'',dataset:{}}:{dataset:{}});}
+const ctx=vm.createContext({$,Number,Map,JSON,state:{},configBaseline:{},scanTarget:'house',scanFamily:'',meterScanning:false,previewKeys:{house:'',wallbox:''}});
 vm.runInContext(part('function previewRequest(','function scanUi(')+part('function shellPinChoices(','function updateShellPins(')+part('function updateHouseQuery(',"$('config-form').addEventListener('input'")+part('function updateMeterFields(','function updateExpertMode('),ctx);
 ctx.previewUi=role=>({box:$(role+'-preview'),host:$(role+'-preview-host'),value:$(role+'-preview-value'),state:$(role+'-preview-state')});
 ctx.meterFamily=()=> 'shelly';

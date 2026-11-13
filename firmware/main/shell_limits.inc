@@ -1,6 +1,7 @@
 #include "json_owned.h"
 /* One background worker: Shell configuration and optional vehicle status.
-   chargingRate is never used as current or power feedback. */
+   Normal control never uses chargingRate. The private trial logs its delayed
+   scalar while regulating only from the HTTP pilot limit. */
 #include "shell_search_schedule.h"
 static int shell_read_snapshot(const char *host,float *grid,float *maximum,evcc_shell_t *sample) {
     char url[112];int n=snprintf(url,sizeof(url),"http://%s:12800/user/status",host);
@@ -69,13 +70,13 @@ static void shell_limits_task(void *arg) {
     bool previous_limits=false;char previous_host[64]="";
     while(true) {
         LOCK();bool available=wifi_online && !restarting && !ota_in_progress;
-        bool evcc=evcc_control.configured,limits=settings.shell_limits_auto;
+        bool evcc=evcc_control.configured,limits=settings.shell_limits_auto,http_control=settings.shell_http_control_enabled;
         uint32_t turn=evcc_poll_generation;
         char configured_host[64];strcpy(configured_host,settings.shell_setup_host);
         char host[64];strcpy(host,shell_active_host[0]?shell_active_host:settings.shell_setup_host);
         if((!host[0] || failures>=3) && shell_found_count==1){strcpy(host,shell_found_host[0]);}
         if(evcc)strcpy(host,evcc_host);
-        bool vehicle=(evcc||limits)&&host[0];
+        bool profiles=vehicles.enabled;bool vehicle=(evcc||limits||profiles||configured_host[0])&&host[0];
         UNLOCK();
         if(turn!=generation){generation=turn;next_vehicle=0;vehicle_failures=0;}
         if(limits!=previous_limits || strcmp(configured_host,previous_host)){
@@ -92,10 +93,13 @@ static void shell_limits_task(void *arg) {
             bool same=turn==evcc_poll_generation;
             bool same_limits=same && settings.shell_limits_auto==limits && !strcmp(settings.shell_setup_host,configured_host);
             bool same_vehicle=same && ((evcc && evcc_control.configured && !strcmp(host,evcc_host)) ||
-                (!evcc && limits && settings.shell_limits_auto && !strcmp(settings.shell_setup_host,configured_host)));
+                (!evcc && ((limits && settings.shell_limits_auto)||(profiles&&vehicles.enabled)||configured_host[0]) && !strcmp(settings.shell_setup_host,configured_host)));
             if(vehicle && same_vehicle) {
                 evcc_shell=sample;evcc_shell_http_code=code;
                 evcc_shell_at=code==200?now_ms():0;
+#if CONFIG_TEE_HTTP_CONTROL_TRIAL
+                if(code==200)trial_http_sequence++;
+#endif
                 vehicle_failures=code==200?0:vehicle_failures+1;
             }
             if(limits_due && same_limits)shell_limits_code=valid?200:code==200?422:code;
@@ -108,7 +112,11 @@ static void shell_limits_task(void *arg) {
             }else if(limits_due && same_limits)failures++;
             UNLOCK();
             if(limits_due)next_read=now_ms()+(valid?300000:30000);
-            if(vehicle)next_vehicle=now_ms()+(vehicle_failures>=3?15000:5000);
+            if(vehicle)next_vehicle=now_ms()+(http_control?1000:vehicle_failures>=3?15000:code==200&&(sample.state=='C'||sample.state=='D')?1000:5000);
+#if CONFIG_TEE_HTTP_CONTROL_TRIAL
+            LOCK();bool trial=shell_http_trial.armed;UNLOCK();
+            if(trial)next_vehicle=now_ms()+1000;
+#endif
         }
         if(available && limits && !evcc && (!host[0] || failures>=3) && now>=next_search) {
             if(shell_scan_start()){next_search=now+shell_search_pause(search_attempts);if(search_attempts<2)search_attempts++;}

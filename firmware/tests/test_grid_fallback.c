@@ -31,7 +31,7 @@ int main(void) {
     float requested=control_target(&s,true,true,true);
     float limited=grid_guard_target(&s,requested,false);
     near(limited*3*230,8000);
-    near(s.manual_current_a,16); near(s.min_charge_a,8.7f);
+    near(s.manual_current_a,16); near(s.min_charge_a,EMS_DEFAULT_MIN_CHARGE_A);
     near(grid_guard_target(&s,8,false),8); /* lower setpoint stays lower */
     near(grid_guard_target(&s,0,false),0);
     near(grid_guard_target(&s,NAN,false),0);

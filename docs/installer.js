@@ -14,9 +14,9 @@ let version='';
 function selectBoard(){
   const andreas=board.value==='andreas';
   confirm.checked=false;
-  confirmText.textContent=andreas?'Mein Board ist das Andreas Testboard (AtomS3 Lite, 8 MB). Vorhandene Daten dürfen gelöscht werden.':'Mein Board ist ein ESP32-S3 N16R8. Vorhandene Daten auf diesem Board dürfen gelöscht werden.';
-  hardware.textContent=andreas?'Andreas Testboard · AtomS3 Lite · 8 MB Flash':'ESP32-S3 N16R8 · 16 MB Flash';
-  boardNote.textContent=andreas?'Testprofil für Andreas: TX6/RX5. Software geprüft; Hardwaretest steht noch aus.':'Erprobte Standardhardware mit 16 MB Flash.';
+  confirmText.textContent=andreas?'Mein Board ist ein AtomS3 Lite mit 8 MB Flash. Vorhandene Daten auf diesem Board dürfen gelöscht werden.':'Mein Board ist ein ESP32-S3 N16R8. Vorhandene Daten auf diesem Board dürfen gelöscht werden.';
+  hardware.textContent=andreas?'AtomS3 Lite · 8 MB Flash':'ESP32-S3 N16R8 · 16 MB Flash';
+  boardNote.textContent=andreas?'AtomS3 Lite mit 8 MB Flash. Die Anschlussbelegung steht im USB-Paket dieser Firmwareversion.':'ESP32-S3 N16R8 mit 16 MB Flash.';
   if(version)installer.setAttribute('manifest',andreas?`/TeeNet/downloads/TeeNet-${version}-andreas-testboard-web-install.json`:`/TeeNet/downloads/TeeNet-${version}-web-install.json`);
   sync();
 }

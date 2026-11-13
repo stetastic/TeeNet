@@ -43,5 +43,5 @@ context.pin='4040';context.rows=[];context.state={expert_parameters_modified:tru
 // A save followed by lock must not be overwritten by the previous status object.
 context.pin='4040';context.state={expert_parameters_modified:false};context.updateGroupMarkers();
 context.savedModified=true;context.lock();assert(customized());
-assert(fs.readFileSync('main/app.c','utf8').includes('"expert_parameters_modified",expert_modified(&expert_saved)'));
+assert(fs.readFileSync('main/app.c','utf8').includes('"expert_parameters_modified",expert_standards_modified(&expert_saved,&saved_settings)'));
 console.log('PASS: float32 input precision and saved deviation markers through lock, reset, reload and unsaved draft discard');

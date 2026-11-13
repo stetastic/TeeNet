@@ -15,7 +15,10 @@ typedef struct {
     float current_a[3];
     float active_power_w;
     unsigned phases;
+    float voltage_v[3]; /* Shelly A/B/C order. */
+    bool voltage_valid;
 } shelly_modbus_reading_t;
+bool shelly_modbus_decode_voltage(const uint8_t *data,size_t length,float voltage[3]);
 
 bool shelly_modbus_decode_em(const uint8_t *data, size_t length,
                              shelly_modbus_reading_t *out);

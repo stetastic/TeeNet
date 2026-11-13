@@ -71,6 +71,7 @@ static int tcp_connect_timeout(const char *source,uint16_t default_port,int time
 #include "bounded_socket.inc"
 
 #include "meter_tcp.inc"
+#include "wallbox_modbus_session.inc"
 
 static bool read_shelly_modbus(const char *host,const char *type,shelly_modbus_reading_t *reading,int timeout_ms) {
     if(!strcmp(type,"shelly_gen2")){

@@ -1,0 +1,13 @@
+const fs=require('fs'),vm=require('vm'),assert=require('assert/strict');
+const source=fs.readFileSync('main/features.js','utf8').split('/* VEHICLE_UI_BEGIN */')[1].split('/* VEHICLE_UI_END */')[0];
+const context={window:{},document:{getElementById:()=>null}};vm.runInNewContext(source,context);
+const estimate=context.window.teenetVehicleEstimate,p={capacity_kwh:60,efficiency:.9,maximum_kw:11};
+const a=estimate(p,20,80,11);assert(Math.abs(a.kwh-40)<1e-8);assert(Math.abs(a.seconds-40/11*3600)<1e-6);assert(a.margin>=300);
+assert.equal(estimate(p,80,80,11),null);assert.equal(estimate(p,20,80,0),null);assert.equal(estimate(p,NaN,80,11),null);
+assert.equal(estimate(p,20,80,3).seconds,48000);assert(estimate(p,20,80,22).seconds===a.seconds);
+const html=fs.readFileSync('main/dashboard.html','utf8');const ids=[...html.matchAll(/\bid="([^"]+)"/g)].map(m=>m[1]);assert.equal(new Set(ids).size,ids.length,'duplicate HTML IDs');
+for(const m of source.matchAll(/el\('([^']+)'\)/g))assert(ids.includes(m[1]),'missing HTML element '+m[1]);
+assert(source.includes('createImageBitmap')&&source.includes('encoded.length<=2048'));
+assert(/slot=.*recognized_slot/.test(source)&&!source.includes('manual_assignment'));assert(source.includes("el('vehicle-plan-profile').disabled=true"));
+assert(source.includes("value(id).trim()===''?NaN"),'empty SOC must never be treated as 0%');
+console.log('PASS: vehicle energy/ETA/limits, empty/invalid SOC, card confirmation, bounded thumbnail and UI element references');

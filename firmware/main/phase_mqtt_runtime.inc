@@ -82,7 +82,8 @@ static void phase_mqtt_sent_locked(uint8_t goal,uint32_t generation,bool success
 }
 static bool phase_mqtt_motion_complete_locked(uint8_t goal,int64_t now){
     return phase_mqtt_allowed&&phase_output_link_locked()&&phase_mqtt_known&&!phase_mqtt_pending&&!phase_mqtt_inflight&&
-        phase_mqtt_assumed==goal&&phase_mqtt_sent_at&&now-phase_mqtt_sent_at>=2000;
+        phase_mqtt_assumed==goal&&phase_mqtt_sent_at&&now-phase_mqtt_sent_at>=2000&&
+        (!phase_uses_voltage(&settings)||(phase_voltage_observed_locked(now)==goal&&phase_voltage.at>phase_mqtt_sent_at));
 }
 static void phase_output_health_locked(bool ok,bool on,int64_t now){
     phase_output_direct_online=ok;phase_output_direct_at=ok?now:0;

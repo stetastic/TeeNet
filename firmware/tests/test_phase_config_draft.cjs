@@ -29,22 +29,22 @@ const requests=[],context=vm.createContext({
   }
 });
 vm.runInContext(part(dashboard,'async function loadConfig(','function updateBatterySlider()'),context);
-vm.runInContext(part(dashboard,' async function writePhaseMqtt(',' async function changePhaseMqtt('),context);
+
 (async()=>{
   price.value='.38';reserve.value='45';mqtt.checked=false;kind.value='1';count.value='2';nodes['phase-feedback-choice'].value='2';nodes['phase-shelly-auth'].value='0';
-  await context.writePhaseMqtt(false);
-  assert.equal(price.value,'.38','revoking phase output preserves the unsaved tariff draft');
-  assert.equal(reserve.value,'45','revoking phase output preserves the unsaved reserve draft');
+  stored={...stored,phase_actuator_type:0};await context.loadConfig(true);
+  assert.equal(price.value,'.38','reloading configuration preserves the unsaved tariff draft');
+  assert.equal(reserve.value,'45','reloading configuration preserves the unsaved reserve draft');
   assert.equal(mqtt.checked,false,'checkbox drafts survive the protected configuration refresh');
   assert.equal(context.configBaseline.price_kwh,.25,'the persisted baseline remains authoritative');
-  assert.equal(kind.value,0,'the protected operation itself determines the new actuator profile');
+  assert.equal(kind.value,0,'the server operation itself determines the new actuator profile');
   assert.equal(count.value,'2');assert.equal(nodes['phase-feedback-choice'].value,'2','the matching feedback selector draft is preserved');
   assert.equal(nodes['phase-shelly-auth'].value,'0','an unsaved authentication selection is preserved');
   assert.equal(stored.price_kwh,.25,'ordinary drafts are never written implicitly');
-  assert.equal(requests.length,2,'revocation stays available and only reloads the saved configuration');
+  assert.equal(requests.length,1,'Only saved configuration is loaded');
   let release;readGate=new Promise(resolve=>{release=resolve;});
-  const pending=context.writePhaseMqtt(false);await Promise.resolve();
+  const pending=context.loadConfig(true);await Promise.resolve();
   price.value='.42';release();await pending;
   assert.equal(price.value,'.42','edits made while the configuration refresh is in flight survive too');
-  console.log('PASS: protected phase reconfiguration preserves unrelated form drafts and accepts fields changed by the server');
+  console.log('PASS: settings refresh preserves unrelated form drafts and accepts fields changed by the server');
 })().catch(error=>{console.error(error);process.exitCode=1;});

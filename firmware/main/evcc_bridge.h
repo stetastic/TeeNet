@@ -2,6 +2,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "expert_params.h"
+#include "vehicle_profiles.h"
+#include "shell_http_control.h"
 
 #define EVCC_SHELL_TTL_MS (ems_param_ms(EP_EVCC_STATUS_TTL))
 #define EVCC_LEASE_MS (ems_param_ms(EP_EVCC_LEASE))
@@ -11,6 +13,8 @@ typedef struct {
     char state;
     bool evcc_usable; /* Only states already verified for evcc may release its readiness check. */
     char raw[32], reason[40];
+    vehicle_session_t session;
+    shell_http_sample_t http_control;
 } evcc_shell_t;
 
 typedef struct {

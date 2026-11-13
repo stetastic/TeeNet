@@ -1,4 +1,5 @@
 #include "ems_core.h"
+#include "meter_hold.h"
 #include "evcc_bridge.h"
 #include "cJSON.h"
 #include <assert.h>
@@ -31,11 +32,16 @@ static void relay_set(unsigned index,bool on){
     relay_on[0]=on;observed=on?1:3;relay_changed_at=sample_at;
 }
 static void phase_shelly_guard_locked(int64_t now){(void)now;}
+static bool phase_shelly_rechecking,phase_shelly_uncertain;
+static int64_t phase_shelly_recheck_at,phase_shelly_at;
 static bool phase_shelly_remote(void){return false;}
 static bool phase_shelly_motion_complete_locked(unsigned goal,int64_t now){(void)goal;(void)now;return false;}
 static bool phase_actuator_begin_locked(uint8_t goal,int64_t now){(void)now;relay_set(0,goal==1);return true;}
 static bool phase_test_active;static bool phase_config_saving,reboot_required;static uint8_t phase_test_goal;
 static void phase_test_end_locked(void){phase_test_active=false;}
+static float vehicle_phase_surplus_locked(float watts){return watts;}
+#include "phase_voltage.h"
+static phase_voltage_proof_t phase_voltage;
 #include "phase_controller.inc"
 static bool terms_accepted=true,evcc_configuring,phase_mqtt_saving,wallbox_ready=true;
 static charge_guard_t charge_guard;
@@ -48,6 +54,13 @@ static int64_t evcc_shell_at;
 static bool restart_pending(void){return false;}
 static bool unsupported_meter(void){return false;}
 static bool feedback_ready(int64_t now){(void)now;return true;}
+static bool network_meter;
+static bool network_wallbox_meter(void){return network_meter;}
+static bool meter_ready=true;
+static struct {bool running;} http_regulator;
+static bool http_regulation_ready_locked(int64_t now){(void)now;return false;}
+static float vehicle_limit_current_locked(float current){return current;}
+#include "meter_hold_runtime.inc"
 static bool pv_fresh_locked(int64_t now){(void)now;return true;}
 static bool house_currents_ready_locked(int64_t now){(void)now;return true;}
 typedef int esp_err_t;
@@ -78,7 +91,57 @@ static void step(int64_t now,float amps){
     evcc_shell_at=now;
     actual_a[0]=amps;actual_a[1]=actual_a[2]=0;phase_step_locked(now);
 }
+static void manual_phase_admission(void){
+    /* The API commits manual_phases before either candidate-debounce tick.
+       Exercise the real target function and phase worker through both directions. */
+    for(unsigned previous=1;previous<=3;previous+=2){
+        unsigned requested=previous==1?3:1;
+        fixture(previous);settings.mode=MODE_MANUAL;settings.manual_phases=previous;
+        settings.fixed_charge_phases=3;settings.manual_current_a=10;step(1000,0);
+        assert(unlatched_target_locked(1000)==10);
+        settings.manual_phases=requested;
+        assert(phase_state==PHASE_READY&&unlatched_target_locked(1000)==0);
+        float report[3];control_report(&settings,actual_a,target_locked(1000),0,false,report);
+        for(unsigned p=0;p<3;p++)assert(report[p]==(p<previous?settings.grid_limit_a+settings.max_charge_a+1:0));
+        step(2000,0);assert(phase_state==PHASE_READY&&phase_candidate==requested&&unlatched_target_locked(2000)==0);
+        step(3000,0);assert(phase_state==PHASE_STOPPING&&phase_goal==requested&&unlatched_target_locked(3000)==0);
+        for(int64_t at=4000;at<=18000;at+=1000){
+            step(at,0);
+            if(phase_state!=PHASE_READY)assert(unlatched_target_locked(at)==0);
+        }
+        assert(phase_state==PHASE_READY&&settings.charge_phases==requested&&unlatched_target_locked(18000)==10);
+    }
+    fixture(3);settings.mode=MODE_MANUAL;settings.manual_current_a=10;settings.manual_phases=1;
+    settings.phase_switch_enabled=false;step(1000,0);assert(unlatched_target_locked(1000)==10);
+    fixture(3);settings.manual_phases=1;step(1000,0);pv_control.target_a=10;pv_control.last_at=1000;
+    assert(unlatched_target_locked(1000)==10); /* PV retains its own phase policy. */
+    fixture(3);settings.mode=MODE_MANUAL;settings.manual_current_a=10;settings.manual_phases=1;
+    evcc_configure(&evcc_control,true);
+    assert(evcc_set_current(&evcc_control,10,settings.min_charge_a,settings.max_charge_a,1000));
+    assert(evcc_set_phases(&evcc_control,3,true,true,1000));
+    assert(evcc_set_enabled(&evcc_control,true,true,1000));step(1000,0);
+    assert(unlatched_target_locked(1000)==10); /* Manual preset does not override evcc. */
+    assert(evcc_set_phases(&evcc_control,1,true,true,1000));
+    assert(unlatched_target_locked(1000)==0); /* Existing evcc mismatch gate remains. */
+}
 int main(void){
+    manual_phase_admission();
+    fixture(1);settings.mode=MODE_MANUAL;settings.manual_phases=1;settings.enabled=false;
+    phase_attempt_at=phase_no_load_since=1000;step(500000,0);
+    assert(!phase_idle_inhibit&&!phase_attempt_at&&!phase_no_load_since);
+    fixture(1);settings.mode=MODE_MANUAL;settings.manual_phases=1;
+    phase_attempt_at=phase_no_load_since=1000;phase_state=PHASE_FAULT;step(500000,0);
+    assert(!phase_no_load_since&&!phase_idle_inhibit);
+    phase_state=PHASE_READY;step(501000,0);step(502000,0);
+    assert(!phase_idle_inhibit&&phase_no_load_since==501000); /* Fault time never consumes the no-current attempt. */
+    fixture(3);settings.mode=MODE_MANUAL;settings.manual_current_a=9;
+    network_meter=true;actual_at=meter_at=1000;for(unsigned i=0;i<3;i++)actual_a[i]=9;
+    meter_hold_sample(&wallbox_meter_hold,&settings,true,true,1000,actual_at,actual_a,9);
+    assert(target_locked(20000)==9);settings.manual_current_a=16;assert(target_locked(30000)==9);
+    settings.enabled=false;assert(target_locked(30000)==0);settings.enabled=true;
+    assert(target_locked(61000)==0);phase_state=PHASE_STOPPING;assert(target_locked(30000)==0);
+    network_meter=false;memset(&wallbox_meter_hold,0,sizeof(wallbox_meter_hold));
+
     /* An evcc attempt with no current needs an explicit local release. Polls,
        automatic phase commands and enable retries cannot clear that lock. */
     fixture(1);settings.mode=MODE_MANUAL;settings.manual_phases=1;
@@ -136,7 +199,7 @@ int main(void){
         next.enabled=false;idle_resume_command(next,true);assert(phase_idle_inhibit); /* stop */
         next=settings;idle_resume_command(next,true);assert(!phase_idle_inhibit); /* explicit Start */
         if(mode==MODE_PV)assert(pv_permitted_locked(finished));
-        else assert(unlatched_target_locked(finished)>0);
+        else assert(unlatched_target_locked(finished)==0); /* Rearmed, but still awaiting the requested physical phase. */
     }
     /* Existing explicit changes rearm the attempt; an unchanged command does not. */
     fixture(3);phase_idle_inhibit=true;settings_t next=settings;
@@ -183,5 +246,8 @@ int main(void){
     step(1000,0);step(2000,0);
     sample_at=wallbox_at=last_sent_current_at=3000;actual_at=1000;phase_step_locked(3000);
     assert(phase_zero_at==0&&relay_on[0]);
-    puts("PASS: real phase/charge gates, idle lock in every mode, evcc retries remain locked until explicit local release, PV maximum, restart parking, zero interlock and feedback fault");
+    fixture(3);settings.phase_feedback_source=1;phase_goal=observed=1;phase_state=PHASE_MOVING;phase_move_at=10000;
+    phase_voltage.at=9500;step(12000,0);assert(phase_state==PHASE_MOVING);
+    phase_voltage.at=12500;step(12500,0);assert(phase_state==PHASE_SETTLING&&settings.charge_phases==1);
+    puts("PASS: real phase/charge gates, idle lock in every mode, evcc retries remain locked until explicit local release, PV maximum, restart parking, zero interlock and fresh post-command voltage proof");
 }

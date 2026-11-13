@@ -3,7 +3,7 @@ const source=fs.readFileSync('main/dashboard.js','utf8').split('// Automatic upd
 function setup(options={}){
  const nodes={},listeners={},requests=[];
  function el(id){return nodes[id]??={open:false,textContent:'',hidden:true,listeners:{},addEventListener(k,fn){this.listeners[k]=fn;},showModal(){this.open=true;},close(){this.open=false;},scrollIntoView(){}};}
- const ctx={$:el,online:true,initialized:true,state:{terms_accepted:true,telemetry_decided:true,version:'1.21'},busy:false,uploading:false,githubRelease:null,Date,
+ const ctx={$:el,online:true,initialized:true,state:{terms_accepted:true,telemetry_decided:true,version:'1.21',enabled:false,phase_state:'bereit'},busy:false,uploading:false,githubRelease:null,Date,
   document:{hidden:false,documentElement:{dataset:{demo:options.demo?'true':'false'}},querySelector:()=>options.otherDialog||el('update-available-dialog').open,addEventListener(){}},
   window:{location:{hash:''},addEventListener(k,fn){listeners[k]=fn;}},showPage(){},setTimeout(fn){fn();},
   api:async(path,body)=>{requests.push({path,body});if(options.error)throw Error('Offline');return body?{}:(options.responses?.shift()||{ok:true,newer:true,version:'1.22',running:false,checked_age_s:60});}
@@ -21,5 +21,8 @@ function setup(options={}){
  for(const option of [{demo:true},{otherDialog:true}]){s=setup(option);await s.tick();assert.equal(s.requests.length,0);}
  s=setup();s.ctx.state.terms_accepted=false;await s.tick();assert.equal(s.requests.length,0);s.ctx.state.terms_accepted=true;s.ctx.document.hidden=true;await s.tick();assert.equal(s.requests.length,0);
  s=setup({error:true});await s.tick();await s.tick();assert.equal(s.requests.length,1,'Failures back off instead of flooding GitHub');
+ for(const patch of [{enabled:true},{evcc_enabled:true},{phase_state:'schalten'},{phase_test_active:true},{http_control_trial_armed:true},{normal_offset_trial_armed:true}]){
+  s=setup();Object.assign(s.ctx.state,patch);await s.tick();assert.equal(s.requests.length,0,'Charging, switching and tests must defer background TLS checks');
+ }
  console.log('PASS: automatic update checks, shared cache, newer-only notice, defer, dismiss, explicit installation, demo isolation and failure backoff');
 })().catch(error=>{console.error(error);process.exitCode=1;});

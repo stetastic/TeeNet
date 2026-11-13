@@ -25,7 +25,6 @@ static const char *phase_test_block_locked(int64_t now){
     if(phase_shelly_remote()){
         if(!wifi_online||!phase_shelly_config_ok||!fresh(now,phase_shelly_at,SHELLY_PHASE_TTL_MS))return "Shelly-Verbindung nicht bereit. Adresse, Anmeldung und Shelly-Einstellungen pruefen.";
         if(phase_shelly_uncertain)return "Letzter Shelly-Schaltbefehl unklar. Stellung und Rueckmeldung pruefen.";
-        if(settings.phase_shelly_pulse&&!phase_shelly_observed_locked(now))return "Bistabiles Schuetz: beide Rueckmeldekontakte muessen die Stellung eindeutig bestaetigen.";
         return "";
     }
     return relay_ready?"":"GPIO-Schaltausgang nicht bereit.";
@@ -48,11 +47,14 @@ static void phase_test_tick_locked(int64_t now){
     if(phase_test_active&&(restarting||ota_in_progress||now>=phase_test_until))phase_test_end_locked();
 }
 static bool phase_fault_restart_safe_locked(int64_t now){
-    if((phase_state!=PHASE_FAULT&&!(phase_startup&&phase_config_quiescent_locked()))||settings.enabled||evcc_control.enabled||
+    bool remote=phase_shelly_remote()||phase_mqtt_remote();
+    if((!remote&&phase_state!=PHASE_FAULT&&!(phase_startup&&phase_config_quiescent_locked()))||settings.enabled||evcc_control.enabled||
        phase_mqtt_inflight||phase_mqtt_pending||phase_shelly_pending||phase_shelly_inflight)return false;
     if(!phase_shelly_remote()&&!phase_mqtt_remote()&&relay_on[0])return false;
-    /* A Shelly reboot does not change its output. In a stopped setup a bad
-       contact must not prevent rebooting TeeNet to apply corrected wiring. */
+    if(remote&&!phase_test_zero_locked(now))return false;
+    /* Restarting TeeNet does not write a network actuator. A stopped setup
+       with fresh zero-current proof may apply corrected settings even if
+       position/config validation is waiting. Never interrupt an in-flight write. */
     return hardware_config_change_allowed(false,true,actual_at>0||meter_at>0,
         fresh(now,actual_at,wallbox_meter_ttl()),actual_a);
 }

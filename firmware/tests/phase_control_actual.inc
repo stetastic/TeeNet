@@ -5,13 +5,20 @@ static bool pv_permitted_locked(int64_t now) {
 
         !phase_test_active && !restart_pending() && !restarting && !ota_in_progress && !phase_mqtt_saving && !unsupported_meter() &&
 
-        feedback_ready(now) && wallbox_ready && fresh(now,meter_at,wallbox_meter_ttl()) &&
+        wallbox_control_ready_locked(now) && wallbox_ready &&
 
-        fresh(now,actual_at,wallbox_meter_ttl()) && fresh(now,wallbox_at,ems_param_ms(EP_SHELL_TTL)) && pv_fresh_locked(now);
+        fresh(now,wallbox_at,ems_param_ms(EP_SHELL_TTL)) && pv_fresh_locked(now);
 
 }
 
 static float unlatched_target_locked(int64_t now) {
+#if CONFIG_TEE_HTTP_CONTROL_TRIAL
+    if(!normal_offset_trial_ready(&normal_offset_trial,now))return 0;
+    if(shell_http_trial.armed&&(settings.mode!=MODE_MANUAL||
+       !shell_http_trial_ready(&shell_http_trial,&evcc_shell.http_control,evcc_shell_at,now)||
+       !shell_vehicle_fresh(&evcc_shell,evcc_shell_at,now)||evcc_shell.state=='F'))return 0;
+#endif
+    if(settings.shell_http_control_enabled&&(!http_regulation_ready_locked(now)||!http_regulator.running))return 0;
     if(!terms_accepted || evcc_configuring || phase_mqtt_saving)return 0;
     if(evcc_control.configured && (!evcc_control.enabled || evcc_control.inhibited || evcc_control.expired ||
        evcc_control.last_contact<=0 || now<evcc_control.last_contact || now-evcc_control.last_contact>=EVCC_LEASE_MS ||
@@ -21,6 +28,10 @@ static float unlatched_target_locked(int64_t now) {
 
     if(phase_config_saving || phase_test_active || restart_pending() || restarting || ota_in_progress || unsupported_meter()) return 0;
     if(settings.phase_switch_enabled && (phase_state!=PHASE_READY || phase_idle_inhibit)) return 0;
+    /* A manual phase request is committed before the controller's candidate
+       debounce. Keep UART start permission blocked on the old physical phases. */
+    if(settings.phase_switch_enabled && !evcc_control.configured && settings.mode==MODE_MANUAL &&
+       settings.manual_phases!=settings.charge_phases) return 0;
     if(charge_plan.active && plan_phase==PLAN_CLOCK)return 0;
 
     if(settings.mode==MODE_PV) {
@@ -38,13 +49,22 @@ static float unlatched_target_locked(int64_t now) {
 
     }
 
-    float target=control_target(&settings,feedback_ready(now) && wallbox_ready && fresh(now,meter_at,wallbox_meter_ttl()),
+    float target=control_target(&settings,wallbox_ready && wallbox_control_ready_locked(now),
 
-        fresh(now,actual_at,wallbox_meter_ttl()),pv_fresh_locked(now));
-    if(evcc_control.configured && settings.charge_phases==1)target=fminf(target,3500/settings.nominal_v);
+        wallbox_control_ready_locked(now),pv_fresh_locked(now));
+    if(evcc_control.configured && settings.charge_phases==1)target=fminf(target,3500/ems_phase_voltage_sum(&settings,1));
     if(settings.evu_input_enabled && evu_contact.stable)
         target=settings.evu_limit_a>0?fminf(target,settings.evu_limit_a):0;
     return grid_guard_target(&settings,target,house_currents_ready_locked(now));
+
+}
+
+static float target_locked(int64_t now) {
+
+    float requested=unlatched_target_locked(now);
+    if(wallbox_meter_hold_locked(now))requested=fminf(requested,wallbox_meter_hold.target_a);
+
+    return charge_guard_blocked(&charge_guard,now)?0:vehicle_limit_current_locked(requested);
 
 }
 

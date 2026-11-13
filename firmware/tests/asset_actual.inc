@@ -10,6 +10,7 @@ static esp_err_t asset_send(httpd_req_t *req) {
     if(!strcmp(req->uri,"/firmware.js")) start=firmware_gz_start,end=firmware_gz_end,type="application/javascript; charset=utf-8";
     if(!strcmp(req->uri,"/terms.js")) start=terms_js_gz_start,end=terms_js_gz_end,type="application/javascript; charset=utf-8";
     else if(!strcmp(req->uri,"/evcc-test.js")) start=evcc_js_gz_start,end=evcc_js_gz_end,type="application/javascript; charset=utf-8";
+    if(!strcmp(req->uri,"/vehicle-pictures.js")) start=vehicle_pictures_gz_start,end=vehicle_pictures_gz_end,type="application/javascript; charset=utf-8";
     if(!strcmp(req->uri,"/features.js")) start=features_gz_start,end=features_gz_end,type="application/javascript; charset=utf-8";
     if(!strcmp(req->uri,"/qrcode.js")) start=qr_gz_start,end=qr_gz_end,type="application/javascript; charset=utf-8";
     if(!strcmp(req->uri,"/guide.js")) start=guide_js_gz_start,end=guide_js_gz_end,type="application/javascript; charset=utf-8";

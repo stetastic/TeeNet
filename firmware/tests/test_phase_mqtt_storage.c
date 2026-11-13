@@ -45,6 +45,9 @@ static cJSON *expert_values_snapshot(void){return cJSON_CreateObject();}
 static cJSON *gpio_snapshot(void){return cJSON_CreateObject();}
 static bool boot_validation_pending;
 static esp_err_t gpio_post(httpd_req_t *req,cJSON *o){(void)req;cJSON_Delete(o);assert(0);return 0;}
+static esp_err_t personal_post(httpd_req_t *req,cJSON *o){cJSON_Delete(o);return httpd_resp_send_err(req,400,"Not used by this fixture");}
+static bool personal_pin_valid(const char *pin){(void)pin;return false;}
+static cJSON *personal_snapshot(void){return cJSON_CreateObject();}
 #include "phase_auth_actual.inc"
 static int root_request(const char *body){httpd_req_t req={0,body};expert_post(&req);return req.status;}
 static int request(const char *body){httpd_req_t req={0};cJSON *json=cJSON_Parse(body);assert(json);phase_mqtt_post(&req,json);return req.status;}
@@ -71,7 +74,7 @@ int main(void){
     send_busy=true;assert(request("{\"enabled\":false}")==500&&!phase_mqtt_allowed&&!settings.enabled);send_busy=false;
     phase_mqtt_allowed=true;settings.enabled=true;error=1;
     assert(request("{\"enabled\":false}")==500&&!phase_mqtt_allowed&&!settings.enabled);error=0;
-    assert(request("{\"enabled\":false}")==200&&!phase_mqtt_allowed&&!persisted.phase_mqtt_output_enabled&&persisted.phase_actuator_type==0&&persisted.phase_feedback_enabled);
+ assert(request("{\"enabled\":false}")==200&&!phase_mqtt_allowed&&!persisted.phase_mqtt_output_enabled&&persisted.phase_actuator_type==0&&!persisted.phase_feedback_enabled&&persisted.phase_feedback_source==2);
     boot_saved();
     settings.enabled=false;assert(request(yes)==200&&!phase_mqtt_allowed&&reboot_required);
     boot_saved();assert(phase_mqtt_allowed&&setups==2);

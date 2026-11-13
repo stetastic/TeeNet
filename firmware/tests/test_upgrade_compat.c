@@ -17,7 +17,11 @@ static size_t schema_size(unsigned v){
         case 31:n=offsetof(settings_t,phase_feedback_count);break;
         case 32:n=offsetof(settings_t,phase_feedback_pin);break;
         case 33:n=offsetof(settings_t,heatpump_enabled);break;
-        case 34:n=sizeof(settings_t);break;
+        case 34:n=offsetof(settings_t,phase_feedback_source);break;
+        case 35:n=offsetof(settings_t,sungrow_enabled);break;
+        case 36:n=offsetof(settings_t,phase_contactor_reconfigure);break;
+        case 37:n=offsetof(settings_t,shell_http_control_enabled);break;
+        case 38:n=sizeof(settings_t);break;
         default:assert(0);
     }
     return (n+3)&~(size_t)3;
@@ -34,12 +38,12 @@ int main(void){
         strcpy(stored.mqtt_uri,"mqtt://192.0.2.10:1883");
         assert(settings_decode(&stored,schema_size(version),&decoded));
         if(decoded.relay_active_low!=(bool)low){fprintf(stderr,"schema %u changed relay polarity\n",version);assert(0);}
-        if(decoded.phase_feedback_closed_is_single!=(bool)closed_single){fprintf(stderr,"schema %u inverted feedback assignment\n",version);assert(0);}
+        assert(!decoded.phase_feedback_closed_is_single);
         assert(!strcmp(decoded.wifi_ssid,stored.wifi_ssid)&&!strcmp(decoded.wifi_password,stored.wifi_password));
         assert(!strcmp(decoded.mqtt_uri,stored.mqtt_uri));
-        assert(decoded.phase_switch_enabled&&decoded.phase_feedback_enabled&&!decoded.enabled);
-        assert(decoded.relay1_pin==12&&decoded.phase_feedback_pin==13);
+        assert(decoded.phase_switch_enabled&&!decoded.phase_feedback_enabled&&!decoded.enabled);
+        assert(decoded.relay1_pin==12&&decoded.phase_feedback_pin==-1);
         cases++;
     }
-    printf("PASS: %u stored GPIO polarity/contact assignments survive upgrade; credentials retained, charging stopped\n",cases);
+    printf("PASS: %u old schemas retain relay polarity and credentials, retire contact inputs and keep charging stopped\n",cases);
 }

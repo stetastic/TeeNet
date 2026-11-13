@@ -11,7 +11,10 @@
 void settings_defaults(settings_t *s) {
     memset(s, 0, sizeof(*s));
     s->version = EMS_SETTINGS_VERSION;
+    s->vehicle_manual_soc_prompt=true;
+    s->wallbox_shelly_reverse=true;
     s->huawei_unit_id=1;
+    s->sungrow_unit_id=1;s->sungrow_port=502;strcpy(s->sungrow_model,"SH10RT");
     strcpy(s->mqtt_prefix, "wallbox-ems");
     strcpy(s->heatpump_source,"shelly_gen2");
     strcpy(s->heatpump_input_topic,"wallbox-ems/input/heatpump_power_w");
@@ -20,29 +23,34 @@ void settings_defaults(settings_t *s) {
     s->wallbox_tx_pin=EMS_DEFAULT_SHELL_TX_PIN; s->wallbox_rx_pin=EMS_DEFAULT_SHELL_RX_PIN; s->wallbox_rts_pin=-1;
     s->xemex_tx_pin=EMS_DEFAULT_METER_TX_PIN; s->xemex_rx_pin=EMS_DEFAULT_METER_RX_PIN; s->xemex_rts_pin=-1;
     s->wallbox_address=s->xemex_address=1;
-    s->grid_limit_a=32; s->max_charge_a=16; s->min_charge_a=8.7f;
-    s->manual_current_a=8.7f; s->nominal_v=230; s->power_factor=1; s->price_kwh=0.25f; s->solar_price_kwh=0.08f;
+    s->grid_limit_a=32; s->max_charge_a=16; s->min_charge_a=EMS_DEFAULT_MIN_CHARGE_A;
+    s->manual_current_a=EMS_DEFAULT_MIN_CHARGE_A; s->nominal_v=230; s->power_factor=1; s->price_kwh=0.25f; s->solar_price_kwh=0.08f;
     strcpy(s->house_meter_type,"tasmota"); strcpy(s->house_meter_host,"192.168.1.77"); s->zero_reserve_w=0;
     s->battery_reserve_soc=50;
     s->current_offset_a=0.8f;
     s->xemex_coils=1;
     strcpy(s->wallbox_meter_type,"xemex"); s->meter_baud=9600; s->meter_format=1;
     s->charge_phases=3; s->manual_phases=3; s->fixed_charge_phases=3;
-    s->phase_feedback_enabled=true;
+    s->phase_feedback_enabled=false;
+    s->phase_feedback_source=2;
     s->phase_feedback_count=1;
+#if defined(CONFIG_TEE_BOARD_ATOMS3_LITE) && CONFIG_TEE_BOARD_ATOMS3_LITE
+    strcpy(s->wallbox_meter_type,"shelly_gen2");s->shell_rs485_interface=2;s->phase_actuator_type=1;
+    s->wallbox_tx_pin=2;s->wallbox_rx_pin=1;
+#endif
     s->phase_feedback_closed_is_single=false;
     s->control_status_visible=true;
     s->basic_mode=true;
     s->mqtt_enabled=true;
     s->relay1_pin=EMS_DEFAULT_RELAY_PIN; s->relay2_pin=14;
-    s->phase_feedback_pin=EMS_DEFAULT_FEEDBACK_PIN;
-    s->phase_feedback_second_pin=EMS_DEFAULT_FEEDBACK_SECOND_PIN;
+    s->phase_feedback_pin=-1;
+    s->phase_feedback_second_pin=-1;
     s->status_led_pin=EMS_DEFAULT_LED_PIN;
     s->battery_cloud_limit_w=4000; s->battery_assist_limit_w=4000;
     s->pv_house_priority_w=4000; s->pv_car_priority_w=6000;
     strcpy(s->opendtu_prefix,"opendtu");
 
-    s->external_mode_input_pin=EMS_DEFAULT_MODE_INPUT_PIN; s->evu_input_pin=7; s->evu_limit_a=0;
+    s->external_mode_input_pin=EMS_DEFAULT_MODE_INPUT_PIN; s->evu_input_pin=EMS_DEFAULT_EVU_INPUT_PIN; s->evu_limit_a=0;
     s->house_tx_pin=EMS_DEFAULT_HOUSE_TX_PIN; s->house_rx_pin=EMS_DEFAULT_HOUSE_RX_PIN; s->house_rts_pin=-1;
     s->house_address=1; s->house_meter_baud=9600; s->house_meter_format=0; s->house_xemex_coils=3;
     s->ads_sda_pin=8; s->ads_scl_pin=9; s->ads_wallbox_address=0x48; s->ads_house_address=0x49;
@@ -59,6 +67,7 @@ void settings_basic_mode(settings_t *s) {
     s->charge_plan_enabled=s->external_mode_input_enabled=s->evu_input_enabled=s->grid_guard_enabled=false;
     s->phase_switch_enabled=s->relay_board_enabled=false;
     s->huawei_enabled=s->huawei_battery=s->huawei_pv=false;
+    s->sungrow_enabled=s->sungrow_battery=s->sungrow_pv=false;
     s->heatpump_enabled=false;
     s->mqtt_input_source=0;
     /* An inactive Huawei/serial house meter must not reserve pins or require a host. */
@@ -71,23 +80,30 @@ void settings_fixed_pins(settings_t *s) {
     s->relay2_mode=0;s->nominal_v=230;
     /* New boards default to active High. Preserve commissioned active-Low
        hardware when loading or restoring an existing installation. */
-    if(s->phase_feedback_count==2)s->phase_feedback_closed_is_single=false; /* Two complementary contacts use fixed roles. */
+    /* Old contact fields occupy reserved NVS bytes only. They never reserve pins. */
+    if(s->phase_feedback_source==0)s->phase_feedback_source=2;
+    s->phase_feedback_enabled=phase_uses_voltage(s);
+    s->phase_feedback_count=1;s->phase_feedback_closed_is_single=false;
+    s->phase_feedback_pin=s->phase_feedback_second_pin=-1;
+    s->phase_no_feedback_acknowledged=true;s->phase_shelly_pulse=false;
     s->wallbox_rts_pin=s->xemex_rts_pin=s->house_rts_pin=-1;
+    /* Tail485 plugs into the AtomS3 Lite's fixed Grove port: TX G2, RX G1. */
+    if(s->shell_rs485_interface==2){s->wallbox_tx_pin=2;s->wallbox_rx_pin=1;}
+    if(s->meter_rs485_interface==2){s->xemex_tx_pin=2;s->xemex_rx_pin=1;}
+    if(s->house_rs485_interface==2){s->house_tx_pin=2;s->house_rx_pin=1;}
 }
 #include "gpio_map.inc"
 static bool pin_valid(int pin) { return !settings_gpio_reason(pin,false)[0]; }
 bool settings_shell_pin_available(const settings_t *s,int pin,bool tx) {
     if(s->shell_rs485_interface==1)return true; /* UART pins are unused. */
-    bool wallbox_serial=s->meter_rs485_interface==0 && strcmp(s->wallbox_meter_type,"shelly_gen2") && strcmp(s->wallbox_meter_type,"shelly_em1") && strcmp(s->wallbox_meter_type,"em24_tcp");
+    bool wallbox_serial=s->meter_rs485_interface!=1 && strcmp(s->wallbox_meter_type,"shelly_gen2") && strcmp(s->wallbox_meter_type,"shelly_em1") && strcmp(s->wallbox_meter_type,"em24_tcp");
     if(!pin_valid(pin) || pin==(tx?s->wallbox_rx_pin:s->wallbox_tx_pin) ||
        (wallbox_serial && (pin==s->xemex_tx_pin || pin==s->xemex_rx_pin))) return false;
-    bool serial=s->house_rs485_interface==0 && (!strcmp(s->house_meter_type,"xemex") || sdm_profile(s->house_meter_type)!=NULL);
+    bool serial=s->house_rs485_interface!=1 && (!strcmp(s->house_meter_type,"xemex") || sdm_profile(s->house_meter_type)!=NULL);
     return !(serial && (pin==s->house_tx_pin || pin==s->house_rx_pin)) &&
         !(s->external_mode_input_enabled && pin==s->external_mode_input_pin) &&
         !(s->evu_input_enabled && pin==s->evu_input_pin) &&
         !(s->relay_board_enabled && s->phase_actuator_type==0 && pin==s->relay1_pin) &&
-        !(s->phase_switch_enabled && s->phase_feedback_enabled && s->phase_actuator_type==0 &&
-          (pin==s->phase_feedback_pin||(s->phase_feedback_count==2&&pin==s->phase_feedback_second_pin)))&&
         pin!=s->status_led_pin;
 }
 static bool rs485_endpoint_parts(const char *text,size_t capacity,uint32_t *address,unsigned *port) {
@@ -133,10 +149,30 @@ unsigned phase_measured_currents(const settings_t *s){
     return phase_three_phase_meter(s)?3:1;
 }
 bool phase_switch_meter_supported(const settings_t *s){return phase_measured_currents(s)>=2;}
+bool phase_uses_voltage(const settings_t *s){return s->phase_feedback_source==1;}
+bool settings_tail485_valid(const settings_t *s){
+    unsigned n=(s->shell_rs485_interface==2)+(s->meter_rs485_interface==2)+(s->house_rs485_interface==2);
+    if(!n)return true;
+#if !defined(CONFIG_TEE_BOARD_ATOMS3_LITE) || !CONFIG_TEE_BOARD_ATOMS3_LITE
+    return false;
+#else
+    return n==1 && (s->shell_rs485_interface!=2||(s->wallbox_tx_pin==2&&s->wallbox_rx_pin==1)) &&
+        (s->meter_rs485_interface!=2||(s->xemex_tx_pin==2&&s->xemex_rx_pin==1)) &&
+        (s->house_rs485_interface!=2||(s->house_tx_pin==2&&s->house_rx_pin==1));
+#endif
+}
 bool phase_measured_zero(const settings_t *s,const float actual[3],float limit){
     unsigned count=phase_measured_currents(s);if(count<2||count>3||!isfinite(limit)||limit<=0)return false;
     for(unsigned p=0;p<count;p++)if(!isfinite(actual[p])||actual[p]<0||actual[p]>=limit)return false;
     return true;
+}
+/* Current cannot prove that an idle phase has voltage. It can only disprove
+   an expected single-phase state when a measured switched phase draws current. */
+bool phase_current_mismatch(const settings_t *s,const float actual[3]){
+    if(!s->phase_switch_enabled||s->charge_phases!=1||!actual)return false;
+    unsigned count=phase_measured_currents(s);
+    for(unsigned p=1;p<count&&p<3;p++)if(isfinite(actual[p])&&actual[p]>=1)return true;
+    return false;
 }
 bool phase_mqtt_output_value(const settings_t *s,unsigned phases) {
     return s->phase_mqtt_true_three_phase?phases==3:phases==1;
@@ -207,7 +243,16 @@ bool heatpump_parse_value(const char *payload,float *watts,bool *available) {
 }
 bool settings_valid(const settings_t *s) {
     if(!heatpump_settings_valid(s))return false;
-    if(s->phase_actuator_type>3 || s->phase_feedback_count<1||s->phase_feedback_count>2 ||
+#if defined(CONFIG_TEE_BOARD_ATOMS3_LITE) && CONFIG_TEE_BOARD_ATOMS3_LITE
+    if(!strcmp(s->wallbox_meter_type,"xemex"))return false;
+#endif
+    if(!settings_tail485_valid(s)||s->phase_feedback_source<1||s->phase_feedback_source>2||s->phase_voltage_protocol>2||
+       !memchr(s->phase_voltage_host,0,sizeof(s->phase_voltage_host)))return false;
+    if(s->phase_switch_enabled){
+        if(phase_uses_voltage(s)&&(!shelly_phase_endpoint_valid(s->phase_voltage_host,sizeof(s->phase_voltage_host))||!s->phase_feedback_enabled))return false;
+
+    }
+    if(s->phase_shelly_pulse||s->phase_actuator_type>3 ||
        s->phase_shelly_model>12 || !memchr(s->phase_output_password,0,sizeof(s->phase_output_password)) ||
        !memchr(s->phase_shelly_host,0,sizeof(s->phase_shelly_host)) ||
        !memchr(s->phase_shelly_password,0,sizeof(s->phase_shelly_password)) ||
@@ -217,16 +262,13 @@ bool settings_valid(const settings_t *s) {
        (s->phase_output_switch_id!=0&&s->phase_output_switch_id!=100))return false;
     if(s->phase_output_host[0]&&!shelly_phase_endpoint_valid(s->phase_output_host,sizeof(s->phase_output_host)))return false;
     if(s->phase_actuator_type==2&&s->phase_switch_enabled&&
-       (s->phase_feedback_enabled||!phase_output_settings_supported(s)))return false;
+       ((s->phase_feedback_enabled&&!phase_uses_voltage(s))||!phase_output_settings_supported(s)))return false;
     if(s->phase_shelly_host[0]&&!shelly_phase_endpoint_valid(s->phase_shelly_host,sizeof(s->phase_shelly_host)))return false;
-    if(s->phase_switch_enabled&&s->phase_actuator_type!=2&&!s->phase_feedback_enabled)return false;
     if((s->phase_actuator_type==1||s->phase_actuator_type==3) && s->phase_switch_enabled &&
-       (!s->phase_feedback_enabled || !s->phase_shelly_host[0] ||
-        (s->phase_feedback_count>shelly_phase_profile_inputs(s->phase_shelly_model)) ||
-        (s->phase_shelly_pulse&&(s->phase_feedback_count!=2||s->phase_actuator_type==3)) ||
+       (!s->phase_shelly_host[0] ||
         (s->phase_actuator_type==3&&s->phase_shelly_model!=4&&s->phase_shelly_model!=12) ||
         !phase_switch_meter_supported(s)))return false;
-    if(s->shell_rs485_interface>1 || s->meter_rs485_interface>1 || s->house_rs485_interface>1 ||
+    if(s->shell_rs485_interface>2 || s->meter_rs485_interface>2 || s->house_rs485_interface>2 ||
        !memchr(s->shell_rs485_host,0,sizeof(s->shell_rs485_host)) ||
        !memchr(s->meter_rs485_host,0,sizeof(s->meter_rs485_host)) ||
        !memchr(s->house_rs485_host,0,sizeof(s->house_rs485_host)) ||
@@ -234,12 +276,12 @@ bool settings_valid(const settings_t *s) {
        !memchr(s->wallbox_meter_type,0,sizeof(s->wallbox_meter_type)))return false;
     bool serial_meter=strcmp(s->wallbox_meter_type,"shelly_gen2") && strcmp(s->wallbox_meter_type,"shelly_em1") && strcmp(s->wallbox_meter_type,"em24_tcp");
     bool serial_house=!strcmp(s->house_meter_type,"xemex") || sdm_profile(s->house_meter_type)!=NULL;
-    if((s->shell_rs485_interface && !rs485_endpoint_valid(s->shell_rs485_host,sizeof(s->shell_rs485_host))) ||
-       (serial_meter && s->meter_rs485_interface && !rs485_endpoint_valid(s->meter_rs485_host,sizeof(s->meter_rs485_host))) ||
-       (serial_house && s->house_rs485_interface && !rs485_endpoint_valid(s->house_rs485_host,sizeof(s->house_rs485_host))))return false;
-    if((s->shell_rs485_interface && serial_meter && s->meter_rs485_interface && rs485_same_endpoint(s->shell_rs485_host,s->meter_rs485_host)) ||
-       (s->shell_rs485_interface && serial_house && s->house_rs485_interface && rs485_same_endpoint(s->shell_rs485_host,s->house_rs485_host)) ||
-       (serial_meter && s->meter_rs485_interface && serial_house && s->house_rs485_interface && rs485_same_endpoint(s->meter_rs485_host,s->house_rs485_host)))return false;
+    if((s->shell_rs485_interface==1 && !rs485_endpoint_valid(s->shell_rs485_host,sizeof(s->shell_rs485_host))) ||
+       (serial_meter && s->meter_rs485_interface==1 && !rs485_endpoint_valid(s->meter_rs485_host,sizeof(s->meter_rs485_host))) ||
+       (serial_house && s->house_rs485_interface==1 && !rs485_endpoint_valid(s->house_rs485_host,sizeof(s->house_rs485_host))))return false;
+    if((s->shell_rs485_interface==1 && serial_meter && s->meter_rs485_interface==1 && rs485_same_endpoint(s->shell_rs485_host,s->meter_rs485_host)) ||
+       (s->shell_rs485_interface==1 && serial_house && s->house_rs485_interface==1 && rs485_same_endpoint(s->shell_rs485_host,s->house_rs485_host)) ||
+       (serial_meter && s->meter_rs485_interface==1 && serial_house && s->house_rs485_interface==1 && rs485_same_endpoint(s->meter_rs485_host,s->house_rs485_host)))return false;
     if(!mqtt_topic_valid(s->opendtu_prefix,sizeof(s->opendtu_prefix),s->mqtt_input_source==2) ||
        !mqtt_topic_valid(s->opendtu_pv_topic,sizeof(s->opendtu_pv_topic),s->mqtt_input_source==2&&s->pv_display_enabled) ||
        !mqtt_topic_valid(s->opendtu_pv_valid_topic,sizeof(s->opendtu_pv_valid_topic),false))return false;
@@ -250,35 +292,45 @@ bool settings_valid(const settings_t *s) {
        !memchr(s->house_meter_password,0,sizeof(s->house_meter_password)) ||
        !memchr(s->wallbox_meter_host,0,sizeof(s->wallbox_meter_host)) ||
        !memchr(s->wallbox_meter_password,0,sizeof(s->wallbox_meter_password))) return false;
-    bool house_serial=s->house_rs485_interface==0 && (!strcmp(s->house_meter_type,"xemex") || sdm_profile(s->house_meter_type)!=NULL);
-    bool wallbox_serial=s->meter_rs485_interface==0 && serial_meter;
+    bool house_serial=s->house_rs485_interface!=1 && (!strcmp(s->house_meter_type,"xemex") || sdm_profile(s->house_meter_type)!=NULL);
+    bool wallbox_serial=s->meter_rs485_interface!=1 && serial_meter;
     if(!strcmp(s->house_meter_type,"sdm230") || !strcmp(s->house_meter_type,"sdm120") ||
        (!strcmp(s->house_meter_type,"xemex") && s->house_xemex_coils!=3))return false;
     if(!settings_gpio_valid(s))return false;
     const int pins[]={s->wallbox_tx_pin,s->wallbox_rx_pin,s->wallbox_rts_pin,
         s->xemex_tx_pin,s->xemex_rx_pin,s->xemex_rts_pin,s->house_tx_pin,s->house_rx_pin,s->house_rts_pin,
-        s->external_mode_input_pin,s->evu_input_pin,s->relay1_pin,s->relay2_pin,s->phase_feedback_pin,s->phase_feedback_second_pin};
-    const bool used[]={s->shell_rs485_interface==0,s->shell_rs485_interface==0,s->shell_rs485_interface==0 && s->wallbox_rts_pin!=-1,
+        s->external_mode_input_pin,s->evu_input_pin,s->relay1_pin,s->relay2_pin};
+    const bool used[]={s->shell_rs485_interface!=1,s->shell_rs485_interface!=1,s->shell_rs485_interface!=1 && s->wallbox_rts_pin!=-1,
         wallbox_serial,wallbox_serial,wallbox_serial && s->xemex_rts_pin!=-1,
         house_serial,house_serial,house_serial && s->house_rts_pin!=-1,
         s->external_mode_input_enabled,s->evu_input_enabled,
-        s->relay_board_enabled && s->phase_actuator_type==0,false,
-        s->phase_switch_enabled && s->phase_feedback_enabled && s->phase_actuator_type==0,
-        s->phase_switch_enabled && s->phase_feedback_count==2 && s->phase_actuator_type==0};
+        s->relay_board_enabled && s->phase_actuator_type==0,false};
     for(unsigned i=0;i<sizeof(pins)/sizeof(pins[0]);i++) if(used[i]) {
         if(!pin_valid(pins[i])) return false;
         for(unsigned j=0;j<i;j++) if(used[j] && pins[i]==pins[j]) return false;
     }
+    if(s->vehicle_fixed_profile>4)return false;
     if(s->ads1115_enabled) return false; /* retired input cannot be reactivated */
     if(s->mqtt_input_source>2 || s->relay1_mode>3 || s->relay2_mode>2 ||
        (s->phase_switch_enabled && (!s->relay_board_enabled || s->relay1_mode!=3))) return false;
     if(!s->mqtt_enabled && (s->vehicle_soc_enabled || s->homeassistant_enabled ||
-       (s->pv_display_enabled && !(s->huawei_enabled && s->huawei_pv)) ||
-       (s->battery_protect && !(s->huawei_enabled && s->huawei_battery))))return false;
+       (s->pv_display_enabled && !(s->huawei_enabled && s->huawei_pv) && !(s->sungrow_enabled && s->sungrow_pv)) ||
+       (s->battery_protect && !(s->huawei_enabled && s->huawei_battery) && !(s->sungrow_enabled && s->sungrow_battery))))return false;
     if(!memchr(s->huawei_host,0,sizeof(s->huawei_host)) || s->huawei_unit_id>247)return false;
     if(s->huawei_enabled && !s->huawei_host[0])return false;
     for(const unsigned char *p=(const unsigned char *)s->huawei_host;*p;p++)if(!isalnum(*p)&&*p!='.'&&*p!='-'&&*p!=':')return false;
     if(!strcmp(s->house_meter_type,"huawei") && !s->huawei_enabled)return false;
+    if(!memchr(s->sungrow_host,0,sizeof(s->sungrow_host))||!memchr(s->sungrow_model,0,sizeof(s->sungrow_model))||
+       s->sungrow_profile>3||s->sungrow_unit_id<1||s->sungrow_unit_id>247||s->sungrow_port<1||s->sungrow_port>65535)return false;
+    for(const unsigned char *p=(const unsigned char *)s->sungrow_host;*p;p++)if(!isalnum(*p)&&*p!='.'&&*p!='-')return false;
+    for(const unsigned char *p=(const unsigned char *)s->sungrow_model;*p;p++)if(!isalnum(*p)&&*p!='.'&&*p!='-'&&*p!=' ')return false;
+    if(s->sungrow_enabled&&(!s->sungrow_host[0]||!s->sungrow_model[0]))return false;
+    if(s->sungrow_enabled&&((s->sungrow_profile==0&&strncmp(s->sungrow_model,"SH",2))||
+       ((s->sungrow_profile==1||s->sungrow_profile==2)&&strncmp(s->sungrow_model,"SG",2))||
+       (s->sungrow_profile==3&&strcmp(s->sungrow_model,"iHomeManager"))))return false;
+    if(s->sungrow_enabled&&s->huawei_enabled&&((s->sungrow_pv&&s->huawei_pv)||(s->sungrow_battery&&s->huawei_battery)))return false;
+    if(s->sungrow_enabled&&s->sungrow_battery&&(s->sungrow_profile==1||s->sungrow_profile==2))return false;
+    if(!strcmp(s->house_meter_type,"sungrow")&&(!s->sungrow_enabled||s->sungrow_profile==1))return false;
 
     const char *strings[]={s->wifi_ssid,s->wifi_password,s->mqtt_uri,s->mqtt_username,s->mqtt_password,s->mqtt_prefix};
     const size_t sizes[]={33,65,128,65,65,64};
@@ -294,16 +346,23 @@ bool settings_valid(const settings_t *s) {
         if (!isalnum(*p) && *p!='/' && *p!='_' && *p!='-') return false;
     if(!memchr(s->house_meter_type,0,sizeof(s->house_meter_type)) || !memchr(s->house_meter_host,0,sizeof(s->house_meter_host))) return false;
     if(strcmp(s->house_meter_type,"tasmota") && strcmp(s->house_meter_type,"shelly_gen2") && strcmp(s->house_meter_type,"shelly_em1") &&
-       strcmp(s->house_meter_type,"xemex") && strcmp(s->house_meter_type,"huawei") && strcmp(s->house_meter_type,"em24_tcp") && !sdm_profile(s->house_meter_type)) return false;
+       strcmp(s->house_meter_type,"xemex") && strcmp(s->house_meter_type,"huawei") && strcmp(s->house_meter_type,"sungrow") && strcmp(s->house_meter_type,"em24_tcp") && !sdm_profile(s->house_meter_type)) return false;
     if(!memchr(s->wallbox_meter_type,0,sizeof(s->wallbox_meter_type)) || !memchr(s->house_power_path,0,sizeof(s->house_power_path))) return false;
     bool network_wallbox=!strcmp(s->wallbox_meter_type,"shelly_gen2") || !strcmp(s->wallbox_meter_type,"shelly_em1") || !strcmp(s->wallbox_meter_type,"em24_tcp");
+    bool network_unconfigured=false;
+#if defined(CONFIG_TEE_BOARD_ATOMS3_LITE) && CONFIG_TEE_BOARD_ATOMS3_LITE
+    /* First installation has no meter address yet. Preserve a valid stopped
+       configuration; commissioning and fresh-current gates still block charging. */
+    network_unconfigured=!s->control_verified&&!s->enabled;
+#endif
     if(strcmp(s->wallbox_meter_type,"xemex") && !sdm_profile(s->wallbox_meter_type) && !network_wallbox) return false;
     if(s->meter_baud!=1200 && s->meter_baud!=2400 && s->meter_baud!=4800 && s->meter_baud!=9600 && s->meter_baud!=19200 && s->meter_baud!=38400) return false;
     bool house_url=!strncmp(s->house_power_path,"http://",7) || !strncmp(s->house_power_path,"https://",8);
     bool network_house=!strcmp(s->house_meter_type,"tasmota") || !strcmp(s->house_meter_type,"shelly_gen2") || !strcmp(s->house_meter_type,"shelly_em1") || !strcmp(s->house_meter_type,"em24_tcp");
     if(!strcmp(s->house_meter_type,"em24_tcp") && !s->house_meter_host[0])return false;
-    bool directional_house=network_house || !strcmp(s->house_meter_type,"huawei") || sdm_profile(s->house_meter_type)!=NULL;
+    bool directional_house=network_house || !strcmp(s->house_meter_type,"huawei") || !strcmp(s->house_meter_type,"sungrow") || sdm_profile(s->house_meter_type)!=NULL;
     if(!memchr(s->shell_setup_host,0,sizeof(s->shell_setup_host)))return false;
+    if(s->shell_http_control_enabled&&(!s->shell_setup_host[0]||s->max_charge_a>16))return false;
     for(const unsigned char *p=(const unsigned char *)s->shell_setup_host;*p;p++)if(!isalnum(*p)&&*p!='.'&&*p!='-')return false;
     if(s->meter_format>3 || s->house_meter_format>3 || (s->zero_feed_enabled && (!directional_house || (network_house && !s->house_meter_host[0] && !house_url)))) return false;
     for(const unsigned char *p=(const unsigned char *)s->house_meter_host;*p;p++) if(!isalnum(*p) && *p!='.' && *p!='-' && *p!=':') return false;
@@ -323,7 +382,7 @@ bool settings_valid(const settings_t *s) {
         (!s->phase_switch_enabled || s->fixed_charge_phases==3) &&
         (s->fixed_charge_phases!=1 || s->max_charge_a<=16) &&
         (s->charge_phases==1 || s->charge_phases==3) && (s->manual_phases==1 || s->manual_phases==3) &&
-        (!network_wallbox || s->wallbox_meter_host[0]) &&
+        (!network_wallbox || s->wallbox_meter_host[0] || network_unconfigured || s->shell_http_control_enabled) &&
         (!s->phase_switch_enabled || s->max_charge_a<=16) &&
         (!s->evu_input_enabled || s->evu_limit_a==0 || range(s->evu_limit_a,s->min_charge_a,s->max_charge_a)) &&
         s->house_address>=1 && s->house_address<=247 &&
@@ -371,6 +430,10 @@ bool settings_decode(const void *blob,size_t length,settings_t *out) {
         case 31: prefix=offsetof(settings_t,phase_feedback_count); break;
         case 32: prefix=offsetof(settings_t,phase_feedback_pin); break;
         case 33: prefix=offsetof(settings_t,heatpump_enabled); break;
+        case 34: prefix=offsetof(settings_t,phase_feedback_source); break;
+        case 35: prefix=offsetof(settings_t,sungrow_enabled); break;
+        case 36: prefix=offsetof(settings_t,phase_contactor_reconfigure); break;
+        case 37: prefix=offsetof(settings_t,shell_http_control_enabled); break;
         case EMS_SETTINGS_VERSION: prefix=sizeof(settings_t); break;
         default: return false;
     }
@@ -384,6 +447,7 @@ bool settings_decode(const void *blob,size_t length,settings_t *out) {
     /* Keep the selected mode and setpoints visible after a restart, but never
        resume charging automatically. The user must enable it explicitly. */
     next.version=EMS_SETTINGS_VERSION; next.enabled=false;
+    if(version<35&&next.phase_actuator_type==2){next.phase_feedback_source=2;next.phase_no_feedback_acknowledged=true;}
     if(version<33){
         /* A single contact's assignment was configurable in older firmware.
            Preserve it; changing it silently reverses the reported position. */
@@ -400,6 +464,24 @@ bool settings_decode(const void *blob,size_t length,settings_t *out) {
         if(next.phase_actuator_type==1)next.phase_feedback_closed_is_single=false;
         if(next.phase_actuator_type!=2)next.phase_feedback_enabled=true;
         next.relay1_mode=next.phase_switch_enabled?3:0;
+    }
+#if defined(CONFIG_TEE_BOARD_ATOMS3_LITE) && CONFIG_TEE_BOARD_ATOMS3_LITE
+    /* Retire the unavailable second local bus without losing credentials or
+       unrelated settings. No network meter data means charging stays blocked. */
+    if(!strcmp(next.wallbox_meter_type,"xemex")){strcpy(next.wallbox_meter_type,"shelly_gen2");next.wallbox_meter_host[0]=0;next.control_verified=false;}
+#endif
+    /* Keep the commissioned channel order of existing meters; new installs
+       default to C=L1 so the downstream 3EM remains supplied in one-phase mode. */
+    if(version<36)next.wallbox_shelly_reverse=phase_uses_voltage(&next)&&!strcmp(next.wallbox_meter_type,"shelly_gen2")&&!strcmp(next.wallbox_meter_host,next.phase_voltage_host);
+    if(version<37){
+        /* Only inactive conflicting defaults move; commissioned live inputs stay wired as before. */
+#if defined(CONFIG_TEE_BOARD_ATOMS3_LITE) && CONFIG_TEE_BOARD_ATOMS3_LITE
+        if(!next.external_mode_input_enabled&&next.external_mode_input_pin==1)next.external_mode_input_pin=EMS_DEFAULT_MODE_INPUT_PIN;
+        if(!next.evu_input_enabled&&next.evu_input_pin==7)next.evu_input_pin=EMS_DEFAULT_EVU_INPUT_PIN;
+#endif
+        if(next.phase_feedback_source==0)next.phase_feedback_source=2;
+        /* A bistable actuator cannot derive its position from a released pulse output. */
+        if(next.phase_shelly_pulse){next.phase_switch_enabled=false;next.phase_contactor_reconfigure=true;}
     }
     next.charge_phases=next.phase_switch_enabled?3:next.fixed_charge_phases; next.manual_phases=next.charge_phases;
     if(version<8){next.price_kwh=.25f;next.solar_price_kwh=.08f;}
@@ -475,7 +557,7 @@ bool settings_apply_live(settings_t *runtime,const settings_t *before,const sett
     TEXT_SAME(mqtt_username); TEXT_SAME(mqtt_password); TEXT_SAME(mqtt_prefix);
     TEXT_SAME(house_meter_type);
     TEXT_SAME(wallbox_meter_type);
-    SAME(version); SAME(wallbox_tx_pin); SAME(wallbox_rx_pin); SAME(wallbox_rts_pin);
+    SAME(version); SAME(shell_http_control_enabled); SAME(wallbox_shelly_reverse); SAME(wallbox_tx_pin); SAME(wallbox_rx_pin); SAME(wallbox_rts_pin);
     SAME(shell_rs485_interface); SAME(meter_rs485_interface); SAME(house_rs485_interface);
     TEXT_SAME(shell_rs485_host); TEXT_SAME(meter_rs485_host); TEXT_SAME(house_rs485_host);
     SAME(xemex_tx_pin); SAME(xemex_rx_pin); SAME(xemex_rts_pin);
@@ -484,9 +566,10 @@ bool settings_apply_live(settings_t *runtime,const settings_t *before,const sett
     SAME(xemex_coils); SAME(meter_baud); SAME(meter_format); SAME(mqtt_state_json);
     SAME(current_offset_a);
     SAME(phase_switch_enabled); SAME(phase_feedback_enabled); SAME(fixed_charge_phases);
+    SAME(phase_feedback_source);SAME(phase_voltage_protocol);TEXT_SAME(phase_voltage_host);
     SAME(phase_feedback_closed_is_single); SAME(phase_actuator_type);
-    SAME(phase_feedback_count); SAME(phase_shelly_model); SAME(phase_shelly_pulse); SAME(phase_shelly_true_three_phase);
-    SAME(phase_feedback_pin); SAME(phase_feedback_second_pin); SAME(status_led_pin);
+    SAME(phase_shelly_model); SAME(phase_shelly_true_three_phase);
+    SAME(status_led_pin);
     TEXT_SAME(phase_shelly_host); TEXT_SAME(phase_shelly_password);
     TEXT_SAME(phase_output_password);
     TEXT_SAME(phase_mqtt_topic);
@@ -498,6 +581,8 @@ bool settings_apply_live(settings_t *runtime,const settings_t *before,const sett
     SAME(relay_board_enabled); SAME(relay_active_low); SAME(mqtt_enabled);
     SAME(relay1_pin); SAME(relay1_mode);
     SAME(heatpump_enabled);SAME(heatpump_publish_enabled);TEXT_SAME(heatpump_source);TEXT_SAME(heatpump_host);
+    SAME(sungrow_enabled);SAME(sungrow_pv);SAME(sungrow_battery);SAME(sungrow_profile);SAME(sungrow_unit_id);SAME(sungrow_port);
+    TEXT_SAME(sungrow_host);TEXT_SAME(sungrow_model);
     TEXT_SAME(heatpump_input_topic);TEXT_SAME(heatpump_output_topic);
     if(before->mqtt_input_source==2||after->mqtt_input_source==2){
         SAME(mqtt_input_source);TEXT_SAME(opendtu_prefix);TEXT_SAME(opendtu_pv_topic);TEXT_SAME(opendtu_pv_valid_topic);
@@ -514,6 +599,8 @@ bool settings_apply_live(settings_t *runtime,const settings_t *before,const sett
        change (e.g. a price-only save). */
 #define LIVE(field) if(before->field!=after->field) runtime->field=after->field
 #define TEXT_LIVE(field) if(strcmp(before->field,after->field)) strcpy(runtime->field,after->field)
+    LIVE(vehicle_manual_soc_prompt);
+    LIVE(vehicle_fixed_profile);
     LIVE(grid_limit_a); LIVE(max_charge_a); LIVE(zero_feed_enabled); LIVE(zero_reserve_w);
     TEXT_LIVE(house_meter_host); TEXT_LIVE(house_power_path);
     LIVE(grid_guard_enabled); LIVE(evu_limit_a);
@@ -606,6 +693,20 @@ bool wallbox_inactive_phase_current(const settings_t *s,const float actual[3]) {
     /* With two coils L2 is real, L3 follows L2 only for the energy estimate. */
     return s->charge_phases==1 && ((measured_three&&(actual[1]>=1||actual[2]>=1))||(measured_two&&actual[1]>=1));
 }
+static bool phase_voltage_override_active;
+static float phase_voltage_values[3];
+void ems_phase_voltage_override(const float values[3],bool enabled){
+    phase_voltage_override_active=false;
+    if(!enabled||!values)return;
+    for(unsigned i=0;i<3;i++)if(!range(values[i],180,270))return;
+    memcpy(phase_voltage_values,values,sizeof(phase_voltage_values));phase_voltage_override_active=true;
+}
+bool ems_phase_voltage_active(void){return phase_voltage_override_active;}
+float ems_phase_voltage_sum(const settings_t *s,unsigned phases){
+    if(phases<1||phases>3)return NAN;
+    if(!phase_voltage_override_active)return s->nominal_v*phases;
+    float sum=0;for(unsigned i=0;i<phases;i++)sum+=phase_voltage_values[i];return sum;
+}
 float estimated_charge_power(const settings_t *s,const float currents[3]) {
     float sum=0,peak=0;
     for(int p=0;p<s->charge_phases;p++) {
@@ -614,14 +715,18 @@ float estimated_charge_power(const settings_t *s,const float currents[3]) {
     }
     /* Match the dashboard idle threshold. Do not integrate the Xemex idle
        current floor as fictitious car charging; raw current stays available. */
-    return peak<1?0:sum*s->nominal_v*s->power_factor;
+    if(peak<1)return 0;
+    if(!phase_voltage_override_active)return sum*s->nominal_v*s->power_factor;
+    float watts=0;for(unsigned p=0;p<s->charge_phases;p++)watts+=currents[p]*phase_voltage_values[p];
+    return watts*s->power_factor;
 }
 float solar_current(const settings_t *s,const float actual[3],float grid_w) {
     if(!isfinite(grid_w)) return 0;
     for(int p=0;p<s->charge_phases;p++) if(!range(actual[p],0,999)) return 0;
     float sum=0,peak=0; for(int p=0;p<s->charge_phases;p++) {sum+=actual[p];peak=fmaxf(peak,actual[p]);}
     if(peak<1)sum=0; /* Use the same idle floor as the EV power calculation. */
-    float current=sum/s->charge_phases-(grid_w-s->zero_reserve_w)/(s->charge_phases*s->nominal_v);
+    float current=sum/s->charge_phases-(grid_w-s->zero_reserve_w)/(ems_phase_voltage_sum(s,s->charge_phases));
+    if(phase_voltage_override_active){float watts=0;if(peak>=1)for(unsigned p=0;p<s->charge_phases;p++)watts+=actual[p]*phase_voltage_values[p];current=(watts-grid_w+s->zero_reserve_w)/ems_phase_voltage_sum(s,s->charge_phases);}
     return fmaxf(0,fminf(s->max_charge_a,current));
 }
 /* Reconstruct the PV budget after household consumption from independent
@@ -638,7 +743,7 @@ float pv_allocation_grid(const settings_t *s,const float actual[3],float grid_w,
     float budget=fmaxf(0,existing+charge_w), car=budget;
     if(s->pv_priority==0) car=fmaxf(0,budget-(soc>=99?0:s->pv_house_priority_w));
     else if(s->pv_priority==1) {
-        float limit=s->pv_car_priority_w,minimum=s->min_charge_a*s->charge_phases*s->nominal_v;
+        float limit=s->pv_car_priority_w,minimum=s->min_charge_a*ems_phase_voltage_sum(s,s->charge_phases);
         /* 8.7 A rounds the tested 6 kW minimum to 6003 W. Do not make a
            displayed 6 kW ceiling unreachable because of these three watts. */
         if(limit>=minimum-5 && limit<minimum)limit=minimum;
@@ -655,7 +760,7 @@ float pv_allocation_grid(const settings_t *s,const float actual[3],float grid_w,
 float pv_start_threshold(const settings_t *s) {
     float threshold=fminf(s->max_charge_a,s->min_charge_a+ems_param(EP_PV_START_MARGIN));
     if(s->pv_allocation_enabled && s->battery_protect && s->zero_feed_enabled && s->pv_priority==1) {
-        float limit=s->pv_car_priority_w/(s->charge_phases*s->nominal_v);
+        float limit=s->pv_car_priority_w/(ems_phase_voltage_sum(s,s->charge_phases));
         if(isfinite(limit) && limit>=s->min_charge_a-0.01f)
             threshold=fminf(threshold,fmaxf(s->min_charge_a,limit));
     }
@@ -707,7 +812,7 @@ battery_power_t battery_power_normalize(float charge,float discharge,int64_t cha
 static float battery_response_current(int64_t *response_at,const settings_t *s,const float actual[3],float grid_w,
     float protected,float discharge,float allowance,float minimum,int64_t now) {
     float observed=solar_current(s,actual,grid_w+fmaxf(0,discharge-allowance));
-    float possible=fminf(s->max_charge_a,protected+allowance/(s->nominal_v*s->charge_phases));
+    float possible=fminf(s->max_charge_a,protected+allowance/(ems_phase_voltage_sum(s,s->charge_phases)));
     if(observed>=minimum||possible<minimum){*response_at=0;return observed;}
     /* The vehicle can still be ramping below the minimum request while the
        inverter already covers it. Judge the response by the measured grid
@@ -958,6 +1063,15 @@ ems_wifi_mode_t wifi_recovery_mode(bool configured,bool online,bool forced_ap,in
     if(lost_at>0 && now>=lost_at && now-lost_at>=300000) return EMS_WIFI_AP_STA;
     return EMS_WIFI_STA;
 }
+float manual_minimum_power_kw(const settings_t *s,unsigned phases) {
+    if(!s||(phases!=1&&phases!=3))return NAN;
+    float kw=s->min_charge_a*ems_phase_voltage_sum(s,phases)*s->power_factor/1000;
+    if(!isfinite(kw)||kw<=0)return NAN;
+    float minimum=ceilf((kw-.000001f)*10)/10;
+    if(phases==3&&fabsf(s->min_charge_a-EMS_DEFAULT_MIN_CHARGE_A)<.01f)
+        minimum=fmaxf(EMS_DEFAULT_THREE_PHASE_POWER_KW,minimum);
+    return minimum;
+}
 float control_target(const settings_t *s,bool meter_ok,bool feedback_ok,bool pv_ok) {
     if (!s->enabled || s->mode==MODE_OFF || !meter_ok || !feedback_ok) return 0;
     if (s->mode==MODE_PV && !pv_ok) return 0;
@@ -977,7 +1091,7 @@ float grid_guard_target(const settings_t *s,float requested,bool house_ready) {
     /* Missing house phase currents remove only the per-phase house protection.
        Keep the normal Wallbox feedback loop, with an 8 kW target ceiling.
        Never increase a smaller request or override another stop condition. */
-    float watts_per_amp=s->charge_phases*s->nominal_v*s->power_factor;
+    float watts_per_amp=ems_phase_voltage_sum(s,s->charge_phases)*s->power_factor;
     if(!isfinite(watts_per_amp) || watts_per_amp<=0) return 0;
     return fminf(requested,fminf(s->max_charge_a,EMS_GRID_FALLBACK_W/watts_per_amp));
 }
@@ -987,19 +1101,12 @@ float charge_plan_maximum_kw(const settings_t *s,bool house_ready,bool evu_activ
     float current=s->max_charge_a;
     if(s->evu_input_enabled && evu_active) current=fminf(current,s->evu_limit_a);
     unsigned phases=s->phase_switch_enabled?3:s->fixed_charge_phases;
-    float watts=current*phases*s->nominal_v*s->power_factor;
+    float watts=current*ems_phase_voltage_sum(s,phases)*s->power_factor;
     if(s->grid_guard_enabled && !house_ready) watts=fminf(watts,EMS_GRID_FALLBACK_W);
     return isfinite(watts)?fmaxf(0,watts/1000):0;
 }
 bool phase_feedback_matches(bool required,unsigned observed,unsigned expected) {
     return (expected==1 || expected==3) && (!required || observed==expected);
-}
-unsigned phase_feedback_position(bool contact_closed,bool closed_is_single) {
-    return contact_closed==closed_is_single?1:3;
-}
-unsigned phase_feedback_contacts(bool first,bool second,unsigned count,bool closed_is_single){
-    if(count<1||count>2||(count==2&&first==second))return 0;
-    return phase_feedback_position(first,closed_is_single);
 }
 bool phase_motion_complete(bool required,unsigned observed,unsigned expected,int64_t elapsed_ms) {
     return phase_feedback_matches(required,observed,expected) && elapsed_ms>=0 && (required || elapsed_ms>=2000);
@@ -1075,7 +1182,7 @@ void control_report(const settings_t *s,const float actual[3],float target,float
         }
         float outside=NAN;
         if(s->mode==MODE_PV && house_power_ok && isfinite(house_power_w))
-            outside=house_power_w/(s->charge_phases*s->nominal_v*s->power_factor)-(feedback?actual[s->charge_phases==1?0:p]:0);
+            outside=house_power_w/(ems_phase_voltage_sum(s,s->charge_phases)*s->power_factor)-(feedback?actual[s->charge_phases==1?0:p]:0);
         /* Without a fresh house value, retain a deliberately conservative fallback.
            It never pretends that wallbox current is external household load. */
         if(!isfinite(outside)) outside=requested_grid;
@@ -1172,14 +1279,14 @@ void energy_step(energy_t *e,int64_t now,int64_t epoch,uint32_t date,int64_t mid
             int64_t end=now<e->expires[s]?now:e->expires[s];
             int64_t ms=end-e->last_ms;
             if(ms<=0 || !range(e->previous_w[s],0,1000000)) continue;
-            double wh=e->previous_w[s]*ms/3600000.0;
+            double wh=s==0&&e->primary_metered?0:e->previous_w[s]*ms/3600000.0;
             e->store.total_wh[s]+=wh; e->boot_wh[s]+=wh;
             if(clock_ok && date!=e->last_date) {
                 int64_t before=midnight-e->last_epoch_ms;
                 if(before<0) before=0;
                 if(before>ms) before=ms;
-                add_day(&e->store,e->last_date,s,e->previous_w[s]*before/3600000.0,before,e->previous_w[s]>=1000);
-                add_day(&e->store,date,s,e->previous_w[s]*(ms-before)/3600000.0,ms-before,e->previous_w[s]>=1000);
+                add_day(&e->store,e->last_date,s,wh*before/ms,before,e->previous_w[s]>=1000);
+                add_day(&e->store,date,s,wh*(ms-before)/ms,ms-before,e->previous_w[s]>=1000);
             } else add_day(&e->store,clock_ok?date:0,s,wh,ms,e->previous_w[s]>=1000);
             /* Split intervals at minute boundaries for a real average, including gaps. */
             for(int64_t t=e->last_ms;t<end;) {
@@ -1187,7 +1294,7 @@ void energy_step(energy_t *e,int64_t now,int64_t epoch,uint32_t date,int64_t mid
                 if(until>end) until=end;
                 energy_point_t *point=&e->history[minute%EMS_HISTORY];
                 if(point->minute!=minute) { memset(point,0,sizeof(*point)); point->minute=minute; }
-                point->wh[s]+=e->previous_w[s]*(until-t)/3600000.0;
+                point->wh[s]+=wh*(until-t)/ms;
                 point->covered_ms[s]+=(uint32_t)(until-t); t=until;
             }
         }
@@ -1196,6 +1303,36 @@ void energy_step(energy_t *e,int64_t now,int64_t epoch,uint32_t date,int64_t mid
     for(int s=0;s<2;s++) {
         e->previous_w[s]=power[s];
         e->expires[s]=range(power[s],0,1000000)?expires[s]:0;
+    }
+}
+static uint32_t previous_energy_date(uint32_t date){
+    unsigned y=date/10000,m=date/100%100,d=date%100;
+    if(d>1)return date-1;
+    if(m==1){y--;m=12;}else m--;
+    const unsigned days[]={31,28,31,30,31,30,31,31,30,31,30,31};
+    return y*10000+m*100+days[m-1]+(m==2&&y%4==0&&(y%100!=0||y%400==0));
+}
+void energy_add_metered(energy_t *e,int64_t from_ms,int64_t to_ms,int64_t from_epoch,int64_t to_epoch,uint32_t date,int64_t midnight,double wh){
+    if(!e||!isfinite(wh)||wh<=0||wh>1000000)return;
+    e->store.total_wh[0]+=wh;e->boot_wh[0]+=wh;
+    int64_t duration=to_epoch-from_epoch;
+    bool timed=date&&from_epoch>0&&duration>0&&llabs(duration-(to_ms-from_ms))<=2000;
+    if(!timed)add_day(&e->store,0,0,wh,0,false);
+    else if(from_epoch>=midnight)add_day(&e->store,date,0,wh,0,false);
+    else {
+        double before=fmin(1,fmax(0,(double)(midnight-from_epoch)/duration));
+        add_day(&e->store,duration<=86400000?previous_energy_date(date):0,0,wh*before,0,false);
+        add_day(&e->store,date,0,wh*(1-before),0,false);
+    }
+    int64_t span=to_ms-from_ms;
+    if(span<=0)return;
+    int64_t start=from_ms>0?from_ms:0;
+    if(start<to_ms-(EMS_HISTORY-1)*60000)start=to_ms-(EMS_HISTORY-1)*60000;
+    for(int64_t t=start;t<to_ms;){
+        int64_t minute=t/60000,until=(minute+1)*60000;if(until>to_ms)until=to_ms;
+        energy_point_t *point=&e->history[minute%EMS_HISTORY];
+        if(point->minute!=minute){memset(point,0,sizeof(*point));point->minute=minute;}
+        point->wh[0]+=wh*(until-t)/span;t=until;
     }
 }
 bool energy_store_valid(const energy_store_t *s) {
@@ -1208,7 +1345,7 @@ bool energy_store_valid(const energy_store_t *s) {
     for(int d=0;d<EMS_DAYS;d++) if(s->days[d].charging_ms>s->days[d].covered_ms[0]) return false;
     return true;
 }
-void manual_report_smooth(manual_report_filter_t *filter,const settings_t *s,float target,int64_t now,float report[3]) {
+void manual_report_smooth_mode(manual_report_filter_t *filter,const settings_t *s,float target,int64_t now,float report[3],bool as_manual) {
     if(s->charge_phases==1) {
         report[1]=report[2]=0;
         filter->reported[1]=filter->reported[2]=0;
@@ -1216,7 +1353,7 @@ void manual_report_smooth(manual_report_filter_t *filter,const settings_t *s,flo
     /* The same one-phase actuator must use the same feedback timing in PV
        and manual operation. The former bypass in PV made the compensated
        minimum undershoot; removing compensation instead left an overshoot. */
-    if((s->mode!=MODE_MANUAL && !(s->mode==MODE_PV && s->charge_phases==1))||target<=0||!isfinite(target)) { filter->active=false; return; }
+    if((!as_manual && s->mode!=MODE_MANUAL && !(s->mode==MODE_PV && s->charge_phases==1))||target<=0||!isfinite(target)) { filter->active=false; return; }
     unsigned phases=s->charge_phases==1?1:3;
     /* A stop or invalid feedback must bypass the ramp on every active phase. */
     for(unsigned p=0;p<phases;p++) {
@@ -1255,12 +1392,22 @@ void manual_report_smooth(manual_report_filter_t *filter,const settings_t *s,flo
                 rate=target<=8.8f?0.05f:target<9?0.15f:target<13?0.4f:0.2f;
                 if(delta<0)rate*=2;
             }
+            /* Keep the commissioned offset compensation continuously active.
+               In the experimental low range, approach quickly from far away
+               but use smaller steps within 1 A of the measured target. */
+            bool low_floor=phases==3&&target<=s->min_charge_a+1.0f;
+            if(low_floor&&delta>0)
+                rate=report[p]-s->grid_limit_a-s->current_offset_a>1.0f?.3f:.02f;
             float max_delta=rate*(now-filter->last_ms)/1000.0f;
+            if(low_floor&&delta>0)max_delta=fminf(max_delta,rate>.1f?.5f:.04f);
             filter->reported[p]+=fminf(max_delta,fmaxf(-max_delta,delta));
         }
         report[p]=filter->reported[p];
     }
     filter->last_ms=now;filter->active=true;
+}
+void manual_report_smooth(manual_report_filter_t *filter,const settings_t *s,float target,int64_t now,float report[3]) {
+    manual_report_smooth_mode(filter,s,target,now,report,false);
 }
 typedef struct {
     uint32_t date;

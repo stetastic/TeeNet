@@ -23,7 +23,7 @@ int main(void){
  next=defaults;next.values[EP_PV_START]=30.5f;assert(!expert_valid(&next));
  next=defaults;next.values[EP_PHASE_SETTLE]=30;assert(!expert_valid(&next));
  next=defaults;next.values[EP_EVCC_LEASE]=30;next.values[EP_EVCC_STATUS_TTL]=60;assert(!expert_valid(&next));
- next=defaults;next.values[EP_MIN_CURRENT]=6;assert(!expert_valid(&next));
+ next=defaults;next.values[EP_MIN_CURRENT]=7.5f;assert(expert_valid(&next));next.values[EP_MIN_CURRENT]=5.9f;assert(!expert_valid(&next));
  next=defaults;next.values[EP_STOP_COUNT]=10;assert(expert_valid(&next));
  assert(sizeof(((charge_guard_t *)0)->stops)/sizeof(int64_t)==10);
  next=defaults;next.values[EP_GRID_FALLBACK]=5000;assert(expert_activate(&next));

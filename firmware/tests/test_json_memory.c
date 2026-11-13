@@ -1,5 +1,8 @@
 #include "cJSON.h"
 #include "shelly_phase.h"
+#include "json_owned.h"
+#include <float.h>
+#include <math.h>
 #include <assert.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -25,7 +28,7 @@ int main(void){
     const char *status="{\"switch:0\":{\"id\":0,\"output\":false},\"input:0\":{\"id\":0,\"state\":true},\"input:1\":{\"id\":1,\"state\":false},\"sys\":{\"uptime\":120}}";
     for(unsigned n=0;n<20000;n++){
         shelly_phase_feedback_t f;
-        assert(shelly_phase_feedback(status,&f)&&f.phases==3);
+        assert(shelly_phase_feedback(status,&f)&&!f.output&&f.has_uptime&&f.uptime==120);
         assert(!shelly_phase_feedback("{\"switch:0\":",&f));
         assert(shelly_output_ack("{\"was_on\":false}"));
         assert(!shelly_output_ack("{\"was_on\":false,\"was_on\":true}"));
@@ -37,6 +40,21 @@ int main(void){
     for(size_t at=1;at<=count;at++){
         calls=0;fail_at=at;assert(!shelly_phase_feedback(status,&f));assert(used==0);
     }
-    fail_at=0;assert(shelly_phase_feedback(status,&f));assert(used==0);cJSON_InitHooks(NULL);
+    fail_at=0;assert(shelly_phase_feedback(status,&f));assert(used==0);
+    cJSON *tree=cJSON_CreateObject(),*numbers=cJSON_AddArrayToObject(tree,"numbers");
+    cJSON_AddStringToObject(tree,"quote\"\\\n","\"\\\b\f\n\r\t\001\037 UTF-8: äöü");
+    double values[]={0,-0.0,DBL_MIN,DBL_MAX,-DBL_MAX,1e-300,-1e300,NAN,INFINITY};
+    for(unsigned i=0;i<sizeof(values)/sizeof(*values);i++){
+        cJSON *number=cJSON_CreateNumber(isnan(values[i])?0:values[i]);number->valuedouble=values[i];cJSON_AddItemToArray(numbers,number);
+    }
+    cJSON_AddNullToObject(tree,"null");cJSON_AddBoolToObject(tree,"true",true);cJSON_AddBoolToObject(tree,"false",false);
+    cJSON_AddRawToObject(tree,"raw","[1,2,3]");
+    char long_text[12000];memset(long_text,'x',sizeof(long_text)-1);long_text[sizeof(long_text)-1]=0;cJSON_AddStringToObject(tree,"long",long_text);
+    char *legacy=cJSON_PrintUnformatted(tree),*bounded=json_print_compact(tree);assert(legacy&&bounded&&!strcmp(legacy,bounded));
+    cJSON_free(legacy);cJSON_free(bounded);size_t retained=used;
+    calls=0;fail_at=1;assert(!json_print_compact(tree)&&used==retained);fail_at=0;
+    cJSON_Delete(tree);assert(!used);assert(!json_print_compact(NULL));
+    cJSON_InitHooks(NULL);
+    puts("PASS: one-buffer JSON output matches cJSON including escaped strings, long output, number extremes and failed allocation");
     printf("PASS: bounded JSON depth; 20000 feedback cycles without retained allocations; %zu allocation failures; peak %zu bytes\n",count,peak);
 }

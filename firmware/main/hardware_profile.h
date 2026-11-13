@@ -1,14 +1,21 @@
 #pragma once
 
+/* ESP-IDF board selections live in sdkconfig.h. Every translation unit must
+   load them before choosing pins or checking an incoming OTA image. */
+#ifdef ESP_PLATFORM
+#include "sdkconfig.h"
+#endif
+
 /* Host-side tests have no sdkconfig and therefore exercise the standard board. */
 #if defined(CONFIG_TEE_BOARD_ATOMS3_LITE) && CONFIG_TEE_BOARD_ATOMS3_LITE
 #define EMS_HARDWARE_ID "andreas-testboard"
-#define EMS_HARDWARE_NAME "Andreas Testboard · AtomS3 Lite"
-#define EMS_DEFAULT_SHELL_TX_PIN 6
-#define EMS_DEFAULT_SHELL_RX_PIN 5
+#define EMS_HARDWARE_NAME "M5Stack AtomS3 Lite + Tail485"
+#define EMS_DEFAULT_SHELL_TX_PIN 2
+#define EMS_DEFAULT_SHELL_RX_PIN 1
 #define EMS_DEFAULT_METER_TX_PIN 1
 #define EMS_DEFAULT_METER_RX_PIN 2
-#define EMS_DEFAULT_MODE_INPUT_PIN 1
+#define EMS_DEFAULT_MODE_INPUT_PIN 5
+#define EMS_DEFAULT_EVU_INPUT_PIN 6
 #define EMS_DEFAULT_HOUSE_TX_PIN 38
 #define EMS_DEFAULT_HOUSE_RX_PIN 39
 #define EMS_DEFAULT_RELAY_PIN 7
@@ -26,6 +33,7 @@
 #define EMS_DEFAULT_METER_TX_PIN 4
 #define EMS_DEFAULT_METER_RX_PIN 5
 #define EMS_DEFAULT_MODE_INPUT_PIN 6
+#define EMS_DEFAULT_EVU_INPUT_PIN 7
 #define EMS_DEFAULT_HOUSE_TX_PIN 43
 #define EMS_DEFAULT_HOUSE_RX_PIN 44
 #define EMS_DEFAULT_RELAY_PIN 12

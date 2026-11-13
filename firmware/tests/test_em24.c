@@ -1,6 +1,7 @@
 #include "em24_modbus.h"
 #include "ems_core.h"
 #include "shelly_modbus.h"
+#include "wallbox_modbus_session.h"
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
@@ -11,6 +12,12 @@ static int connect_cost,io_cost=1,corrupt,connects,closes;
 static uint8_t request[12];
 static unsigned expected_unit=7;
 static bool sample_data;
+static uint32_t wallbox_meter_revision;
+static wallbox_modbus_session_t session={.sock=-1};
+static inline void wallbox_modbus_session_close(wallbox_modbus_session_t *s){assert(s->sock<0);}
+static inline bool wallbox_modbus_session_read(wallbox_modbus_session_t *s,const char *host,uint8_t unit,uint32_t revision,uint16_t start,uint16_t count,uint8_t *data,size_t capacity,int timeout){
+    (void)s;(void)host;(void)unit;(void)revision;(void)start;(void)count;(void)data;(void)capacity;(void)timeout;assert(!"EM24 must keep its generic transport");return false;
+}
 static int64_t now_ms(void){return elapsed;}
 static uint32_t esp_random(void){return 0x1234;}
 static int tcp_connect_timeout(const char *host,uint16_t port,int timeout){
@@ -99,16 +106,16 @@ int main(void){
     s.wallbox_meter_host[0]=0;assert(!settings_valid(&s));strcpy(s.wallbox_meter_host,"em24:1502");
     s.xemex_address=0;assert(!settings_valid(&s));s.xemex_address=248;assert(!settings_valid(&s));s.xemex_address=7;
     settings=s;settings.house_address=9;settings.charge_phases=3;
-    elapsed=0;io_cost=1;sample_data=true;float feedback[3]={-1,-1,-1},watts=-1;
-    assert(read_wallbox_network(feedback,&watts));
+    elapsed=0;io_cost=1;sample_data=true;float feedback[3]={-1,-1,-1},watts=-1,voltage[3];bool voltage_valid;
+    assert(read_wallbox_network(&session,feedback,&watts,voltage,&voltage_valid));assert(!voltage_valid);
     near(feedback[0],8.1f);near(feedback[1],12.345f);near(feedback[2],65);near(watts,10937.6f);
     settings.charge_phases=1;
-    assert(read_wallbox_network(feedback,&watts));
+    assert(read_wallbox_network(&session,feedback,&watts,voltage,&voltage_valid));
     near(feedback[0],8.1f);near(feedback[1],12.345f);near(feedback[2],65);near(watts,10937.6f);
     assert(wallbox_inactive_phase_current(&settings,feedback));
-    corrupt=7;assert(!read_wallbox_network(feedback,&watts));near(watts,10937.6f);
+    corrupt=7;assert(!read_wallbox_network(&session,feedback,&watts,voltage,&voltage_valid));near(watts,10937.6f);
     corrupt=0;wifi_online=false;int previous_connects=connects;
-    assert(!read_wallbox_network(feedback,&watts));assert(connects==previous_connects);
+    assert(!read_wallbox_network(&session,feedback,&watts,voltage,&voltage_valid));assert(connects==previous_connects);
     assert(connects==closes);
     puts("PASS: EM24 word order, import/export, overflow, MBAP identity, shared timeout, 3-phase guard and conditional GPIO5 reservation");
     return 0;

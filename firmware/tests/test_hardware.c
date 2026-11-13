@@ -24,7 +24,7 @@ int main(void) {
     s.external_mode_input_enabled=true;assert(!settings_shell_pin_available(&s,6,true));
     s.evu_input_enabled=true;assert(!settings_shell_pin_available(&s,7,true));
     s.relay_board_enabled=true;assert(!settings_shell_pin_available(&s,12,true)&&settings_shell_pin_available(&s,14,false));
-    s.phase_switch_enabled=true;s.relay1_mode=3;assert(!settings_shell_pin_available(&s,13,true));
+    s.phase_switch_enabled=true;s.relay1_mode=3;assert(settings_shell_pin_available(&s,13,true));
     s.phase_feedback_enabled=false;assert(settings_shell_pin_available(&s,13,true));
     s.phase_feedback_enabled=true;
     strcpy(s.house_meter_type,"sdm630");assert(!settings_shell_pin_available(&s,43,true)&&!settings_shell_pin_available(&s,44,false));
@@ -37,7 +37,7 @@ int main(void) {
     s.relay_board_enabled=true;s.relay_active_low=true;assert(settings_valid(&s));
     s.relay2_pin=11;assert(settings_valid(&s));s.relay2_pin=14;
     s.phase_switch_enabled=true;assert(!settings_valid(&s));s.relay1_mode=3;assert(settings_valid(&s));
-    s.relay1_pin=13;assert(!settings_valid(&s));s.relay1_pin=12;
+    s.relay1_pin=13;assert(settings_valid(&s));s.relay1_pin=12;
     s.evu_input_enabled=true;s.evu_input_pin=12;assert(!settings_valid(&s));s.evu_input_pin=7;
     s.vehicle_soc_enabled=s.pv_display_enabled=true;s.mqtt_enabled=false;assert(!settings_valid(&s));s.vehicle_soc_enabled=s.pv_display_enabled=false;assert(settings_valid(&s));
     assert(relay_output_level(true,false)==1 && relay_output_level(true,true)==0);
@@ -60,15 +60,13 @@ int main(void) {
     assert(!settings_apply_live(&runtime,&s,&next));
     next=s;next.mqtt_enabled=false;assert(!settings_apply_live(&runtime,&s,&next));
     next=s;next.expert_mode=!s.expert_mode;assert(settings_apply_live(&runtime,&s,&next));
-    next=s;next.phase_feedback_enabled=false;assert(!settings_apply_live(&runtime,&s,&next));
+    next=s;next.phase_feedback_source=1;assert(!settings_apply_live(&runtime,&s,&next));
     assert(phase_feedback_matches(true,1,1));assert(!phase_feedback_matches(true,3,1));
     assert(phase_feedback_matches(false,0,1));assert(phase_feedback_matches(false,0,3));
     assert(!phase_feedback_matches(false,0,2));
     assert(!phase_motion_complete(false,0,1,1999));assert(phase_motion_complete(false,0,1,2000));
     assert(!phase_motion_complete(false,0,1,-1));assert(!phase_motion_complete(true,3,1,4000));
     assert(phase_motion_complete(true,1,1,0));
-    assert(phase_feedback_position(true,true)==1 && phase_feedback_position(false,true)==3);
-    assert(phase_feedback_position(true,false)==3 && phase_feedback_position(false,false)==1);
     float reset_idle[]={.1f,.1f,.1f};
     assert(phase_fault_reset_allowed(true,true,true,3,false,true,reset_idle));
     assert(!phase_fault_reset_allowed(false,true,true,3,false,true,reset_idle));
@@ -81,7 +79,7 @@ int main(void) {
     settings_t old;settings_defaults(&old);old.version=21;old.phase_feedback_enabled=false;
     size_t prefix=offsetof(settings_t,phase_feedback_enabled),length=(prefix+3)&~(size_t)3;
     unsigned char blob[sizeof(old)];memcpy(blob,&old,sizeof(old));memset(blob+prefix,0xff,length-prefix);
-    assert(settings_decode(blob,length,&out));assert(out.phase_feedback_enabled);
+    assert(settings_decode(blob,length,&out));assert(!out.phase_feedback_enabled&&out.phase_feedback_pin==-1);
     old.version=22;prefix=offsetof(settings_t,phase_feedback_closed_is_single);length=(prefix+3)&~(size_t)3;
     memcpy(blob,&old,sizeof(old));memset(blob+prefix,0xff,length-prefix);
     assert(settings_decode(blob,length,&out));assert(!out.phase_feedback_closed_is_single);

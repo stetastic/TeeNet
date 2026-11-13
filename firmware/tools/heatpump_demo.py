@@ -25,11 +25,11 @@ def install_heatpump_demo(destination):
     script = re.search(r'<script defer src="/dashboard\.js[^" ]*"></script>', html)
     assert script, 'Dashboard script missing'
     assets = ('heatpump-demo-api.js', 'heatpump-demo-energy.js', 'heatpump-demo-ui.js',
-              'energy-total-demo-ui.js', 'consumer-details-demo.js')
+              'energy-total-demo-ui.js')
     html = html[:script.start()] + ''.join(f'<script defer src="/{name}"></script>' for name in assets) + html[script.start():]
-    html = html.replace('</head>', '<link rel="stylesheet" href="/heatpump-demo.css"><link rel="stylesheet" href="/energy-total-demo.css"><link rel="stylesheet" href="/consumer-details-demo.css"></head>', 1)
+    html = html.replace('</head>', '<link rel="stylesheet" href="/heatpump-demo.css"><link rel="stylesheet" href="/energy-total-demo.css"></head>', 1)
     index.write_text(html, encoding='utf-8')
-    for name in (*assets, 'heatpump-demo.css', 'energy-total-demo.css', 'consumer-details-demo.css'):
+    for name in (*assets, 'heatpump-demo.css', 'energy-total-demo.css'):
         shutil.copy2(TOOLS / name, destination / name)
     for name in ('guide.html', 'help.html'):
         page = destination / name

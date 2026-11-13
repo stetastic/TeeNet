@@ -44,10 +44,8 @@ static void load_settings(void) {
     settings.wallbox_address=1;
     settings.house_xemex_coils=3;
     settings.reserved_http_meter_enabled=false;
-    /* Repeated vehicle tests established 6.0 kW as the reliable three-phase
-       floor. Normalize earlier 8.0/8.8 A commissioning values accordingly. */
-    if(settings.min_charge_a>=8.0f && settings.min_charge_a<=8.81f)
-        settings.min_charge_a=8.7f;
+    /* The authenticated expert loader applies the saved current floor.
+       Do not overwrite an explicitly commissioned value with an older floor. */
     if(settings.manual_current_a>0 && settings.manual_current_a<settings.min_charge_a)
         settings.manual_current_a=settings.min_charge_a;
     settings.reserved_http_meter_host[0]=0;

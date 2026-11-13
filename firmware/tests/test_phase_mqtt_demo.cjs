@@ -20,7 +20,7 @@ function demo(store){
  assert.equal((await expert({...yes,true_three_phase:'true'})).status,400);
  assert.equal((await expert({...yes,topic:'wallbox-ems/command/phases'})).status,400,'Own inbound topics cannot become a switch output');
  assert.equal((await d.post('/api/config',{phase_mqtt_output_enabled:true})).status,403,'Ordinary config cannot bypass warnings/password');
- assert.equal((await d.post('/api/config',{phase_mqtt_true_three_phase:true})).status,403);
+ assert.equal((await d.post('/api/config',{phase_mqtt_true_three_phase:true})).status,200,'Polarity uses the ordinary stopped-settings save');
  response=await expert(yes);assert.equal(response.status,200,await response.clone().text());
  let activation=await response.json();assert(activation.reboot_required&&activation.restart_needed,'Setup can be stored while another restart is pending');
  assert.equal((await d.read('/api/config')).phase_actuator_type,2);assert.equal((await d.read('/api/status')).phase_mqtt_allowed,false,'Saved setup activates only after reboot');await d.post('/api/reboot',{});

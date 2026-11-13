@@ -1,0 +1,610 @@
+[
+  {
+    "name": "SH10RS",
+    "profile": 0
+  },
+  {
+    "name": "SH10RT",
+    "profile": 0
+  },
+  {
+    "name": "SH10RT-20",
+    "profile": 0
+  },
+  {
+    "name": "SH10RT-V112",
+    "profile": 0
+  },
+  {
+    "name": "SH10RT-V122",
+    "profile": 0
+  },
+  {
+    "name": "SH10T",
+    "profile": 0
+  },
+  {
+    "name": "SH12T",
+    "profile": 0
+  },
+  {
+    "name": "SH15T",
+    "profile": 0
+  },
+  {
+    "name": "SH20T",
+    "profile": 0
+  },
+  {
+    "name": "SH25T",
+    "profile": 0
+  },
+  {
+    "name": "SH3.0RS",
+    "profile": 0
+  },
+  {
+    "name": "SH3.6RS",
+    "profile": 0
+  },
+  {
+    "name": "SH4.0RS",
+    "profile": 0
+  },
+  {
+    "name": "SH5.0RS",
+    "profile": 0
+  },
+  {
+    "name": "SH5.0RT",
+    "profile": 0
+  },
+  {
+    "name": "SH5.0RT-20",
+    "profile": 0
+  },
+  {
+    "name": "SH5.0RT-V112",
+    "profile": 0
+  },
+  {
+    "name": "SH5.0RT-V122",
+    "profile": 0
+  },
+  {
+    "name": "SH5T",
+    "profile": 0
+  },
+  {
+    "name": "SH6.0RS",
+    "profile": 0
+  },
+  {
+    "name": "SH6.0RT",
+    "profile": 0
+  },
+  {
+    "name": "SH6.0RT-20",
+    "profile": 0
+  },
+  {
+    "name": "SH6.0RT-V112",
+    "profile": 0
+  },
+  {
+    "name": "SH6.0RT-V122",
+    "profile": 0
+  },
+  {
+    "name": "SH6T",
+    "profile": 0
+  },
+  {
+    "name": "SH8.0RS",
+    "profile": 0
+  },
+  {
+    "name": "SH8.0RT",
+    "profile": 0
+  },
+  {
+    "name": "SH8.0RT-20",
+    "profile": 0
+  },
+  {
+    "name": "SH8.0RT-V112",
+    "profile": 0
+  },
+  {
+    "name": "SH8.0RT-V122",
+    "profile": 0
+  },
+  {
+    "name": "SH8T",
+    "profile": 0
+  },
+  {
+    "name": "SG0.7RS-S",
+    "profile": 1
+  },
+  {
+    "name": "SG1.0RS-S",
+    "profile": 1
+  },
+  {
+    "name": "SG1.5RS-S",
+    "profile": 1
+  },
+  {
+    "name": "SG100CX",
+    "profile": 1
+  },
+  {
+    "name": "SG100CX-JP",
+    "profile": 1
+  },
+  {
+    "name": "SG10KTL",
+    "profile": 1
+  },
+  {
+    "name": "SG10KTL-M",
+    "profile": 2
+  },
+  {
+    "name": "SG10KTL-MT",
+    "profile": 2
+  },
+  {
+    "name": "SG10RS",
+    "profile": 1
+  },
+  {
+    "name": "SG10RT",
+    "profile": 1
+  },
+  {
+    "name": "SG10RT-P2",
+    "profile": 1
+  },
+  {
+    "name": "SG110CX",
+    "profile": 1
+  },
+  {
+    "name": "SG110CX-P2",
+    "profile": 1
+  },
+  {
+    "name": "SG110HV-M",
+    "profile": 1
+  },
+  {
+    "name": "SG111HV",
+    "profile": 1
+  },
+  {
+    "name": "SG11RT",
+    "profile": 1
+  },
+  {
+    "name": "SG125CX-P2",
+    "profile": 1
+  },
+  {
+    "name": "SG125HV",
+    "profile": 1
+  },
+  {
+    "name": "SG125HV-20",
+    "profile": 1
+  },
+  {
+    "name": "SG125HX",
+    "profile": 1
+  },
+  {
+    "name": "SG125HX-JP",
+    "profile": 1
+  },
+  {
+    "name": "SG12KTL",
+    "profile": 1
+  },
+  {
+    "name": "SG12KTL-M",
+    "profile": 2
+  },
+  {
+    "name": "SG12RT",
+    "profile": 1
+  },
+  {
+    "name": "SG12RT-P2",
+    "profile": 1
+  },
+  {
+    "name": "SG136TX",
+    "profile": 1
+  },
+  {
+    "name": "SG15KTL",
+    "profile": 1
+  },
+  {
+    "name": "SG15KTL-M",
+    "profile": 2
+  },
+  {
+    "name": "SG15RT",
+    "profile": 1
+  },
+  {
+    "name": "SG15RT-P2",
+    "profile": 1
+  },
+  {
+    "name": "SG17KTL-M",
+    "profile": 2
+  },
+  {
+    "name": "SG17RT",
+    "profile": 1
+  },
+  {
+    "name": "SG17RT-P2",
+    "profile": 1
+  },
+  {
+    "name": "SG2.0RS-S",
+    "profile": 1
+  },
+  {
+    "name": "SG2.5RS-S",
+    "profile": 1
+  },
+  {
+    "name": "SG20KTL",
+    "profile": 1
+  },
+  {
+    "name": "SG20KTL-M",
+    "profile": 2
+  },
+  {
+    "name": "SG20RT",
+    "profile": 1
+  },
+  {
+    "name": "SG20RT-P2",
+    "profile": 1
+  },
+  {
+    "name": "SG225HX",
+    "profile": 1
+  },
+  {
+    "name": "SG22RT",
+    "profile": 1
+  },
+  {
+    "name": "SG23RT",
+    "profile": 1
+  },
+  {
+    "name": "SG23RT-P2",
+    "profile": 1
+  },
+  {
+    "name": "SG250HX",
+    "profile": 1
+  },
+  {
+    "name": "SG250HX-IN",
+    "profile": 1
+  },
+  {
+    "name": "SG250HX-IN-20",
+    "profile": 1
+  },
+  {
+    "name": "SG250HX-US",
+    "profile": 1
+  },
+  {
+    "name": "SG25CX-P2",
+    "profile": 1
+  },
+  {
+    "name": "SG25CX-SA",
+    "profile": 1
+  },
+  {
+    "name": "SG25RT",
+    "profile": 1
+  },
+  {
+    "name": "SG25RT-P2",
+    "profile": 1
+  },
+  {
+    "name": "SG285HX",
+    "profile": 1
+  },
+  {
+    "name": "SG3.0RS",
+    "profile": 1
+  },
+  {
+    "name": "SG3.0RS-S",
+    "profile": 1
+  },
+  {
+    "name": "SG3.0RT",
+    "profile": 1
+  },
+  {
+    "name": "SG3.0RT-P2",
+    "profile": 1
+  },
+  {
+    "name": "SG3.6RS",
+    "profile": 1
+  },
+  {
+    "name": "SG30CX",
+    "profile": 1
+  },
+  {
+    "name": "SG30CX-P2",
+    "profile": 1
+  },
+  {
+    "name": "SG30KTL",
+    "profile": 1
+  },
+  {
+    "name": "SG30KTL-M",
+    "profile": 1
+  },
+  {
+    "name": "SG30KU",
+    "profile": 1
+  },
+  {
+    "name": "SG320HX",
+    "profile": 1
+  },
+  {
+    "name": "SG333HX",
+    "profile": 1
+  },
+  {
+    "name": "SG33CX",
+    "profile": 1
+  },
+  {
+    "name": "SG33CX-P2",
+    "profile": 1
+  },
+  {
+    "name": "SG33K3J",
+    "profile": 1
+  },
+  {
+    "name": "SG33KTL-M",
+    "profile": 1
+  },
+  {
+    "name": "SG34KJ",
+    "profile": 1
+  },
+  {
+    "name": "SG350HX",
+    "profile": 1
+  },
+  {
+    "name": "SG350HX-US",
+    "profile": 1
+  },
+  {
+    "name": "SG36CX-P2",
+    "profile": 1
+  },
+  {
+    "name": "SG36CX-US",
+    "profile": 1
+  },
+  {
+    "name": "SG36KTL",
+    "profile": 1
+  },
+  {
+    "name": "SG36KTL-M",
+    "profile": 1
+  },
+  {
+    "name": "SG36KU",
+    "profile": 1
+  },
+  {
+    "name": "SG4.0RS",
+    "profile": 1
+  },
+  {
+    "name": "SG4.0RT",
+    "profile": 1
+  },
+  {
+    "name": "SG4.0RT-P2",
+    "profile": 1
+  },
+  {
+    "name": "SG40CX",
+    "profile": 1
+  },
+  {
+    "name": "SG40CX-P2",
+    "profile": 1
+  },
+  {
+    "name": "SG40KTL",
+    "profile": 1
+  },
+  {
+    "name": "SG40KTL-M",
+    "profile": 1
+  },
+  {
+    "name": "SG49.5CX-JP",
+    "profile": 1
+  },
+  {
+    "name": "SG49K5J",
+    "profile": 1
+  },
+  {
+    "name": "SG5.0RS",
+    "profile": 1
+  },
+  {
+    "name": "SG5.0RS-ADA",
+    "profile": 1
+  },
+  {
+    "name": "SG5.0RT",
+    "profile": 1
+  },
+  {
+    "name": "SG5.0RT-P2",
+    "profile": 1
+  },
+  {
+    "name": "SG5.5RS-JP",
+    "profile": 1
+  },
+  {
+    "name": "SG50CX",
+    "profile": 1
+  },
+  {
+    "name": "SG50CX-P2",
+    "profile": 1
+  },
+  {
+    "name": "SG50KTL",
+    "profile": 1
+  },
+  {
+    "name": "SG50KTL-M",
+    "profile": 1
+  },
+  {
+    "name": "SG50KTL-M-20",
+    "profile": 1
+  },
+  {
+    "name": "SG5KTL-MT",
+    "profile": 2
+  },
+  {
+    "name": "SG6.0RS",
+    "profile": 1
+  },
+  {
+    "name": "SG6.0RT",
+    "profile": 1
+  },
+  {
+    "name": "SG6.0RT-P2",
+    "profile": 1
+  },
+  {
+    "name": "SG60CX-US",
+    "profile": 1
+  },
+  {
+    "name": "SG60KTL",
+    "profile": 1
+  },
+  {
+    "name": "SG60KTL-M",
+    "profile": 1
+  },
+  {
+    "name": "SG60KU",
+    "profile": 1
+  },
+  {
+    "name": "SG60KU-M",
+    "profile": 1
+  },
+  {
+    "name": "SG6KTL-MT",
+    "profile": 2
+  },
+  {
+    "name": "SG7.0RT",
+    "profile": 1
+  },
+  {
+    "name": "SG7.0RT-P2",
+    "profile": 1
+  },
+  {
+    "name": "SG75CX",
+    "profile": 1
+  },
+  {
+    "name": "SG75CX-P2",
+    "profile": 1
+  },
+  {
+    "name": "SG8.0RS",
+    "profile": 1
+  },
+  {
+    "name": "SG8.0RT",
+    "profile": 1
+  },
+  {
+    "name": "SG8.0RT-P2",
+    "profile": 1
+  },
+  {
+    "name": "SG80BF",
+    "profile": 1
+  },
+  {
+    "name": "SG80HV",
+    "profile": 1
+  },
+  {
+    "name": "SG80KTL",
+    "profile": 1
+  },
+  {
+    "name": "SG80KTL-20",
+    "profile": 1
+  },
+  {
+    "name": "SG80KTL-M",
+    "profile": 1
+  },
+  {
+    "name": "SG85BF",
+    "profile": 1
+  },
+  {
+    "name": "SG8KTL-M",
+    "profile": 2
+  },
+  {
+    "name": "SG9.0RS",
+    "profile": 1
+  },
+  {
+    "name": "iHomeManager",
+    "profile": 3
+  }
+]

@@ -6,5 +6,14 @@ config TEE_BOARD_N16R8
     bool "ESP32-S3 N16R8"
 
 config TEE_BOARD_ATOMS3_LITE
-    bool "Andreas Testboard (M5Stack AtomS3 Lite)"
+    bool "M5Stack AtomS3 Lite + Tail485 (preferred)"
 endchoice
+
+config TEE_HTTP_CONTROL_TRIAL
+    bool "Private HTTP pilot control trial (volatile opt-in, reference interlocks retained)"
+    default n
+    help
+        Separate local trial. The Shelly current is excluded from the manual
+        regulator, but retained as independent phase-zero and safety evidence.
+        Arm explicitly through the authenticated trial API; expires without
+        heartbeat. Never resumes after reboot. Not a released standalone mode.

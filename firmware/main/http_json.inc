@@ -7,8 +7,8 @@ static cJSON *http_json_error(httpd_req_t *req,httpd_err_code_t code,const char 
     if(fd>=0)shutdown(fd,SHUT_RDWR); /* EOF lets the owner remove this session. */
     return NULL;
 }
-static cJSON *read_json(httpd_req_t *req){
-    if(req->content_len<=0||req->content_len>8192)
+static cJSON *read_json_limit(httpd_req_t *req,size_t limit){
+    if(req->content_len<=0||(size_t)req->content_len>limit)
         return http_json_error(req,HTTPD_400_BAD_REQUEST,"Anfrage zu gross oder leer.");
     char *body=malloc(req->content_len+1);
     if(!body)return http_json_error(req,HTTPD_500_INTERNAL_SERVER_ERROR,"Out of memory");
@@ -30,3 +30,4 @@ static cJSON *read_json(httpd_req_t *req){
     if(!valid){cJSON_Delete(object);return http_json_error(req,HTTPD_400_BAD_REQUEST,"Ungueltiges JSON.");}
     return object;
 }
+static cJSON *read_json(httpd_req_t *req){return read_json_limit(req,8192);}

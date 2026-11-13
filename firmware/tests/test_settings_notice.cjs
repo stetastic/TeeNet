@@ -7,7 +7,7 @@ const secret={name:'mqtt_password',type:'password',value:'',dataset:{},hasAttrib
 const nodes={'config-form':{elements:[price,secret],addEventListener(){}},'clear-wifi-password':{checked:false},'opendtu-enabled':{checked:false}};
 nodes['config-form'].elements.phase_actuator_type={value:'0'};nodes['phase-shelly-auth']={value:'0'};
 for(const id of ['functions-unsaved','settings-notice-title','settings-notice-icon','settings-notice-text','settings-notice-save','settings-notice-restart-actions'])nodes[id]={hidden:true,textContent:'',dataset:{}};
-const c={Array,Math,Number,configBaseline:{price_kwh:.25,mqtt_input_source:0},initialized:true,settingsRebootPending:false,settingsRebootDeferred:false,$:id=>nodes[id]};
+const c={window:{},Array,Math,Number,configBaseline:{price_kwh:.25,mqtt_input_source:0},initialized:true,settingsRebootPending:false,settingsRebootDeferred:false,$:id=>nodes[id]};
 vm.createContext(c);vm.runInContext(code,c);
 const update=()=>c.updateUnsavedFunctions();
 update();assert.equal(nodes['functions-unsaved'].hidden,true);

@@ -12,15 +12,15 @@ async function configuredDemo(){
   await d.post('/api/control',{mode:'pv',enabled:true});return d;
 }
 (async()=>{
-  const fresh=demo(),freshConfig=await fresh.read('/api/config');assert.equal(freshConfig.basic_mode,true);
-  for(const key of ['evcc_feature_enabled','pv_allocation_enabled','zero_feed_enabled','battery_protect','vehicle_soc_enabled','pv_display_enabled','charge_plan_enabled','external_mode_input_enabled','evu_input_enabled','grid_guard_enabled','phase_switch_enabled','relay_board_enabled','huawei_enabled','huawei_battery','huawei_pv'])assert(!freshConfig[key],key+' starts disabled');
-  assert.equal((await fresh.read('/api/status')).enabled,false);
+  const fresh=demo(),freshConfig=await fresh.read('/api/config');assert.equal(freshConfig.basic_mode,false);
+  for(const key of ['zero_feed_enabled','battery_protect','vehicle_soc_enabled','pv_display_enabled','charge_plan_enabled'])assert.equal(freshConfig[key],true,key+' showcased in demo only');
+  for(const key of ['evcc_feature_enabled','pv_allocation_enabled','external_mode_input_enabled','evu_input_enabled','grid_guard_enabled','phase_switch_enabled','relay_board_enabled','huawei_enabled','huawei_battery','huawei_pv'])assert(!freshConfig[key],key+' remains off');
+  await fresh.post('/api/config',{basic_mode:true});
+  assert.equal((await fresh.read('/api/config')).vehicle_soc_enabled,false);
   assert.equal((await fresh.post('/api/config',{basic_mode:false})).reboot_required,false);
-  assert.equal((await fresh.read('/api/config')).vehicle_soc_enabled,false,'opening extra functions must not select them');
-  assert.equal((await fresh.read('/api/config')).pv_display_enabled,false,'opening extra functions must not enable the PV display');
+  for(const key of ['vehicle_soc_enabled','pv_display_enabled'])assert.equal((await fresh.read('/api/config'))[key],false,'explicit basic mode does not reactivate '+key);
   await fresh.post('/api/reboot',{});
-  for(const key of ['vehicle_soc_enabled','pv_display_enabled'])assert.equal((await fresh.read('/api/config'))[key],false,key+' stays off after first setup and reboot');
-  for(const change of [{wifi_ssid:'Another demo network'},{wifi_password:'demo-only-password'},{mqtt_uri:'mqtt://another.demo:1883'},{mqtt_password:'demo-only-password'},{meter_baud:19200},{relay_board_enabled:true},{evu_input_enabled:true},{shell_rs485_interface:1,shell_rs485_host:'192.0.2.20:8899'},{mqtt_input_source:2}]){
+  for(const change of [{shell_http_control_enabled:true},{wifi_ssid:'Another demo network'},{wifi_password:'demo-only-password'},{mqtt_uri:'mqtt://another.demo:1883'},{mqtt_password:'demo-only-password'},{meter_baud:19200},{relay_board_enabled:true},{evu_input_enabled:true},{shell_rs485_interface:1,shell_rs485_host:'192.0.2.20:8899'},{mqtt_input_source:2}]){
     const d=await configuredDemo();assert.equal((await d.post('/api/config',change)).reboot_required,true);
     const status=await d.read('/api/status');assert.equal(status.reboot_required,true);assert.equal(status.enabled,false);
     const live=await d.post('/api/config',{price_kwh:.3});assert.equal(live.reboot_required,true);assert.equal(live.restart_needed,false);assert.equal(live.applied,true);

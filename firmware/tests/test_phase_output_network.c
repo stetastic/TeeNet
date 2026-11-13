@@ -41,9 +41,6 @@ int main(void){
     unsigned count=http_calls;http_code=401;assert(!phase_output_direct_read(2,host,0,&on)&&http_calls==count+1);http_code=200;
     unsafe=true;count=http_calls;assert(!phase_output_direct_read(2,host,0,&on)&&http_calls==count+1);unsafe=false;
     assert(writes==5&&closes==5);
-    assert(phase_output_input(host,0,&on)&&sent[7]==2&&sent[9]==100);
-    assert(phase_output_input(host,1,&on)&&sent[7]==2&&sent[9]==110);
-    assert(!phase_output_input(host,2,&on));
     unsigned calls=http_calls;assert(!phase_output_direct_read_auth(3,host,0,"",&on)&&http_calls==calls);
     expected_password="synthetic-secret";
     assert(phase_output_direct_read_auth(3,host,0,expected_password,&on));

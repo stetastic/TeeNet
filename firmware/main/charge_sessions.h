@@ -5,6 +5,7 @@
 
 #define CHARGE_SESSION_CAPACITY 512
 #define SESSION_PAUSE_MS 300000
+#define SESSION_MIN_WH 1000.0
 #define SESSION_INTERRUPTED 1u
 #define SESSION_METER_GAP 2u
 #define SESSION_CLOCK_GAP 4u
@@ -26,6 +27,10 @@ typedef struct {
     double previous_w,previous_grid,grid_wh,solar_wh,unknown_wh,cost,grid_cost,solar_cost;
     float grid_price,solar_price;
     bool initialized,checkpoint;
+    bool metered;
+    double pending_grid,pending_solar,pending_grid_cost,pending_solar_cost;
+    charge_session_t pending_session;
+    bool pending_active;
 } sessions_t;
 
 void sessions_init(sessions_t *s);
@@ -36,3 +41,6 @@ void sessions_step(sessions_t *s,int64_t now,int64_t epoch,uint32_t date,
 const charge_session_t *sessions_recent(const session_store_t *s,unsigned index);
 bool session_matches(const charge_session_t *s,uint32_t period);
 bool session_period_parse(const char *text,uint32_t *period);
+bool session_recorded(const charge_session_t *row);
+void sessions_meter_mode(sessions_t *s,bool enabled,bool new_session);
+void sessions_add_metered(sessions_t *s,int64_t now,int64_t epoch,uint32_t date,double wh,bool gap);

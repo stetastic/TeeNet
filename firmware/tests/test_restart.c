@@ -21,7 +21,7 @@ static const change_t changes[]={
     FIELD(fixed_charge_phases,'u',true),FIELD(relay_board_enabled,'b',true),FIELD(relay_active_low,'b',true),
     FIELD(relay1_mode,'u',true),FIELD(phase_switch_enabled,'b',true),FIELD(phase_feedback_enabled,'b',true),
     FIELD(phase_feedback_closed_is_single,'b',true),FIELD(external_mode_input_enabled,'b',true),FIELD(evu_input_enabled,'b',true),
-    FIELD(price_kwh,'f',false),FIELD(solar_price_kwh,'f',false),FIELD(basic_mode,'b',false),
+    FIELD(shell_http_control_enabled,'b',true),FIELD(price_kwh,'f',false),FIELD(solar_price_kwh,'f',false),FIELD(basic_mode,'b',false),
     FIELD(zero_feed_enabled,'b',false),FIELD(zero_reserve_w,'f',false),FIELD(grid_guard_enabled,'b',false),
     FIELD(grid_limit_a,'f',false),FIELD(max_charge_a,'f',false),FIELD(evu_limit_a,'f',false),
     FIELD(shell_limits_auto,'b',false),FIELD(shell_setup_host,'s',false),
@@ -56,6 +56,7 @@ int main(void){
     runtime.manual_current_a=12;next.price_kwh=.3f;
     assert(settings_apply_live(&runtime,&stored,&next));
     assert(runtime.max_charge_a==12 && runtime.grid_limit_a==35 && runtime.manual_current_a==12);
+    next=stored;next.vehicle_fixed_profile=2;assert(settings_apply_live(&runtime,&stored,&next)&&runtime.vehicle_fixed_profile==2);
     next=stored;next.max_charge_a=10;
     assert(settings_apply_live(&runtime,&stored,&next));assert(runtime.manual_current_a==10);
     stored.mqtt_input_source=2;runtime=stored;next=stored;

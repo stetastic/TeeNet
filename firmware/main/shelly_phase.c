@@ -65,61 +65,48 @@ bool shelly_phase_identity(const char *json,shelly_phase_identity_t *out){
     }
     cJSON_Delete(root);return ok;
 }
-bool shelly_phase_feedback_for(const char *json,shelly_phase_feedback_t *out,unsigned count,bool closed_is_single){
-    if(!json||!out||count<1||count>2)return false;
+bool shelly_phase_feedback(const char *json,shelly_phase_feedback_t *out){
+    if(!json||!out)return false;
     cJSON *root=cJSON_ParseWithOpts(json,NULL,true);shelly_phase_feedback_t next={0};
-    const cJSON *sw=item(root,"switch:0"),*no=item(root,"input:0"),*nc=item(root,"input:1"),*sys=item(root,"sys");
-    const cJSON *up=item(sys,"uptime");
-    bool ok=cJSON_IsObject(root)&&component_id(sw,0)&&component_id(no,0)&&
-        boolean(sw,"output",&next.output)&&boolean(no,"state",&next.no_closed)&&
-        (count==1||(component_id(nc,1)&&boolean(nc,"state",&next.nc_closed)&&no_errors(nc)))&&
-        cJSON_IsNumber(up)&&isfinite(up->valuedouble)&&up->valuedouble>=0&&up->valuedouble<=UINT32_MAX&&floor(up->valuedouble)==up->valuedouble&&
-        no_errors(sw)&&no_errors(no);
-    if(ok){
-        next.phases=phase_feedback_contacts(next.no_closed,next.nc_closed,count,closed_is_single);
-        next.uptime=(uint32_t)up->valuedouble;next.has_uptime=true;*out=next;
-    }
+    const cJSON *sw=item(root,"switch:0"),*sys=item(root,"sys"),*up=item(sys,"uptime");
+    bool ok=cJSON_IsObject(root)&&component_id(sw,0)&&boolean(sw,"output",&next.output)&&no_errors(sw)&&
+        cJSON_IsNumber(up)&&isfinite(up->valuedouble)&&up->valuedouble>=0&&up->valuedouble<=UINT32_MAX&&floor(up->valuedouble)==up->valuedouble;
+    if(ok){next.uptime=(uint32_t)up->valuedouble;next.has_uptime=true;*out=next;}
     cJSON_Delete(root);return ok;
 }
-bool shelly_phase_feedback(const char *json,shelly_phase_feedback_t *out){return shelly_phase_feedback_for(json,out,2,false);}
-bool shelly_phase_config_for(const char *json,unsigned count,bool pulse){
-    if(!json||count<1||count>2||(pulse&&count!=2))return false;
+bool shelly_phase_config(const char *json){
+    if(!json)return false;
     cJSON *root=cJSON_ParseWithOpts(json,NULL,true);
-    const cJSON *sw=item(root,"switch:0"),*no=item(root,"input:0"),*nc=item(root,"input:1");
-    const cJSON *mode=item(sw,"in_mode"),*initial=item(sw,"initial_state"),*delay=item(sw,"auto_off_delay");
-    bool on=false,off=false,enabled=false,inverted=false;
-    bool ok=component_id(sw,0)&&component_id(no,0)&&(count==1||component_id(nc,1))&&
-        cJSON_IsString(mode)&&!strcmp(mode->valuestring,"detached")&&
+    const cJSON *sw=item(root,"switch:0"),*mode=item(sw,"in_mode"),*initial=item(sw,"initial_state");
+    bool on=false,off=false;
+    bool ok=component_id(sw,0)&&cJSON_IsString(mode)&&!strcmp(mode->valuestring,"detached")&&
         cJSON_IsString(initial)&&!strcmp(initial->valuestring,"off")&&
-        boolean(sw,"auto_on",&on)&&!on&&boolean(sw,"auto_off",&off)&&off==pulse&&
-        (!pulse||(cJSON_IsNumber(delay)&&delay->valuedouble>=0.5&&delay->valuedouble<=1.0));
-    const cJSON *inputs[]={no,nc};
-    for(unsigned i=0;i<count&&ok;i++){
-        const cJSON *type=item(inputs[i],"type");
-        ok=boolean(inputs[i],"enable",&enabled)&&enabled&&boolean(inputs[i],"invert",&inverted)&&!inverted&&
-            cJSON_IsString(type)&&!strcmp(type->valuestring,"switch");
-    }
+        boolean(sw,"auto_on",&on)&&!on&&boolean(sw,"auto_off",&off)&&!off;
     cJSON_Delete(root);return ok;
 }
-bool shelly_phase_safe_config(const char *json){return shelly_phase_config_for(json,2,true);}
+bool shelly_phase_voltage_json(const char *json,bool legacy,float logical[3]){
+    if(!json||!logical)return false;
+    cJSON *root=cJSON_ParseWithOpts(json,NULL,true);float channels[3]={0};bool ok=cJSON_IsObject(root);
+    const cJSON *meters=item(root,"emeters");
+    const char *keys[]={"a_voltage","b_voltage","c_voltage"};
+    if(legacy)ok=ok&&cJSON_IsArray(meters)&&cJSON_GetArraySize(meters)==3;
+    const cJSON *errors=item(root,"errors");
+    if(errors&&(!cJSON_IsArray(errors)||cJSON_GetArraySize(errors)))ok=false;
+    for(unsigned i=0;i<3&&ok;i++){
+        const cJSON *meter=legacy?cJSON_GetArrayItem(meters,i):root;
+        const cJSON *v=item(meter,legacy?"voltage":keys[i]),*valid=item(meter,"is_valid");
+        ok=cJSON_IsNumber(v)&&isfinite(v->valuedouble)&&v->valuedouble>=0&&v->valuedouble<=300&&(!valid||cJSON_IsTrue(valid));
+        if(ok)channels[i]=(float)v->valuedouble;
+    }
+    if(ok)for(unsigned i=0;i<3;i++)logical[i]=channels[2-i]; /* C=L1, B=L2, A=L3. */
+    cJSON_Delete(root);return ok;
+}
 bool shelly_phase_endpoint_valid(const char *value,size_t capacity){
     if(!value||!memchr(value,0,capacity)||!value[0])return false;
     /* A host only: reject schemes, ports, credentials, paths and query injection. */
     if(value[0]=='-'||value[0]=='.')return false;
     for(const unsigned char *p=(const unsigned char *)value;*p;p++)if(!isalnum(*p)&&*p!='.'&&*p!='-')return false;
     return true;
-}
-bool shelly_phase_pulse_path(char *out,size_t capacity){
-    if(!out)return false;
-    int length=snprintf(out,capacity,"/rpc/Switch.Set?id=0&on=true&toggle_after=0.5");
-    return length>0&&(size_t)length<capacity;
-}
-bool shelly_phase_pulse_ack(const char *json){
-    if(!json)return false;
-    cJSON *root=cJSON_ParseWithOpts(json,NULL,true);
-    bool previous=true;
-    bool ok=cJSON_IsObject(root)&&boolean(root,"was_on",&previous)&&!previous;
-    cJSON_Delete(root);return ok;
 }
 bool shelly_output_config(const char *json,unsigned id){
     cJSON *root=cJSON_ParseWithOpts(json,NULL,true);

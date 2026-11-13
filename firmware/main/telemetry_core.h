@@ -2,9 +2,31 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
+#include <math.h>
+#include <stddef.h>
 
 #define TELEMETRY_REVISION "2026-10-16.1"
 #define TELEMETRY_INTERVAL_MS 300000LL
+/* TLS uses internal RAM (16 KiB receive + 4 KiB send buffers, certificates,
+   handshake and network allocations). Optional traffic must leave headroom
+   for control and measurements; PSRAM does not satisfy this reserve. */
+#define TELEMETRY_MIN_INTERNAL_FREE (96u*1024u)
+#define TELEMETRY_MIN_INTERNAL_BLOCK (32u*1024u)
+typedef struct {
+    bool charging_requested,phase_busy,test_active,current_fresh;
+    bool shell_configured,shell_known,session_present;
+    char vehicle_state;
+    float current_a[3];
+    size_t internal_free,internal_largest;
+} telemetry_runtime_t;
+static inline bool telemetry_runtime_ready(const telemetry_runtime_t *r){
+    if(!r||r->charging_requested||r->phase_busy||r->test_active||!r->current_fresh||
+       r->session_present||(r->shell_configured&&(!r->shell_known||r->vehicle_state!='A'))||
+       r->vehicle_state=='B'||r->vehicle_state=='C'||r->vehicle_state=='D'||r->vehicle_state=='F'||
+       r->internal_free<TELEMETRY_MIN_INTERNAL_FREE||r->internal_largest<TELEMETRY_MIN_INTERNAL_BLOCK)return false;
+    for(unsigned i=0;i<3;i++)if(!isfinite(r->current_a[i])||r->current_a[i]<0||r->current_a[i]>=1)return false;
+    return true;
+}
 typedef struct {
     uint32_t schema;
     uint8_t enabled,delete_pending,reserved[2];

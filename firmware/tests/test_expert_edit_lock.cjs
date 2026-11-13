@@ -15,7 +15,7 @@ for(const [key,value] of [['enabled',true],['evcc_enabled',true],['phase_switchi
 }
 for(const flag of ['busy','uploading','configSaving','working']){c[flag]=true;check(false);c[flag]=false;}
 c.online=false;check(false);c.online=true;c.initialized=false;check(false);c.initialized=true;
-c.rows[0].input.value=20;c.update();assert.equal(el('expert-save').disabled,false);assert.equal(el('expert-unsaved').hidden,false,'floating save prompt appears immediately');assert.equal(el('expert-unsaved-save').disabled,false);assert.match(el('expert-unsaved-text').textContent,/Eine Änderung/);
+c.rows[0].input.value=20;c.update();assert.equal(el('expert-save').disabled,false);assert.equal(el('expert-unsaved').hidden,false,'floating save prompt appears immediately');assert.equal(el('expert-unsaved-save').disabled,false);assert.match(el('expert-unsaved-text').textContent,/Speichern und neu starten.*prüfen/);
 c.state.enabled=true;c.update();assert.equal(el('expert-save').disabled,true);assert.equal(c.rows[0].input.value,20,'charging preserves unsaved draft');
 assert.equal(el('expert-unsaved').hidden,false);assert.equal(el('expert-unsaved-save').disabled,true,'save prompt stays visible but locked while charging');
 assert.equal(el('expert-stop').hidden,false,'direct stop appears during charging');

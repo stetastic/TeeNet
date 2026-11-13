@@ -3,9 +3,10 @@
   const now = new Date();
   const ymd = date => Number(`${date.getFullYear()}${String(date.getMonth()+1).padStart(2,'0')}${String(date.getDate()).padStart(2,'0')}`);
   const cfg = {
+    phase_feedback_source:2,phase_voltage_protocol:0,phase_voltage_host:'',phase_actuator_type:0,phase_shelly_model:0,phase_shelly_true_three_phase:false,phase_shelly_host:'',phase_shelly_password_set:false,shell_rs485_interface:0,meter_rs485_interface:0,house_rs485_interface:0,shell_rs485_host:'',meter_rs485_host:'',house_rs485_host:'',
     phase_actuator_type:0,phase_feedback_count:1,phase_shelly_model:0,phase_shelly_pulse:false,phase_shelly_true_three_phase:false,phase_shelly_host:'',phase_shelly_password_set:false,shell_rs485_interface:0,meter_rs485_interface:0,house_rs485_interface:0,shell_rs485_host:'',meter_rs485_host:'',house_rs485_host:'',
     shell_rs485_interface:0,meter_rs485_interface:0,house_rs485_interface:0,shell_rs485_host:'',meter_rs485_host:'',house_rs485_host:'',
-    basic_mode:true,expert_mode: false,control_status_visible:true,charge_plan_enabled:false,huawei_enabled:false,huawei_host:'',huawei_unit_id:1,huawei_battery:false,huawei_pv:false, wifi_ssid: 'TeeNet-Demo', wifi_password_set: true,
+    basic_mode:false,expert_mode: false,control_status_visible:true,charge_plan_enabled:true,huawei_enabled:false,huawei_host:'',huawei_unit_id:1,huawei_battery:false,huawei_pv:false, wifi_ssid: 'TeeNet-Demo', wifi_password_set: true,
     mqtt_enabled: true, mqtt_uri: 'mqtt://broker.demo.local:1883', mqtt_username: 'demo',
     mqtt_password_set: true, mqtt_prefix: 'wallbox-ems', mqtt_input_source: 0,
     shell_limits_auto:false,shell_setup_host:'',max_charge_a:16,fixed_charge_phases:3, homeassistant_enabled: true, nominal_v: 230, price_kwh: .25, solar_price_kwh: .08,
@@ -22,8 +23,18 @@
     grid_limit_a:32,control_verified:true,grid_guard_enabled: false, phase_switch_enabled: false, phase_feedback_enabled:true,phase_feedback_closed_is_single:true,
     wallbox_tx_pin:17,wallbox_rx_pin:18,opendtu_prefix:'opendtu',opendtu_pv_topic:'opendtu/victron/123/PPV',opendtu_pv_valid_topic:'',opendtu_current_positive_discharge:false
   };
+
+  cfg.vehicle_fixed_profile=0;cfg.vehicle_manual_soc_prompt=true;cfg.wallbox_shelly_reverse=true;cfg.shell_http_control_enabled=false;
+  window.teenetDemoShowcase=true;
+
+  cfg.vehicle_fixed_profile=0;cfg.vehicle_manual_soc_prompt=true;cfg.wallbox_shelly_reverse=true;cfg.shell_http_control_enabled=false;
+  window.teenetDemoShowcase=true;
+
+  cfg.vehicle_fixed_profile=0;cfg.vehicle_manual_soc_prompt=true;cfg.wallbox_shelly_reverse=true;cfg.shell_http_control_enabled=false;
+  window.teenetDemoShowcase=true;
   const control = { mode: 'pv', enabled: true, current_a: 10, battery_use: true, battery_start_use: false };
   let huaweiProbe={host:'huawei.demo.local',unit_id:1};
+  let lastDemoEnergySample=Date.now();
   let totalKwh = 286.42;
   let rebootRequired = false;
   let scanFamily = 'shelly';
@@ -62,7 +73,29 @@
       cost_eur:grid*cfg.price_kwh+solar*cfg.solar_price_kwh, flags:0, active:false };
   });
 
+
+  // Local preview only: preserve saved feature choices without resuming a charging plan.
+  const rememberLocalDemoFeatures=(()=>{
+    if(!['localhost','127.0.0.1','[::1]','::1'].includes(location.hostname))return ()=>{};
+    const key='teenet-local-demo-features-v1',defaults={"basic_mode":false,"zero_feed_enabled":true,"pv_display_enabled":true,"battery_protect":true,"vehicle_soc_enabled":true,"vehicle_manual_soc_prompt":true,"vehicle_fixed_profile":0,"wallbox_shelly_reverse":true,"charge_plan_enabled":true,"heatpump_enabled":false,"huawei_enabled":false,"huawei_battery":false,"huawei_pv":false,"grid_guard_enabled":false,"relay_board_enabled":false,"phase_switch_enabled":false,"external_mode_input_enabled":false,"evu_input_enabled":false,"pv_allocation_enabled":false,"mqtt_input_source":0};
+    let saved=null;try{saved=JSON.parse(localStorage.getItem(key)||'null');}catch{}
+    const firstRun=!saved||saved.version!==1||!saved.values||typeof saved.values!=='object'||Array.isArray(saved.values);
+    const values={...defaults};
+    if(!firstRun)for(const name of Object.keys(defaults)){
+      const value=saved.values[name];
+      if(name==='vehicle_fixed_profile'?Number.isInteger(value)&&value>=0&&value<=4:name==='mqtt_input_source'?Number.isInteger(value)&&value>=0&&value<=2:typeof value==='boolean')values[name]=value;
+    }
+    Object.assign(cfg,values);
+    window.teenetLocalDemoFeatures={firstRun};
+    if(firstRun)try{
+      localStorage.setItem('teenet-demo-evcc-feature','false');
+      const pumpKey='teenet-demo-heatpump-v1',pump=JSON.parse(localStorage.getItem(pumpKey)||'null');
+      if(pump&&typeof pump==='object'&&!Array.isArray(pump))localStorage.setItem(pumpKey,JSON.stringify({...pump,heatpump_enabled:false}));
+    }catch{}
+    return ()=>{try{localStorage.setItem(key,JSON.stringify({version:1,values:Object.fromEntries(Object.keys(defaults).map(name=>[name,cfg[name]]))}));}catch{}};
+  })();
   basicConfig();
+  rememberLocalDemoFeatures();
   const phases=()=>cfg.phase_switch_enabled?(control.manual_phases??3):(cfg.fixed_charge_phases??3);
   function measurements() {
     const seconds = (Date.now() - started) / 1000;
@@ -90,11 +123,15 @@
   function status() {
     const m = measurements();
     const stamp=Date.now();
+    totalKwh+=Math.max(0,m.wallbox)*Math.max(0,stamp-lastDemoEnergySample)/3600000000;lastDemoEnergySample=stamp;
     if(plan.active){
       if(control.enabled)plan.delivered_kwh=Math.min(plan.target_kwh,plan.delivered_kwh+m.wallbox*Math.max(0,stamp-planTick)/3600000000);
       if(plan.delivered_kwh>=plan.target_kwh){plan.active=false;plan.phase='complete';control.enabled=false;logEvent('plan_complete');}
       else if(stamp/1000>=plan.deadline_epoch){plan.active=false;plan.phase='expired';control.enabled=false;logEvent('plan_expired');}
       else if(!control.enabled)plan.phase='paused';
+      else if(plan.mode==='manual'){plan.phase='grid';control.mode='manual';}
+      else if(plan.mode==='manual'){plan.phase='grid';control.mode='manual';}
+      else if(plan.mode==='manual'){plan.phase='grid';control.mode='manual';}
       else if(plan.phase==='grid'||(()=>{const duration=(plan.target_kwh-plan.delivered_kwh)/Math.min(gridFallback()?8:Infinity,16*230*(cfg.phase_switch_enabled?3:cfg.fixed_charge_phases)/1000)*3600;return plan.deadline_epoch-stamp/1000<=duration+Math.max(300,duration*.1);})()){plan.phase='grid';control.mode='manual';control.current_a=16;}
       else plan.phase='pv';
     }
@@ -104,7 +141,7 @@
     const soc = 73-((Date.now()-started)/3600000)*2;
     return {
       huawei_enabled:cfg.huawei_enabled,huawei_ok:cfg.huawei_enabled,huawei_model:cfg.huawei_enabled?'SUN2000-8KTL-M1':'',battery_source:cfg.huawei_battery?'Huawei':'MQTT',pv_source:cfg.huawei_pv?'Huawei':'MQTT',
-      version:'1.23',build_id:'demo-v1.23',charge_plan:{...plan},charge_plan_enabled:cfg.charge_plan_enabled, token:'demo-token', hostname:'TeeNet-Demo',
+      version:'1.24',build_id:'demo-v1.24',charge_plan:{...plan},charge_plan_enabled:cfg.charge_plan_enabled, token:'demo-token', hostname:'TeeNet-Demo',
       ...control, mqtt_enabled:cfg.mqtt_enabled, mqtt_ok:true, homeassistant_enabled:cfg.homeassistant_enabled,
       wifi_ok:true, ap_active:false, ap_forced:false, wifi_fallback:false, station_ip:'teennet.demo.local',
       basic_mode:cfg.basic_mode,expert_mode:cfg.expert_mode, pv_display_enabled:cfg.pv_display_enabled,
@@ -208,25 +245,25 @@
       if(url.pathname==='/api/update/github')return json(body.action==='check'?{running:false,installing:false,ok:true,newer:false,version:status().version,message:'Demo: Die aktuelle Version wird angezeigt. Installation nur am echten Gerät.'}:{error:'Installation nur am echten TeeNet-Gerät.'},body.action==='check'?200:400);
       if (url.pathname === '/api/control') {if(cfg.basic_mode&&(body.mode==='pv'||body.mode==='grid_limit'||'pv_surplus_a' in body||body.battery_use||body.battery_start_use))return json({error:'Im Grundbetrieb nur manuell oder per MQTT laden.'},400);if(body.mode==='manual'&&control.mode==='pv'&&measurements().target>0&&!('current_a' in body))control.current_a=measurements().target/(230*phases());Object.assign(control, body);if(['enabled','mode','current_a'].some(key=>key in body)){plan.active=false;plan.phase='off';logEvent(control.enabled?'control_changed':'user_stop');}}
       else if (url.pathname === '/api/config') {
-        const restartFields=["current_offset_a", "evu_input_enabled", "evu_input_pin", "external_mode_input_enabled", "external_mode_input_pin", "fixed_charge_phases", "heatpump_enabled", "heatpump_host", "heatpump_input_topic", "heatpump_output_topic", "heatpump_publish_enabled", "heatpump_source", "house_address", "house_meter_baud", "house_meter_format", "house_meter_type", "house_rs485_host", "house_rs485_interface", "house_rts_pin", "house_rx_pin", "house_tx_pin", "house_xemex_coils", "meter_baud", "meter_format", "meter_rs485_host", "meter_rs485_interface", "min_charge_a", "mqtt_enabled", "mqtt_password", "mqtt_prefix", "mqtt_state_json", "mqtt_uri", "mqtt_username", "nominal_v", "phase_actuator_type", "phase_feedback_closed_is_single", "phase_feedback_count", "phase_feedback_enabled", "phase_feedback_pin", "phase_feedback_second_pin", "phase_mqtt_topic", "phase_output_host", "phase_output_password", "phase_output_switch_id", "phase_output_transport", "phase_shelly_host", "phase_shelly_model", "phase_shelly_password", "phase_shelly_pulse", "phase_shelly_true_three_phase", "phase_switch_enabled", "power_factor", "relay1_mode", "relay1_pin", "relay_active_low", "relay_board_enabled", "shell_rs485_host", "shell_rs485_interface", "status_led_pin", "version", "wallbox_address", "wallbox_meter_type", "wallbox_rts_pin", "wallbox_rx_pin", "wallbox_tx_pin", "wifi_password", "wifi_ssid", "xemex_address", "xemex_coils", "xemex_rts_pin", "xemex_rx_pin", "xemex_tx_pin"];
+        const restartFields=["current_offset_a", "evu_input_enabled", "evu_input_pin", "external_mode_input_enabled", "external_mode_input_pin", "fixed_charge_phases", "heatpump_enabled", "heatpump_host", "heatpump_input_topic", "heatpump_output_topic", "heatpump_publish_enabled", "heatpump_source", "house_address", "house_meter_baud", "house_meter_format", "house_meter_type", "house_rs485_host", "house_rs485_interface", "house_rts_pin", "house_rx_pin", "house_tx_pin", "house_xemex_coils", "meter_baud", "meter_format", "meter_rs485_host", "meter_rs485_interface", "min_charge_a", "mqtt_enabled", "mqtt_password", "mqtt_prefix", "mqtt_state_json", "mqtt_uri", "mqtt_username", "nominal_v", "phase_actuator_type", "phase_feedback_closed_is_single", "phase_feedback_enabled", "phase_feedback_source", "phase_mqtt_topic", "phase_output_host", "phase_output_password", "phase_output_switch_id", "phase_output_transport", "phase_shelly_host", "phase_shelly_model", "phase_shelly_password", "phase_shelly_true_three_phase", "phase_switch_enabled", "phase_voltage_host", "phase_voltage_protocol", "power_factor", "relay1_mode", "relay1_pin", "relay_active_low", "relay_board_enabled", "shell_http_control_enabled", "shell_rs485_host", "shell_rs485_interface", "status_led_pin", "sungrow_battery", "sungrow_enabled", "sungrow_host", "sungrow_model", "sungrow_port", "sungrow_profile", "sungrow_pv", "sungrow_unit_id", "version", "wallbox_address", "wallbox_meter_type", "wallbox_rts_pin", "wallbox_rx_pin", "wallbox_shelly_reverse", "wallbox_tx_pin", "wifi_password", "wifi_ssid", "xemex_address", "xemex_coils", "xemex_rts_pin", "xemex_rx_pin", "xemex_tx_pin"];
         if(cfg.mqtt_input_source===2||body.mqtt_input_source===2)restartFields.push(...["battery_protect", "mqtt_input_source", "opendtu_prefix", "opendtu_pv_topic", "opendtu_pv_valid_topic", "pv_display_enabled"]);
         const restartNeeded=restartFields.some(key=>key in body&&body[key]!==cfg[key]);
         rebootRequired ||= restartNeeded;
         if(rebootRequired){control.enabled=false;control.mode='off';}
-        Object.assign(cfg, body);if(!cfg.battery_protect||!cfg.zero_feed_enabled)cfg.pv_allocation_enabled=false;basicConfig();if(!cfg.charge_plan_enabled&&plan.active){plan.active=false;plan.phase='off';control.enabled=false;control.mode='off';}logEvent('settings_saved');
+        Object.assign(cfg, body);if(!cfg.battery_protect||!cfg.zero_feed_enabled)cfg.pv_allocation_enabled=false;basicConfig();if(!cfg.charge_plan_enabled&&plan.active){plan.active=false;plan.phase='off';control.enabled=false;control.mode='off';}logEvent('settings_saved');rememberLocalDemoFeatures();
         return json({ok:true,reboot_required:rebootRequired,restart_needed:restartNeeded,applied:!restartNeeded});
       }
       else if (url.pathname === '/api/reboot') rebootRequired=false;
       else if(url.pathname==='/api/plan'){
         if(body.active){
           if(cfg.basic_mode||!cfg.charge_plan_enabled)return json({error:'Ladeplan nicht aktiviert.'},400);
-          if(!body.resume)plan={active:true,phase:'pv',target_kwh:body.kwh,delivered_kwh:0,deadline_epoch:body.deadline_epoch};
+          if(!body.resume)plan={active:true,phase:body.mode==='manual'?'grid':'pv',mode:body.mode==='manual'?'manual':'pv',target_kwh:body.kwh,delivered_kwh:0,deadline_epoch:body.deadline_epoch};
           plan.active=true;control.mode=plan.phase==='grid'?'manual':'pv';control.enabled=true;planTick=Date.now();logEvent('plan_started');
         }else {plan.active=false;plan.phase='off';control.enabled=false;control.mode='off';logEvent('plan_cancelled');}
       }
       else if(url.pathname==='/api/restore'){
         if(body.format!=='TeeNet-settings'||body.schema!==1||!body.settings)return json({error:'Keine passende Sicherung'},400);
-        Object.assign(cfg,body.settings);basicConfig();cfg.control_verified=false;control.enabled=false;control.mode='off';plan.active=false;plan.phase='off';logEvent('settings_restored');
+        Object.assign(cfg,body.settings);basicConfig();cfg.control_verified=false;control.enabled=false;control.mode='off';plan.active=false;plan.phase='off';logEvent('settings_restored');rememberLocalDemoFeatures();
         return json({ok:true,reboot_required:true});
       }
       else if (url.pathname === '/api/huawei/preview') huaweiProbe={...huaweiProbe,...body};
@@ -245,7 +282,7 @@
       delete settings.wifi_password_set;delete settings.mqtt_password_set;
       if(secrets){settings.wifi_password='demo-password';settings.mqtt_password='demo-password';}
       else {delete settings.wifi_password;delete settings.mqtt_password;}
-      return json({format:'TeeNet-settings',schema:1,build_id:'demo-v1.23',includes_passwords:secrets,settings});
+      return json({format:'TeeNet-settings',schema:1,build_id:'demo-v1.24',includes_passwords:secrets,settings});
     }
     if (url.pathname === '/api/history') return json(history());
     if (url.pathname === '/api/sessions') return json(groupedSessions(url));

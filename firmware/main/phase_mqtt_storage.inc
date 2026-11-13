@@ -12,7 +12,7 @@ static esp_err_t save_phase_mqtt_permission(bool enabled,const char *topic,bool 
     settings_t next=saved_settings;
     if(enabled){
         next.phase_actuator_type=2;next.phase_switch_enabled=next.relay_board_enabled=true;
-        next.relay1_mode=3;next.phase_feedback_enabled=false;next.basic_mode=false;
+        next.relay1_mode=3;next.phase_feedback_source=2;next.phase_no_feedback_acknowledged=true;next.phase_feedback_enabled=false;next.basic_mode=false;
         snprintf(next.phase_mqtt_topic,sizeof(next.phase_mqtt_topic),"%s",topic?topic:"");
         next.phase_mqtt_true_three_phase=true_three_phase;
         if(shelly_model>=0&&shelly_model<=12)next.phase_shelly_model=(uint8_t)shelly_model;
@@ -23,7 +23,7 @@ static esp_err_t save_phase_mqtt_permission(bool enabled,const char *topic,bool 
     }else{
         /* Leaving the protected profile must also leave a usable normal
            selection. Otherwise its hidden actuator stays selected. */
-        next.phase_actuator_type=0;next.phase_feedback_enabled=true;
+        next.phase_actuator_type=0;next.phase_feedback_source=2;next.phase_feedback_enabled=false;
     }
     next.phase_mqtt_output_enabled=enabled;
     bool pending_before=restart_pending();

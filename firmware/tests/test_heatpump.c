@@ -30,7 +30,7 @@ int main(void){
     settings_t old=settings,migrated;old.version=33;old.price_kwh=.31f;
     size_t old_size=(offsetof(settings_t,heatpump_enabled)+3)&~(size_t)3;
     assert(settings_decode(&old,old_size,&migrated));
-    assert(migrated.version==34&&!migrated.heatpump_enabled);
+    assert(migrated.version==EMS_SETTINGS_VERSION&&!migrated.heatpump_enabled);
     assert(fabsf(migrated.price_kwh-.31f)<.00001f);
     assert(!strcmp(migrated.heatpump_source,"shelly_gen2"));
 
