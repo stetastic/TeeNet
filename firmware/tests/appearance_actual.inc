@@ -1,16 +1,16 @@
 static esp_err_t theme_get(httpd_req_t *req) {
-    uint8_t selected=0,view=0,density=0,graphic_seen=0;
+    uint8_t selected=0,view=1,density=0,graphic_seen=0;
     nvs_handle_t nvs;
     if(nvs_open("wallbox_ems",NVS_READONLY,&nvs)==ESP_OK) {
         if(nvs_get_u8(nvs,"ui_theme",&selected)!=ESP_OK) selected=0;
-        nvs_get_u8(nvs,"ui_view",&view);
+        if(nvs_get_u8(nvs,"ui_view",&view)!=ESP_OK) view=1;
         nvs_get_u8(nvs,"ui_density",&density);
         nvs_get_u8(nvs,"ui_graph_seen",&graphic_seen);
         nvs_close(nvs);
     }
     cJSON *o=cJSON_CreateObject();if(!o)return httpd_resp_send_err(req,HTTPD_500_INTERNAL_SERVER_ERROR,"Out of memory");
     cJSON_AddStringToObject(o,"theme",selected==2?"dark":selected==1?"light":"unset");
-    cJSON_AddStringToObject(o,"view",view==1?"graphic":"standard");
+    cJSON_AddStringToObject(o,"view",view==0?"standard":"graphic");
     cJSON_AddStringToObject(o,"density",density==1?"compact":"standard");
     cJSON_AddBoolToObject(o,"graphic_notice_pending",false);
     return send_json(req,o);

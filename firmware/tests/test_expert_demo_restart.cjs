@@ -18,6 +18,11 @@ function demo(store){
 (async()=>{
  const store=new Map([['teenet-demo-terms','2026-10-09.2'],[storage,JSON.stringify({PV_START:20})]]);
  let d=demo(store);
+ assert.deepEqual(await d.read('/api/theme'),{theme:'unset',view:'graphic',density:'standard',graphic_notice_pending:false});
+ await d.post('/api/theme',{view:'standard'});await d.post('/api/theme',{density:'compact'});
+ assert.equal((await demo(store).read('/api/theme')).view,'standard');assert.equal((await demo(store).read('/api/theme')).density,'compact');
+ store.set('teennet-view','invalid');store.set('teennet-density','invalid');
+ const fallback=await demo(store).read('/api/theme');assert.equal(fallback.view,'graphic');assert.equal(fallback.density,'standard');
  assert.equal((await d.read('/api/status')).reboot_required,true,'saved expert change is pending');
  await d.post('/api/reboot',{});
  assert.equal((await d.read('/api/status')).reboot_required,false,'real UI reboot clears expert restart');

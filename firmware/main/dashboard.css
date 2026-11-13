@@ -566,9 +566,6 @@ main:has(>#settings:not([hidden]))>.app-footer{max-width:960px}
 .app-footer .brand-caption{min-width:0;max-width:none;margin:0;text-align:left;color:var(--muted);font-size:11px;line-height:1.5;letter-spacing:normal}
 .app-footer .footer-help{display:inline-flex;align-items:center;justify-content:center;min-height:40px;padding:8px 12px;border:1px solid var(--line);border-radius:8px;color:#087fa4;font-size:12px;font-weight:600;line-height:1.35;white-space:nowrap}
 .app-footer .footer-help:hover{background:#e9f5fa}
-.app-footer .footer-donate{grid-column:1/-1;justify-self:end;display:inline-flex;align-items:center;gap:4px;min-height:32px;color:var(--muted);font-size:11px;line-height:1.4;text-decoration:underline;text-underline-offset:3px}
-.app-footer .footer-donate:hover{color:var(--ink)}
-.app-footer .footer-donate:focus-visible{outline:3px solid var(--green);outline-offset:3px}
 .app-header .rail nav a:focus-visible,.app-footer :is(.brand,.footer-help):focus-visible{outline:3px solid var(--green);outline-offset:3px}
 html[data-theme="dark"] .app-header{background:#101e29}
 html[data-theme="dark"] .app-header .rail,html[data-theme="dark"] .app-header .status-wrap .control-status{background:transparent}
@@ -865,8 +862,7 @@ html[data-theme="dark"] .app-footer .footer-help:hover{background:#1b3d50}
  .app-header .status-wrap .control-status[data-charging="true"]{background:#edf8f2;border-color:#c7e5d4;color:#176644}
  .app-header .status-wrap .control-status[data-charging="true"] .status-indicator{background:#23845b}
  .app-footer>.brand,.app-footer>.brand-caption{display:none}
- .app-footer{display:flex;justify-content:flex-end;margin-top:12px;padding-top:0;border-top:0}
- .app-footer .footer-help{display:none}
+ .app-footer{display:none}
  html[data-theme="dark"] .app-header .rail{background:#101e29}
  html[data-theme="dark"] .app-header .status-wrap .control-status{background:#1b303e;color:#d5e7ef;border-color:#375365}
  html[data-theme="dark"] .app-header .status-wrap .control-status[data-charging="true"]{background:#183b32;color:#b2ead0;border-color:#366655}

@@ -184,7 +184,7 @@ if(typeof window!=='undefined')window.TeeNetWallboxDisplay={reading:wallboxDispl
   finally{for(const option of ['standard','compact'])document.getElementById('density-'+option).disabled=false;}
  }
  function setView(view){
-  view=view==='graphic'?'graphic':'standard';
+  view=view==='standard'?'standard':'graphic';
   document.documentElement.dataset.dashboardView=view;
   try{localStorage.setItem('teennet-view',view);}catch{}
   for(const option of ['standard','graphic'])document.getElementById('view-'+option)?.setAttribute('aria-pressed',String(view===option));

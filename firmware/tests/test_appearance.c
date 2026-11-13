@@ -12,10 +12,10 @@ typedef int nvs_handle_t;
 #define HTTPD_500_INTERNAL_SERVER_ERROR 500
 #define HTTPD_400_BAD_REQUEST 400
 typedef struct {const char *body;bool allowed;int status;cJSON *response;} httpd_req_t;
-static uint8_t theme,view,density,seen;static bool fail_commit;
+static uint8_t theme,view,density,seen;static bool fail_commit,view_present=true;
 static esp_err_t nvs_open(const char *name,int mode,nvs_handle_t *handle){(void)name;(void)mode;*handle=1;return 0;}
 static uint8_t *value(const char *key){if(!strcmp(key,"ui_theme"))return &theme;if(!strcmp(key,"ui_view"))return &view;if(!strcmp(key,"ui_density"))return &density;assert(!strcmp(key,"ui_graph_seen"));return &seen;}
-static esp_err_t nvs_get_u8(nvs_handle_t h,const char *key,uint8_t *v){(void)h;*v=*value(key);return 0;}
+static esp_err_t nvs_get_u8(nvs_handle_t h,const char *key,uint8_t *v){(void)h;if(!strcmp(key,"ui_view")&&!view_present)return 1;*v=*value(key);return 0;}
 static esp_err_t nvs_set_u8(nvs_handle_t h,const char *key,uint8_t v){(void)h;*value(key)=v;return 0;}
 static esp_err_t nvs_commit(nvs_handle_t h){(void)h;return fail_commit?1:0;}
 static void nvs_close(nvs_handle_t h){(void)h;}
@@ -26,6 +26,9 @@ static esp_err_t httpd_resp_send_err(httpd_req_t *r,int code,const char *message
 #include "appearance_actual.inc"
 static int post(const char *body,bool allow){httpd_req_t r={.body=body,.allowed=allow};theme_post(&r);cJSON_Delete(r.response);return r.status;}
 int main(void){
+ view_present=false;httpd_req_t fresh={0};theme_get(&fresh);assert(!strcmp(cJSON_GetObjectItem(fresh.response,"view")->valuestring,"graphic"));assert(!strcmp(cJSON_GetObjectItem(fresh.response,"density")->valuestring,"standard"));cJSON_Delete(fresh.response);
+ view_present=true;fresh=(httpd_req_t){0};theme_get(&fresh);assert(!strcmp(cJSON_GetObjectItem(fresh.response,"view")->valuestring,"standard"));cJSON_Delete(fresh.response);
+ view=255;fresh=(httpd_req_t){0};theme_get(&fresh);assert(!strcmp(cJSON_GetObjectItem(fresh.response,"view")->valuestring,"graphic"));cJSON_Delete(fresh.response);view=0;
  httpd_req_t r={0};theme_get(&r);assert(cJSON_IsFalse(cJSON_GetObjectItem(r.response,"graphic_notice_pending")));assert(!strcmp(cJSON_GetObjectItem(r.response,"density")->valuestring,"standard"));cJSON_Delete(r.response);
  assert(post("{\"view\":\"graphic\"}",true)==200&&view==1&&theme==0&&seen==0);
  assert(post("{\"theme\":\"dark\"}",true)==200&&view==1&&theme==2&&seen==0);

@@ -1,8 +1,8 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 const source=fs.readFileSync('main/energy.js','utf8');
-function setup(server={seen:false},missing=new Set()){
- const nodes={},events={},requests=[],storage=new Map();let otherDialog=false,error=false;
- const node=id=>nodes[id]??={dataset:{},open:false,value:'manual',textContent:'',className:'',hidden:false,disabled:false,attrs:{},listeners:{},querySelector(selector){return selector==='.en-wallbox-node'?null:node(id+' '+selector);},setAttribute(key,value){this.attrs[key]=value;},addEventListener(event,fn){this.listeners[event]=fn;},showModal(){this.open=true;},close(){this.open=false;}};
+function setup(server={seen:false},missing=new Set(),saved={}){
+ const nodes={},events={},requests=[],storage=new Map(Object.entries(saved));let otherDialog=false,error=false;
+ const node=id=>nodes[id]??={dataset:{},open:false,value:'manual',textContent:'',className:'',hidden:false,disabled:false,attrs:{},listeners:{},style:{setProperty(){}},querySelectorAll(){return[];},querySelector(selector){return ['.en-wallbox-node','.en-car-art'].includes(selector)?null:node(id+' '+selector);},setAttribute(key,value){this.attrs[key]=value;},addEventListener(event,fn){this.listeners[event]=fn;},showModal(){this.open=true;},close(){this.open=false;}};
  const context={Number,module:{exports:{}},window:{addEventListener(event,fn){events[event]=fn;}},
   document:{documentElement:{dataset:{}},hidden:false,getElementById:id=>missing.has(id)?null:node(id),addEventListener(){},querySelector(selector){return selector==='dialog[open]'?(otherDialog||node('graphic-notice').open):node(selector);}},
   localStorage:{getItem:key=>storage.get(key),setItem:(key,value)=>storage.set(key,value)},
@@ -16,8 +16,8 @@ test('retired presentation popup never opens even when old firmware reports it p
  assert(!fs.readFileSync('main/dashboard.html','utf8').includes('id="graphic-notice"'));
 });
 
-test('layout defaults to familiar standard and persists independently of the view',async()=>{
- const s=setup();assert.equal(s.dataset.dashboardDensity,'standard');assert(s.node('battery-options').open);
+test('layout defaults to standard and graphic and persists independently of the view',async()=>{
+ const s=setup();assert.equal(s.dataset.dashboardDensity,'standard');assert.equal(s.dataset.dashboardView,'graphic');assert(s.node('battery-options').open);
  s.api.setView('graphic');
  await s.node('density-compact').listeners.click();
  assert.equal(s.dataset.dashboardDensity,'compact');assert.equal(s.dataset.dashboardView,'graphic');
@@ -26,6 +26,16 @@ test('layout defaults to familiar standard and persists independently of the vie
  s.api.loadDensity('standard');assert.equal(s.dataset.dashboardDensity,'compact');
  await s.node('density-standard').listeners.click();assert.equal(s.dataset.dashboardDensity,'standard');assert.equal(s.dataset.dashboardView,'graphic');assert(s.node('battery-options').open);
  const reload=setup();reload.api.loadDensity('compact');assert.equal(reload.dataset.dashboardDensity,'compact');
+});
+test('saved view and layout survive startup while invalid preferences use graphical standard defaults',()=>{
+ const saved=setup({seen:false},new Set(),{'teennet-view':'standard','teennet-density':'compact'});
+ assert.equal(saved.dataset.dashboardView,'standard');assert.equal(saved.dataset.dashboardDensity,'compact');
+ saved.api.loadView('graphic');saved.api.loadDensity('standard');
+ assert.equal(saved.dataset.dashboardView,'graphic');assert.equal(saved.dataset.dashboardDensity,'standard');
+ const invalid=setup({seen:false},new Set(),{'teennet-view':'invalid','teennet-density':'invalid'});
+ assert.equal(invalid.dataset.dashboardView,'graphic');assert.equal(invalid.dataset.dashboardDensity,'standard');
+ invalid.api.loadView('invalid');invalid.api.loadDensity('invalid');
+ assert.equal(invalid.dataset.dashboardView,'graphic');assert.equal(invalid.dataset.dashboardDensity,'standard');
 });
 test('failed layout save keeps browser choice and reports retryable failure',async()=>{
  const s=setup();s.setError(true);await s.node('density-compact').listeners.click();

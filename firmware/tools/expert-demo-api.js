@@ -93,7 +93,8 @@ function gpioRemember(schema,cfg,next){
     if(['standard','compact'].includes(body.density))localStorage.setItem('teennet-density',body.density);
     if(body.graphic_notice_ack===true)localStorage.setItem('teennet-graphic-notice','1');
    }
-   return json({theme:localStorage.getItem('teennet-theme')||'unset',view:localStorage.getItem('teennet-view')||'graphic',density:localStorage.getItem('teennet-density')||'standard',graphic_notice_pending:false});
+   const view=localStorage.getItem('teennet-view'),density=localStorage.getItem('teennet-density');
+   return json({theme:localStorage.getItem('teennet-theme')||'unset',view:view==='standard'?'standard':'graphic',density:density==='compact'?'compact':'standard',graphic_notice_pending:false});
   }
   if(url.origin===location.origin&&url.pathname==='/api/meters/scan'){
    if(options.method==='POST'){
