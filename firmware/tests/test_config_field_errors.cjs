@@ -20,6 +20,8 @@ const flush=()=>{while(frames.length)frames.shift()();};
 host.valid=false;assert(!ctx.validateConfigForm());assert(section.open);assert(host.classList.contains('config-field-error'));assert.equal(host.attributes['aria-invalid'],'true');assert.equal(nodes[host.dataset.configErrorId].textContent,host.dataset.requiredMessage);flush();assert(host.focused&&host.scrolled.block==='center');
 ctx.clearConfigFieldError(host);assert.equal(host.attributes['aria-describedby'],'host-help');assert(!host.classList.contains('config-field-error'));
 host.valid=true;max.disabled=true;ctx.reportConfigSaveError({message:'Maximalstrom zu hoch',field:'max_charge_a'});assert(max.classList.contains('config-field-error'));max.disabled=false;flush();assert(max.focused&&max.scrolled);
+const coils=node('xemex_coils','SELECT');coils.label=label;coils.parentElement=label;coils.section=section;elements.push(coils);section.open=false;
+ctx.reportConfigSaveError({message:'Wallbox-Zaehler: Fuer die Phasenumschaltung mindestens L1 und L2 messen.',field:'xemex_coils'});flush();assert(section.open&&coils.classList.contains('config-field-error')&&coils.focused&&coils.scrolled.block==='center');
 ctx.reportConfigSaveError({message:'Verbindung unterbrochen'});assert(!host.classList.contains('config-field-error'),'Unknown errors never blame an arbitrary field');
 ctx.clearConfigFieldErrors();assert(!max.classList.contains('config-field-error'));
 const hidden=node('phase_feedback_source');hidden.hiddenAncestor={};const choice=node('phase-feedback-choice');choice.parentElement=label;elements.push(hidden);

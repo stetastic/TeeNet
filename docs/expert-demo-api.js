@@ -129,8 +129,11 @@ function gpioRemember(schema,cfg,next){
    if(![0,1,2,3].includes(Number(next.phase_actuator_type||0)))return plain('Schuetzprofil ungueltig.',400);
    if(next.phase_shelly_host&&!/^[a-zA-Z0-9][a-zA-Z0-9.-]{0,62}$/.test(next.phase_shelly_host))return plain('Shelly-Adresse pruefen.',400);
    if([1,3].includes(Number(next.phase_actuator_type))&&next.phase_switch_enabled){
-    if(!next.phase_shelly_host)return plain('Shelly-Adresse fehlt. Im Bereich Schuetzsteuerung eintragen.',400);
-    if(!(['shelly_gen2','em24_tcp','sdm630','sdm630mct'].includes(next.wallbox_meter_type)||(next.wallbox_meter_type==='xemex'&&[2,3].includes(Number(next.xemex_coils)))))return plain(next.wallbox_meter_type==='xemex'?`Wallbox-Zaehler: Xemex mit ${next.xemex_coils} Messspule(n) eingestellt. Fuer die Shelly-Phasenumschaltung mindestens L1 und L2 messen.`:`Wallbox-Zaehlerprofil '${next.wallbox_meter_type}' erfasst nicht mindestens L1 und L2. Fuer die Shelly-Phasenumschaltung ein passendes Profil waehlen.`,400);
+    if(!next.phase_shelly_host)return json({error:'Shelly-Adresse fehlt. Unter Shelly-Schaltgeraet eintragen.',field:'phase_shelly_host'},400);
+    if(!(['shelly_gen2','em24_tcp','sdm630','sdm630mct'].includes(next.wallbox_meter_type)||(next.wallbox_meter_type==='xemex'&&[2,3].includes(Number(next.xemex_coils))))){
+     const xemex=next.wallbox_meter_type==='xemex';
+     return json({error:xemex?`Wallbox-Zaehler: Xemex mit ${next.xemex_coils} Messspule(n). Fuer die Phasenumschaltung mindestens L1 und L2 messen.`:`Wallbox-Zaehler: Profil '${next.wallbox_meter_type}' misst nicht L1 und L2. Passendes Zaehlerprofil waehlen.`,field:xemex?'xemex_coils':'wallbox_meter_type'},400);
+    }
     const model=Number(next.phase_shelly_model||0);
     if(!Number.isInteger(model)||model<0||model>12||(Number(next.phase_actuator_type)===3&&![4,12].includes(model)))return plain('Shelly-Modell und Schuetzansteuerung passen nicht zusammen.',400);
    }

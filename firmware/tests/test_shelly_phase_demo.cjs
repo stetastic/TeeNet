@@ -19,9 +19,12 @@ function demo(store){
  assert.notEqual((await d.read('/api/meters/scan')).family,'shelly_switch','Meter scan is independent');
  const malformed={basic_mode:false,relay_board_enabled:true,phase_switch_enabled:true,phase_actuator_type:1,mqtt_enabled:'true',phase_shelly_host:'192.168.1.88',xemex_coils:2};
  response=await d.post('/api/config',malformed);assert.equal(response.status,400);assert((await response.text()).includes('mqtt_enabled'));
- let unchanged=await d.read('/api/config');assert.equal(unchanged.phase_actuator_type,0);assert.equal(unchanged.xemex_coils,1,'Malformed input must not partially apply');
+ let unchanged=await d.read('/api/config');assert.equal(unchanged.phase_actuator_type,0);assert.equal(unchanged.xemex_coils,3,'Malformed input must not partially apply');
  const setup={basic_mode:false,relay_board_enabled:true,phase_switch_enabled:true,relay1_mode:3,phase_actuator_type:1,phase_feedback_source:2,phase_shelly_model:0,phase_shelly_host:'192.168.1.88',wallbox_meter_type:'xemex',xemex_coils:1};
- assert.equal((await d.post('/api/config',setup)).status,400,'At least two measured phase currents are needed for network switching');
+ response=await d.post('/api/config',setup);assert.equal(response.status,400,'At least two measured phase currents are needed for network switching');
+ let fieldError=await response.json();assert.equal(fieldError.field,'xemex_coils');assert(fieldError.error.includes('1 Messspule'));
+ response=await d.post('/api/config',{...setup,wallbox_meter_type:'shelly_em1'});assert.equal(response.status,400);
+ fieldError=await response.json();assert.equal(fieldError.field,'wallbox_meter_type');assert(fieldError.error.includes('shelly_em1'));
  setup.xemex_coils=2;setup.phase_shelly_password='synthetic-test-password';
  response=await d.post('/api/config',setup);assert.equal(response.status,200,await response.clone().text());
  let cfg=await d.read('/api/config');assert(!('phase_feedback_count' in cfg));assert.equal(cfg.phase_shelly_password,undefined);assert(cfg.phase_shelly_password_set);
@@ -41,5 +44,8 @@ function demo(store){
  await d.post('/api/control',{enabled:true,mode:'manual'});
  for(const change of [{phase_actuator_type:0},{phase_shelly_host:'192.168.1.89'},{phase_shelly_password:'different-test-password'}])assert.equal((await d.post('/api/config',change)).status,409,'Active charging locks actuator configuration');
  d=demo(store);cfg=await d.read('/api/config');assert.equal(cfg.phase_actuator_type,1,'Saved phase choices survive page reload');assert.equal((await d.read('/api/status')).enabled,false,'Reload does not resume charging');
+ await d.post('/api/control',{enabled:false,mode:'off'});
+ response=await d.post('/api/config',{phase_switch_enabled:false,xemex_coils:1});assert.equal(response.status,200);
+ d=demo(store);assert.equal((await d.read('/api/config')).xemex_coils,1,'Saved custom coil count survives the three-phase demo default');
  console.log('PASS: private Shelly demo: protected discovery, independent meter search, actual three-phase requirement, no auxiliary contacts and no pulses, password masking and active-charge configuration lock; no hardware calls');
 })().catch(error=>{console.error(error);process.exitCode=1;});

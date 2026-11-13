@@ -2757,10 +2757,10 @@ static esp_err_t config_apply(httpd_req_t *req,cJSON *o,bool restore) {
         if(!phase_switch_meter_supported(&next)){
             char message[224];
             if(!strcmp(next.wallbox_meter_type,"xemex"))
-                snprintf(message,sizeof(message),"Wallbox-Zaehler: Xemex mit %u Messspule(n) eingestellt. Fuer die Shelly-Phasenumschaltung mindestens L1 und L2 messen.",(unsigned)next.xemex_coils);
+                snprintf(message,sizeof(message),"Wallbox-Zaehler: Xemex mit %u Messspule(n). Fuer die Phasenumschaltung mindestens L1 und L2 messen.",(unsigned)next.xemex_coils);
             else
-                snprintf(message,sizeof(message),"Wallbox-Zaehlerprofil '%s' erfasst nicht mindestens L1 und L2. Fuer die Shelly-Phasenumschaltung ein passendes Profil waehlen.",next.wallbox_meter_type);
-            return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,message);
+                snprintf(message,sizeof(message),"Wallbox-Zaehler: Profil '%s' misst nicht L1 und L2. Passendes Zaehlerprofil waehlen.",next.wallbox_meter_type);
+            return config_field_error(req,!strcmp(next.wallbox_meter_type,"xemex")?"xemex_coils":"wallbox_meter_type",message);
         }
     }
     if(next.grid_guard_enabled && !next_three_phase_house)

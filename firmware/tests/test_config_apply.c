@@ -177,8 +177,10 @@ int main(void){
     assert(bad.status==400&&!prepared_count&&strstr(bad.message,"Shelly-Adresse fehlt")&&!strstr(bad.message,"L1"));
     fixture();bad=post("{\"basic_mode\":false,\"relay_board_enabled\":true,\"phase_switch_enabled\":true,\"phase_actuator_type\":1,\"phase_shelly_host\":\"192.168.1.88\",\"xemex_coils\":1}");
     assert(bad.status==400&&!prepared_count&&strstr(bad.message,"1 Messspule")&&!strstr(bad.message,"Adresse"));
+    cJSON *meter_error=cJSON_Parse(bad.message);assert(meter_error);assert(!strcmp(cJSON_GetObjectItem(meter_error,"field")->valuestring,"xemex_coils"));cJSON_Delete(meter_error);
     fixture();bad=post("{\"basic_mode\":false,\"relay_board_enabled\":true,\"phase_switch_enabled\":true,\"phase_actuator_type\":1,\"phase_shelly_host\":\"192.168.1.88\",\"wallbox_meter_type\":\"shelly_em1\",\"wallbox_meter_host\":\"192.168.1.89\"}");
     assert(bad.status==400&&!prepared_count&&strstr(bad.message,"shelly_em1")&&!strstr(bad.message,"Adresse"));
+    meter_error=cJSON_Parse(bad.message);assert(meter_error);assert(!strcmp(cJSON_GetObjectItem(meter_error,"field")->valuestring,"wallbox_meter_type"));cJSON_Delete(meter_error);
     fixture();restore_ok=false;httpd_req_t failed_restore={0};config_apply(&failed_restore,cJSON_Parse("{\"price_kwh\":0.3}"),true);assert(failed_restore.status==500&&!prepared_count&&!settings.enabled&&!locks);restore_ok=true;
     fixture();bad=post("{\"wallbox_meter_type\":\"shelly_gen2\",\"wallbox_meter_host\":\"\"}");
     assert(bad.status==400&&!prepared_count);cJSON *error=cJSON_Parse(bad.message);assert(error);

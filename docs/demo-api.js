@@ -10,7 +10,7 @@
     mqtt_enabled: true, mqtt_uri: 'mqtt://broker.demo.local:1883', mqtt_username: 'demo',
     mqtt_password_set: true, mqtt_prefix: 'wallbox-ems', mqtt_input_source: 0,
     shell_limits_auto:false,shell_setup_host:'',max_charge_a:16,fixed_charge_phases:3, homeassistant_enabled: true, nominal_v: 230, price_kwh: .25, solar_price_kwh: .08,
-    wallbox_meter_type: 'xemex', wallbox_meter_host: '', xemex_coils: 1,
+    wallbox_meter_type: 'xemex', wallbox_meter_host: '', xemex_coils:3,
     xemex_address: 1, meter_baud: 9600, meter_format: 1,
     zero_feed_enabled: true, house_meter_type: 'tasmota', house_meter_host: 'wattwaechter.demo.local',
     house_power_path: '', house_address: 1, house_meter_baud: 9600,
@@ -23,12 +23,6 @@
     grid_limit_a:32,control_verified:true,grid_guard_enabled: false, phase_switch_enabled: false, phase_feedback_enabled:true,phase_feedback_closed_is_single:true,
     wallbox_tx_pin:17,wallbox_rx_pin:18,opendtu_prefix:'opendtu',opendtu_pv_topic:'opendtu/victron/123/PPV',opendtu_pv_valid_topic:'',opendtu_current_positive_discharge:false
   };
-
-  cfg.vehicle_fixed_profile=0;cfg.vehicle_manual_soc_prompt=true;cfg.wallbox_shelly_reverse=true;cfg.shell_http_control_enabled=false;
-  window.teenetDemoShowcase=true;
-
-  cfg.vehicle_fixed_profile=0;cfg.vehicle_manual_soc_prompt=true;cfg.wallbox_shelly_reverse=true;cfg.shell_http_control_enabled=false;
-  window.teenetDemoShowcase=true;
 
   cfg.vehicle_fixed_profile=0;cfg.vehicle_manual_soc_prompt=true;cfg.wallbox_shelly_reverse=true;cfg.shell_http_control_enabled=false;
   window.teenetDemoShowcase=true;
@@ -129,8 +123,6 @@
       if(plan.delivered_kwh>=plan.target_kwh){plan.active=false;plan.phase='complete';control.enabled=false;logEvent('plan_complete');}
       else if(stamp/1000>=plan.deadline_epoch){plan.active=false;plan.phase='expired';control.enabled=false;logEvent('plan_expired');}
       else if(!control.enabled)plan.phase='paused';
-      else if(plan.mode==='manual'){plan.phase='grid';control.mode='manual';}
-      else if(plan.mode==='manual'){plan.phase='grid';control.mode='manual';}
       else if(plan.mode==='manual'){plan.phase='grid';control.mode='manual';}
       else if(plan.phase==='grid'||(()=>{const duration=(plan.target_kwh-plan.delivered_kwh)/Math.min(gridFallback()?8:Infinity,16*230*(cfg.phase_switch_enabled?3:cfg.fixed_charge_phases)/1000)*3600;return plan.deadline_epoch-stamp/1000<=duration+Math.max(300,duration*.1);})()){plan.phase='grid';control.mode='manual';control.current_a=16;}
       else plan.phase='pv';
