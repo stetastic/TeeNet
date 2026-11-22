@@ -1,4 +1,4 @@
-# TeeNet 1.27
+# TeeNet 1.26
 
 Lokale Ladesteuerung für die Shell Recharge Advanced 3.0: manuelles Laden, PV-Überschuss, Hausakku, Fahrzeugprofile und Ladepläne. Bedienung im Browser; ioBroker, Home Assistant und MQTT sind optional.
 
