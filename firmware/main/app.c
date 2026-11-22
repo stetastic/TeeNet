@@ -1059,7 +1059,7 @@ static bool read_sdm(float out[3],float *total_w) {
 
 }
 
-static bool read_wallbox_network(wallbox_modbus_session_t *session,float out[3],float *total_w,float voltage[3],bool *voltage_valid);
+static bool read_wallbox_network(wallbox_modbus_session_t *session,float out[3],float *total_w,float voltage[3],bool *voltage_valid,bool *response_missing);
 
 static void meter_task(void *arg) {
     unsigned network_failures=0;
@@ -1067,17 +1067,19 @@ static void meter_task(void *arg) {
     while(true) {
         boot_task_seen[2]=(uint32_t)now_ms();
         uint32_t delay_ms=1000;
-        float values[3],voltage[3]={0},watts=0; bool voltage_valid=false,sdm=sdm_meter(),network=network_wallbox_meter();
+        float values[3],voltage[3]={0},watts=0; bool voltage_valid=false,response_missing=false,sdm=sdm_meter(),network=network_wallbox_meter();
         LOCK();uint32_t revision=wallbox_meter_revision;UNLOCK();
 
         if(!network)wallbox_modbus_session_close(&network_session);
-        bool ok=!unsupported_meter() && (network?read_wallbox_network(&network_session,values,&watts,voltage,&voltage_valid):sdm?read_sdm(values,&watts):read_meter(values));
+        bool ok=!unsupported_meter() && (network?read_wallbox_network(&network_session,values,&watts,voltage,&voltage_valid,&response_missing):sdm?read_sdm(values,&watts):read_meter(values));
 
         if(ok && !sdm && !network) ok=reconstruct_currents(values,settings.xemex_coils);
 
         LOCK();
         if(network && revision!=wallbox_meter_revision){UNLOCK();continue;}
-        if(phase_voltage_shared_locked())phase_voltage_sample(&phase_voltage,voltage,ok&&voltage_valid,now_ms());
+        /* A missing reply leaves the previous proof on its original deadline.
+           A received but invalid measurement clears it immediately. */
+        if(phase_voltage_shared_locked()&&!response_missing)phase_voltage_sample(&phase_voltage,voltage,ok&&voltage_valid,now_ms());
         if(ok) {
             if(settings.phase_switch_enabled && phase_state==PHASE_READY &&
                wallbox_inactive_phase_current(&settings,values)) phase_state=PHASE_FAULT;

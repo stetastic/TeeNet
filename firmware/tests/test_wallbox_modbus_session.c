@@ -99,13 +99,17 @@ int main(void){
     reset();a=(wallbox_modbus_session_t){.sock=-1};connect_cost=1000;assert(!read_sample(&a,data)&&clock_ms==1000&&requests==0&&closes==1);
     reset();a=(wallbox_modbus_session_t){.sock=-1};connect_failure=true;assert(!read_sample(&a,data)&&connects==1&&!requests&&!closes);assert_zero(data);
     reset();a=(wallbox_modbus_session_t){.sock=-1};peer_closes=true;assert(read_sample(&a,data)&&a.sock<0&&closes==1);assert(read_sample(&a,data)&&connects==2&&closes==2);
-    /* A reboot/reset or unsolicited old data between polls fails this poll;
-       no same-call reconnect/replay or stale response acceptance. */
+    /* EOF before sending can recover in the same poll. Reset and unsolicited
+       data still fail the poll. A request is never replayed. */
     for(unsigned error=0;error<3;error++){
         reset();a=(wallbox_modbus_session_t){.sock=-1};assert(read_sample(&a,data));
         peer_t *p=peer(a.sock);if(error==0)p->reset=true;else if(error==1)p->eof=true;else p->reply[p->reply_size++]=0x99;
-        assert(!read_sample(&a,data)&&connects==1&&requests==1&&closes==1&&a.sock<0);assert_zero(data);
-        assert(read_sample(&a,data)&&connects==2&&requests==2);wallbox_modbus_session_close(&a);
+        if(error==1)assert(read_sample(&a,data)&&connects==2&&requests==2&&closes==1&&a.sock>=0);
+        else{
+            assert(!read_sample(&a,data)&&connects==1&&requests==1&&closes==1&&a.sock<0);assert_zero(data);
+            assert(read_sample(&a,data)&&connects==2&&requests==2);
+        }
+        wallbox_modbus_session_close(&a);
     }
     reset();a=(wallbox_modbus_session_t){.sock=-1,.transaction=UINT16_MAX,.transaction_seeded=true};assert(read_sample(&a,data)&&a.transaction==1);wallbox_modbus_session_close(&a);
     /* Existing generic wrapper still opens/closes for every scan/house call. */

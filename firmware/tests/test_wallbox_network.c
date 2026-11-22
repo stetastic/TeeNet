@@ -37,7 +37,7 @@ int main(void){
     settings_defaults(&settings);strcpy(settings.wallbox_meter_host,"192.168.1.34");settings.charge_phases=1;settings.wallbox_shelly_reverse=false;
     const char *three[]={"shelly_gen2","em24_tcp"};float actual[3],voltage[3],watts;bool voltage_valid;
     for(unsigned p=0;p<2;p++){
-        strcpy(settings.wallbox_meter_type,three[p]);assert(read_wallbox_network(&session,actual,&watts,voltage,&voltage_valid));
+        strcpy(settings.wallbox_meter_type,three[p]);assert(read_wallbox_network(&session,actual,&watts,voltage,&voltage_valid,NULL));
         assert(actual[0]==9&&actual[1]==3&&actual[2]==4&&watts==3680);
         assert(wallbox_inactive_phase_current(&settings,actual));
         float report[3];control_report(&settings,actual,9,0,false,report);assert(report[1]==0&&report[2]==0);
@@ -46,24 +46,28 @@ int main(void){
     const float idle_other[]={9,.02f,.04f};assert(!wallbox_inactive_phase_current(&settings,idle_other));
     strcpy(settings.wallbox_meter_type,"shelly_gen2");sample.voltage_valid=true;
     sample.voltage_v[0]=234.7f;sample.voltage_v[1]=235.6f;sample.voltage_v[2]=236.6f;
-    assert(read_wallbox_network(&session,actual,&watts,voltage,&voltage_valid)&&voltage_valid&&voltage[0]==234.7f);
+    assert(read_wallbox_network(&session,actual,&watts,voltage,&voltage_valid,NULL)&&voltage_valid&&voltage[0]==234.7f);
     settings.wallbox_shelly_reverse=true; /* Order is independent of feedback/contactor activation. */
-    assert(read_wallbox_network(&session,actual,&watts,voltage,&voltage_valid)&&voltage_valid&&voltage[0]==236.6f&&actual[0]==4);
+    assert(read_wallbox_network(&session,actual,&watts,voltage,&voltage_valid,NULL)&&voltage_valid&&voltage[0]==236.6f&&actual[0]==4);
     settings.wallbox_shelly_reverse=false;sample.voltage_valid=false;
-    assert(read_wallbox_network(&session,actual,&watts,voltage,&voltage_valid)&&!voltage_valid&&session.sock<0);
+    bool response_missing=true;
+    assert(read_wallbox_network(&session,actual,&watts,voltage,&voltage_valid,&response_missing)&&!voltage_valid&&!response_missing&&session.sock<0);
+    read_ok=false;
+    assert(!read_wallbox_network(&session,actual,&watts,voltage,&voltage_valid,&response_missing)&&!voltage_valid&&response_missing&&session.sock<0);
+    read_ok=true;
     sample.voltage_valid=true;sample.current_a[0]=NAN;
-    unsigned closed=session_closes;assert(!read_wallbox_network(&session,actual,&watts,voltage,&voltage_valid)&&session.sock<0&&session_closes==closed+1);
+    unsigned closed=session_closes;assert(!read_wallbox_network(&session,actual,&watts,voltage,&voltage_valid,NULL)&&session.sock<0&&session_closes==closed+1);
     sample.current_a[0]=9;sample.active_power_w=NAN;closed=session_closes;
-    assert(!read_wallbox_network(&session,actual,&watts,voltage,&voltage_valid)&&session.sock<0&&session_closes==closed+1);
+    assert(!read_wallbox_network(&session,actual,&watts,voltage,&voltage_valid,NULL)&&session.sock<0&&session_closes==closed+1);
     sample.active_power_w=3680;
     strcpy(settings.wallbox_meter_type,"xemex");settings.xemex_coils=1;assert(!wallbox_inactive_phase_current(&settings,actual));
     settings.xemex_coils=3;assert(wallbox_inactive_phase_current(&settings,actual));
     strcpy(settings.wallbox_meter_type,"sdm630");assert(wallbox_inactive_phase_current(&settings,actual));
     strcpy(settings.wallbox_meter_type,"sdm230");assert(!wallbox_inactive_phase_current(&settings,actual));
     strcpy(settings.wallbox_meter_type,"shelly_em1");sample.phases=1;sample.active_power_w=2070;
-    assert(read_wallbox_network(&session,actual,&watts,voltage,&voltage_valid)&&actual[0]==9&&actual[1]==0&&actual[2]==0&&watts==2070);
-    settings.charge_phases=3;assert(read_wallbox_network(&session,actual,&watts,voltage,&voltage_valid)&&actual[1]==9&&actual[2]==9&&watts==6210);
-    read_ok=false;assert(!read_wallbox_network(&session,actual,&watts,voltage,&voltage_valid));read_ok=true;wifi_online=false;session.sock=42;closed=session_closes;
-    assert(!read_wallbox_network(&session,actual,&watts,voltage,&voltage_valid)&&session.sock<0&&session_closes==closed+1);
+    assert(read_wallbox_network(&session,actual,&watts,voltage,&voltage_valid,NULL)&&actual[0]==9&&actual[1]==0&&actual[2]==0&&watts==2070);
+    settings.charge_phases=3;assert(read_wallbox_network(&session,actual,&watts,voltage,&voltage_valid,NULL)&&actual[1]==9&&actual[2]==9&&watts==6210);
+    read_ok=false;assert(!read_wallbox_network(&session,actual,&watts,voltage,&voltage_valid,NULL));read_ok=true;wifi_online=false;session.sock=42;closed=session_closes;
+    assert(!read_wallbox_network(&session,actual,&watts,voltage,&voltage_valid,NULL)&&session.sock<0&&session_closes==closed+1);
     puts("PASS: raw Shelly/EM24 phases preserved, unexpected L2/L3 detected, reconstructed phases excluded, Shell L2/L3 remain zero, offline readings rejected");
 }

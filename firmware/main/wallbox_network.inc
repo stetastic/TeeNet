@@ -1,6 +1,7 @@
 /* External wallbox meter only; the Shell configuration API is not feedback. */
-static bool read_wallbox_network(wallbox_modbus_session_t *session,float out[3],float *total_w,float voltage[3],bool *voltage_valid) {
+static bool read_wallbox_network(wallbox_modbus_session_t *session,float out[3],float *total_w,float voltage[3],bool *voltage_valid,bool *response_missing) {
     *voltage_valid=false;
+    if(response_missing)*response_missing=false;
     char type[sizeof(settings.wallbox_meter_type)],host[sizeof(settings.wallbox_meter_host)];
     unsigned phases;uint8_t unit;
     LOCK();bool online=wifi_online;strcpy(type,settings.wallbox_meter_type);strcpy(host,settings.wallbox_meter_host);
@@ -16,7 +17,10 @@ static bool read_wallbox_network(wallbox_modbus_session_t *session,float out[3],
         reading.active_power_w=em24.active_power_w;reading.phases=3;
     }else if(!strcmp(type,"shelly_gen2")){
         uint8_t data[SHELLY_EM_COUNT*2];
-        if(!wallbox_modbus_session_read(session,host,1,revision,SHELLY_EM_START,SHELLY_EM_COUNT,data,sizeof(data),2500))return false;
+        if(!wallbox_modbus_session_read(session,host,1,revision,SHELLY_EM_START,SHELLY_EM_COUNT,data,sizeof(data),2500)){
+            if(response_missing)*response_missing=true;
+            return false;
+        }
         if(!shelly_modbus_decode_em(data,sizeof(data),&reading)){wallbox_modbus_session_close(session);return false;}
         if(!reading.voltage_valid)wallbox_modbus_session_close(session);
     }else if(!read_shelly_modbus(host,type,&reading,2500))return false;

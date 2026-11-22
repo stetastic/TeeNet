@@ -19,7 +19,13 @@ static inline bool wallbox_modbus_session_read(wallbox_modbus_session_t *session
     }
     int64_t deadline=now_ms()+timeout_ms;
     if(session->sock>=0&&(session->revision!=revision||session->unit!=unit||strcmp(session->host,host)))wallbox_modbus_session_close(session);
-    if(session->sock>=0&&wallbox_modbus_session_peek(session->sock)!=1)goto failed;
+    if(session->sock>=0){
+        int ready=wallbox_modbus_session_peek(session->sock);
+        if(ready<0)goto failed;
+        /* The peer closed between polls. Open the next connection before
+           sending the request so an orderly close does not lose a sample. */
+        if(ready==0)wallbox_modbus_session_close(session);
+    }
     if(session->sock<0){
         session->sock=tcp_connect_timeout(host,502,timeout_ms);
         if(session->sock<0)goto failed;
