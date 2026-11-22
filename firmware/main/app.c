@@ -5,6 +5,7 @@
 #include "esp_flash.h"
 #include "mbedtls/sha256.h"
 #include "charge_sessions.h"
+#include "session_archive.h"
 #include "charge_counter.h"
 #include "charge_curve.h"
 #include "soc_goal.h"
@@ -1816,6 +1817,38 @@ static cJSON *status_json(bool include_token) {
 
 #include "mqtt_status_snapshot.inc"
 
+/* Announce the newest durable closed session. A retained marker also covers
+   sessions closed while ioBroker was disconnected. */
+static uint32_t mqtt_archive_connection;
+static void mqtt_archive_notice(void) {
+    static uint32_t sent_connection;
+    static char sent_cursor[22];
+    char cursor[22];
+    LOCK();
+    bool ready=mqtt_online && stats_storage_ok && !storage_error && !sessions.checkpoint;
+    uint32_t connection=mqtt_archive_connection;
+    if(ready){
+        const session_store_t *store=&sessions.store;
+        const charge_session_t *latest=NULL;
+        for(unsigned i=0;i<store->count;i++){
+            const charge_session_t *row=sessions_recent(store,i);
+            if(store->active_slot && row==&store->records[store->active_slot-1])continue;
+            if(session_recorded(row)){latest=row;break;}
+        }
+        session_cursor(cursor,latest);
+    }
+    UNLOCK();
+    if(!ready || (sent_connection==connection && !strcmp(cursor,sent_cursor)) ||
+       !mqtt_client || esp_mqtt_client_get_outbox_size(mqtt_client)>8000)return;
+    char topic[160], payload[56];
+    snprintf(topic,sizeof(topic),"%s/sensor/session_archive",settings.mqtt_prefix);
+    snprintf(payload,sizeof(payload),"%s:%s",mqtt_device_id,cursor);
+    if(esp_mqtt_client_enqueue(mqtt_client,topic,payload,0,1,1,false)>=0){
+        strcpy(sent_cursor,cursor);
+        sent_connection=connection;
+    }
+}
+
 static void publish_value(const char *name,cJSON *value) {
 
     char topic[160]; snprintf(topic,sizeof(topic),"%s/sensor/%s",settings.mqtt_prefix,name);
@@ -2226,7 +2259,7 @@ static void mqtt_event(void *arg,esp_event_base_t base,int32_t id,void *data) {
     if(id==MQTT_EVENT_CONNECTED) {
         LOCK();if(settings.phase_output_transport==0)phase_mqtt_seen_connection=true;UNLOCK();
 
-        LOCK(); mqtt_online=true; UNLOCK(); char subscription[192];
+        LOCK(); mqtt_online=true; mqtt_archive_connection++; UNLOCK(); char subscription[192];
         snprintf(subscription,sizeof(subscription),"%s/private/grid_voltages",settings.mqtt_prefix);esp_mqtt_client_subscribe(e->client,subscription,0);
 
         snprintf(subscription,sizeof(subscription),"%s/command/#",settings.mqtt_prefix); esp_mqtt_client_subscribe(e->client,subscription,1);
@@ -3771,6 +3804,7 @@ static void status_task(void *arg) {
             next_optional_check=now+5000;
         }
 
+        mqtt_archive_notice();
         if(now-publish>=ems_param_ms(EP_MQTT_PUBLISH)) { mqtt_state(); publish=now; }
 
         if(now-reconnect>=10000) {

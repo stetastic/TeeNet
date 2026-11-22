@@ -38,7 +38,7 @@
     "advanced": {
       "type": "panel", "label": "Erweitert",
       "items": {
-        "archiveHost": {"type":"text","label":"Ladearchiv: TeeNet-IP oder Hostname","help":"Abgeschlossene Ladesitzungen alle fünf Minuten aus TeeNet ab Version 1.25 übernehmen. Leer lassen zum Ausschalten."},
+        "archiveHost": {"type":"text","label":"Ladearchiv: TeeNet-IP oder Hostname","help":"Nach Sitzungsabschluss per MQTT benachrichtigen lassen und neue Sitzungen übernehmen. Leer lassen zum Ausschalten."},
         "telemetryTimeout": {"type": "number", "label": "Verbindung gilt als veraltet nach (Sekunden)", "min": 45, "max": 300},
         "inputInterval": {"type": "select", "label": "Messwerte weitergeben alle", "options": [{"value": 5, "label": "5 Sekunden"}, {"value": 10, "label": "10 Sekunden"}]},
         "energyMaxAge": {"type": "number", "label": "Maximales Alter: PV-/Akkuleistung (Sekunden)", "min": 10, "max": 86400},

@@ -4,10 +4,11 @@ const { randomBytes } = require('node:crypto');
 const { METRICS, CONTROLS, CONTROL_FEEDBACK, config, parseMetric, command, validSource } = require('./protocol');
 
 class Bridge {
-    constructor(adapter, mqtt, now = Date.now) {
+    constructor(adapter, mqtt, now = Date.now, archive) {
         this.io = adapter;
         this.mqtt = mqtt;
         this.now = now;
+        this.archive = archive;
         this.cache = new Map();
         this.sources = new Map();
         this.units = new Map();
@@ -134,6 +135,8 @@ class Bridge {
                     if (!this.client.connected) return;
                     this.broker = true;
                     await this.updateConnection();
+                    if (this.subscribed) this.archive?.requestSync();
+                    this.subscribed = true;
                 });
             });
         }));
@@ -195,6 +198,10 @@ class Bridge {
         }
         if (!topic.startsWith(`${this.cfg.prefix}/sensor/`)) return;
         const key = topic.slice(this.cfg.prefix.length + 8);
+        if (key === 'session_archive') {
+            this.archive?.notice(bytes.toString());
+            return;
+        }
         const value = parseMetric(key, bytes);
         if (value === undefined) return;
         // Old retained measurements are not evidence that the ESP is alive.

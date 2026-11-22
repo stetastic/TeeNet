@@ -36,3 +36,62 @@ test('preserves legacy monthly states and rejects corrupt records before overwri
     io.states.set(id,{val:'broken'});await assert.rejects(a.ingest(packet([solar])));assert.equal(io.states.get(id).val,'broken');
     assert.equal(endpoint('192.168.1.166').pathname,'/api/export.json');assert.throws(()=>endpoint('a/b'));
 });
+
+test('completion notices request only unseen sessions and a restarted adapter resumes from the stored cursor',async()=>{
+    const io=fixture(), a=new SessionArchive(io);
+    const device=packet([]).device;
+    const next={...solar,id:8,start_epoch:solar.start_epoch+86400,date:20261123};
+    const oldCursor=solar.start_epoch+'_7', newCursor=next.start_epoch+'_8';
+    const requests=[];
+    a.read=async after=>{
+        requests.push(after);
+        if(after==='0_0')return {...packet([solar]),cursor:oldCursor};
+        if(after===oldCursor)return {...packet([next]),cursor:newCursor};
+        return {...packet([]),cursor:newCursor};
+    };
+    try{
+        await a.start();
+        await a.pending;
+        a.notice(device+':'+oldCursor);
+        await a.update();
+        assert.deepEqual(requests,['0_0']);
+        a.notice('invalid');
+        a.notice(device+':'+newCursor);
+        await a.pending;
+        a.notice(device+':'+newCursor);
+        assert.deepEqual(requests,['0_0',oldCursor]);
+        assert.equal(io.states.get('stats.cursor').val,device+':'+newCursor);
+        assert.equal(io.states.get('stats.total.sessions').val,2);
+    }finally{await a.stop();}
+
+    const restarted=new SessionArchive(io);
+    restarted.read=a.read;
+    try{
+        await restarted.start();
+        await restarted.pending;
+        restarted.requestSync();
+        await restarted.pending;
+        assert.deepEqual(requests,['0_0',oldCursor,newCursor,newCursor]);
+        assert.equal(io.states.get('stats.total.sessions').val,2);
+    }finally{await restarted.stop();}
+});
+
+test('failed archive writes preserve the cursor and older firmware still supports a full import',async()=>{
+    const io=fixture(), archive=new SessionArchive(io);
+    archive.read=async()=>packet([solar]);
+    await archive.sync();
+    assert.equal(io.states.get('stats.cursor').val,'');
+    assert.ok(archive.nextRead-Date.now()<=300000);
+
+    const newer={...solar,id:9};
+    const cursor=solar.start_epoch+'_9';
+    archive.read=async()=>({...packet([newer]),cursor});
+    const write=io.setForeignStateAsync;
+    io.setForeignStateAsync=async()=>{throw Error('disk offline');};
+    await assert.rejects(archive.sync(),/disk offline/);
+    assert.equal(io.states.get('stats.cursor').val,'');
+    io.setForeignStateAsync=write;
+    await archive.sync();
+    assert.equal(io.states.get('stats.cursor').val,packet([]).device+':'+cursor);
+    assert.equal(io.states.get('stats.total.sessions').val,2);
+});

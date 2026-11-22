@@ -5,7 +5,7 @@ Kompatibel mit der MQTT-Schnittstelle von Version 1.13. Die ESP-Firmware muss f�
 
 ## Einrichten
 
-1. Das Testpaket auf dem ioBroker-Rechner installieren: `iobroker url /pfad/iobroker.teenet-0.1.3.tgz`. Danach eine Instanz anlegen: `iobroker add teenet`.
+1. Das Paket auf dem ioBroker-Rechner installieren: `iobroker url /pfad/iobroker.teenet-0.2.0.tgz`. Danach eine Instanz anlegen: `iobroker add teenet`.
 2. In den Instanz-Einstellungen die Adresse und den Port des vorhandenen MQTT-Brokers eintragen. Benutzername und Passwort bei Bedarf ergänzen.
 3. Das Topic-Präfix aus TeeNet übernehmen, normalerweise `wallbox-ems`. Für jedes weitere Gerät eine eigene Instanz und ein eigenes Präfix verwenden.
 4. Speichern und die Instanz einschalten. `teenet.0.info.connection` wird erst bei aktuellen ESP-Rückmeldungen wahr.
@@ -53,7 +53,7 @@ Das Quellalter zählt ab der letzten Aktualisierung des Datenpunkts (`ts`, nicht
 
 ## Verbindung und Verbrauch
 
-ESP-Messwerte werden über die vorhandenen MQTT-Themen empfangen. Es erfolgen keine zusätzlichen HTTP-Abfragen. Die aktuelle Firmware sendet normale Messwerte etwa alle 20 Sekunden und Energie etwa jede Minute. Die Weitergabe ausgewählter Eingangswerte erfolgt alle 5 oder 10 Sekunden.
+ESP-Messwerte werden über die vorhandenen MQTT-Themen empfangen. Die aktuelle Firmware sendet normale Messwerte etwa alle 20 Sekunden und Energie etwa jede Minute. Die Weitergabe ausgewählter Eingangswerte erfolgt alle 5 oder 10 Sekunden. Nur das optionale Ladearchiv verwendet HTTP.
 
 `info.connection` wird nur bei aktiver Brokerverbindung und frischen ESP-Messwerten wahr. Gespeicherte MQTT-Messwerte allein gelten nicht als Verbindung. Veraltete Werte bleiben mit Fehlerqualität sichtbar und dürfen nicht als aktuelle Messung genutzt werden.
 
@@ -78,7 +78,7 @@ Die Tests prüfen Befehle, Rückmeldungen, Ausfälle, Quellenalter und einen ech
 
 ## Ladearchiv ab TeeNet 1.25
 
-Unter **Erweitert → Ladearchiv** die Adresse des ESP eintragen. Der Adapter liest abgeschlossene Sitzungen alle fünf Minuten per HTTP. Die Archivierung funktioniert auch bei schreibgeschützter Wallboxsteuerung. Ein leeres Adressfeld beendet den Abruf. Für denselben ESP den separaten Archivskript-Timer ausschalten, sobald der Adapter übernimmt.
+Unter **Erweitert → Ladearchiv** die Adresse des ESP eintragen. Die aktuelle Firmware meldet gespeicherte, abgeschlossene Sitzungen per MQTT unter `sensor/session_archive` im eingestellten Topic-Präfix. Der Adapter übernimmt per HTTP nur die Sitzungen seit dem letzten gesicherten Eintrag. Er gleicht bei einem Neustart, nach einer MQTT-Unterbrechung und stündlich zur Absicherung ab. Bei älterer Firmware ohne Teilabruf bleibt das Fünf-Minuten-Intervall bestehen. Die Archivierung funktioniert auch bei schreibgeschützter Wallboxsteuerung. Ein leeres Adressfeld beendet den Abruf. Für denselben ESP den separaten Archivskript-Timer ausschalten, sobald der Adapter übernimmt.
 
 Die Monatsarchive liegen dauerhaft unter `0_userdata.0.TeeNet.Archiv.<Gerät>.<JJJJMM>` und lassen sich mit der ioBroker-Datenbanksicherung sichern. Bestehende Monatsarchive des TeeNet-Skripts werden weiterverwendet. Gerätekennung, Startzeit und Sitzungsnummer verhindern Doppelzählungen. Nach einem Ausfall holt der Adapter alle abgeschlossenen Sitzungen nach, die der ESP noch gespeichert hat.
 

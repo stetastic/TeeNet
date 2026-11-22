@@ -14,8 +14,8 @@ class TeeNet extends utils.Adapter {
     }
 
     async onReady() {
-        this.bridge = new Bridge(this, mqtt);
         this.archive = new SessionArchive(this);
+        this.bridge = new Bridge(this, mqtt, Date.now, this.archive);
         this.archiveStartup = this.archive.start().catch(error => this.log.error('Ladearchiv: ' + error.message));
         try { await this.bridge.start(); }
         catch (error) {

@@ -8,7 +8,12 @@ const FIELDS = {
     cost_eur: ['Ladekosten', '€'], solar_cost_eur: ['Kosten Solar / Hausakku', '€'], grid_cost_eur: ['Netzkosten', '€'],
 };
 const interval = 300000;
+const recoveryInterval = 3600000;
+const retryInterval = 30000;
 const calendar = new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Berlin',year:'numeric',month:'2-digit',day:'2-digit'});
+const cursorPattern = /^(?:0|[1-9]\d{0,9})_(?:0|[1-9]\d{0,9})$/;
+const markerPattern = /^teenet(?:_[a-f0-9]+)?:(?:0|[1-9]\d{0,9})_(?:0|[1-9]\d{0,9})$/;
+const dateKey = now => calendar.format(now).replaceAll('-','');
 
 function endpoint(host) {
     if (typeof host !== 'string' || !/^[\w.:[\]-]+$/.test(host.trim())) throw Error('Ungültige TeeNet-Geräteadresse');
@@ -73,7 +78,12 @@ function stateObject(name, type, role, unit) {
     return { type: 'state', common: {name, type, role, read: true, write: false, ...(unit ? {unit} : {})}, native: {} };
 }
 class SessionArchive {
-    constructor(io) { this.io=io; this.months=new Map(); this.stopped=false; }
+    constructor(io) {
+        this.io=io;
+        this.months=new Map();
+        this.stopped=false;
+        this.nextRead=0;
+    }
     async start() {
         const host=this.io.config.archiveHost?.trim();
         if (!host) return;
@@ -89,12 +99,16 @@ class SessionArchive {
         for(const [k,name,type,role] of [
             ['device','Archiviertes Gerät','string','text'],['lastSync','Zuletzt abgeglichen','number','date'],
             ['lastError','Archivstatus','string','text'],['months','Monatsauswertung','string','json'],
-            ['recentSessions','Letzte Ladesitzungen','string','json']]){
+            ['recentSessions','Letzte Ladesitzungen','string','json'],
+            ['cursor','Zuletzt archivierte Ladesitzung','string','text']]){
             await io.setObjectNotExistsAsync('stats.'+k,stateObject(name,type,role));
         }
         const last=await io.getStateAsync('stats.device');
         if(last && DEVICE.test(last.val)) this.previous=last.val;
-        if(!this.stopped) this.run();
+        const saved=(await io.getStateAsync('stats.cursor'))?.val;
+        if(typeof saved==='string' && markerPattern.test(saved) && saved.startsWith(this.previous+':')) this.cursor=saved;
+        this.started=true;
+        this.requestSync();
     }
     async loadDevice(device) {
         if(this.device===device) return;
@@ -132,40 +146,80 @@ class SessionArchive {
     set(id,val) { return this.io.setStateChangedAsync('stats.'+id,{val,ack:true}); }
     async publish(now) {
         // TeeNet timestamps its sessions in CET/CEST even if the ioBroker host runs in UTC.
-        const date=calendar.format(now).replaceAll('-','');
+        const date=dateKey(now);
         const {periods,recent,timeline}=aggregate(this.months,date);
         for(const [period,sum] of Object.entries(periods)) {
             for(const [k,val] of Object.entries(totals(sum))) await this.set(period+'.'+k,val);
         }
         await this.set('months',JSON.stringify(timeline));
         await this.set('recentSessions',JSON.stringify(recent));
+        this.publishedDate=date;
     }
-    async poll() {
-        if(!this.device && this.previous) await this.loadDevice(this.previous);
-        let readError;
-        try {
-            this.abort=new AbortController();
-            const response=await fetch(this.url,{redirect:'error',signal:AbortSignal.any([this.abort.signal,AbortSignal.timeout(10000)])});
-            if(!response.ok){await response.body?.cancel();throw Error('HTTP '+response.status);}
-            const body=await response.json();
-            if(this.stopped)return;
-            await this.ingest(body);
-        } catch(error){readError=error;}
+
+    async read(after) {
+        const url=new URL(this.url);
+        url.searchParams.set('after',after);
+        this.abort=new AbortController();
+        const response=await fetch(url,{redirect:'error',signal:AbortSignal.any([this.abort.signal,AbortSignal.timeout(10000)])});
+        if(!response.ok){await response.body?.cancel();throw Error('HTTP '+response.status);}
+        return response.json();
+    }
+
+    async sync() {
+        const [device,after]=this.cursor ? this.cursor.split(':') : ['', '0_0'];
+        let body=await this.read(after);
+        if(after!=='0_0' && body?.cursor!==undefined && body.device!==device) body=await this.read('0_0');
         if(this.stopped)return;
-        if(this.device) await this.publish(new Date());
-        if(readError)throw readError;
+        if(body?.cursor!==undefined && (typeof body.cursor!=='string' || !cursorPattern.test(body.cursor)))
+            throw Error('Ungültige Sitzungskennung');
+        await this.ingest(body);
+        const cursor=body.cursor===undefined ? '' : body.device+':'+body.cursor;
+        await this.set('cursor',cursor);
+        this.cursor=cursor;
+        await this.publish(new Date());
         await this.set('lastError','');
         await this.set('lastSync',Date.now());
         this.lastError='';
+        this.nextRead=Date.now()+(cursor ? recoveryInterval : interval);
     }
+
+    notice(marker) {
+        if(!markerPattern.test(marker) || marker===this.lastNotice)return;
+        this.lastNotice=marker;
+        if(marker!==this.cursor)this.requestSync();
+    }
+
+    requestSync() {
+        if(!this.started || this.stopped)return;
+        this.nextRead=0;
+        if(!this.pending)this.run();
+        else this.syncRequested=true;
+    }
+
+    async update() {
+        if(!this.device && this.previous) await this.loadDevice(this.previous);
+        if(this.stopped)return;
+        if(this.device && this.publishedDate!==dateKey(new Date())) await this.publish(new Date());
+        if(Date.now()>=this.nextRead)await this.sync();
+    }
+
     run() {
-        this.pending=this.poll().catch(async error=>{
+        clearTimeout(this.timer);
+        this.pending=this.update().catch(async error=>{
             if(this.stopped)return;
+            this.nextRead=Date.now()+retryInterval;
             if(this.lastError!==error.message)this.io.log.warn('Ladearchiv: '+error.message);
             this.lastError=error.message;
             await this.set('lastError',error.message);
         }).catch(error=>this.io.log.warn('Ladearchiv: '+error.message)).finally(()=>{
-            if(!this.stopped)this.timer=setTimeout(()=>this.run(),interval);
+            this.pending=null;
+            if(this.stopped)return;
+            if(this.syncRequested){
+                this.syncRequested=false;
+                this.nextRead=0;
+            }
+            const delay=Math.min(interval,Math.max(0,this.nextRead-Date.now()));
+            this.timer=setTimeout(()=>this.run(),delay);
         });
     }
     async stop() { this.stopped=true; clearTimeout(this.timer); this.abort?.abort(); await this.pending; }

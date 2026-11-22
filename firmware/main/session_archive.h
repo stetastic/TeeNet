@@ -3,6 +3,24 @@
 #include <inttypes.h>
 #include <stdio.h>
 
+static inline void session_cursor(char text[22], const charge_session_t *row) {
+    snprintf(text, 22, "%" PRIu32 "_%" PRIu32, row ? row->start_epoch : 0, row ? row->id : 0);
+}
+
+static inline bool session_cursor_valid(const char *text) {
+    for (unsigned field = 0; field < 2; field++) {
+        uint64_t value = 0;
+        unsigned digits = 0;
+        while (*text >= '0' && *text <= '9') {
+            value = value * 10 + (*text++ - '0');
+            if (++digits > 10 || value > UINT32_MAX) return false;
+        }
+        if (!digits || (digits > 1 && text[-(int)digits] == '0')) return false;
+        if (field == 0 && *text++ != '_') return false;
+    }
+    return *text == '\0';
+}
+
 /* The device key is generated locally from the station MAC (ASCII hex). */
 static inline int session_archive_row(char *line,size_t size,const char *device,
                                       const charge_session_t *r,bool influx,bool first){

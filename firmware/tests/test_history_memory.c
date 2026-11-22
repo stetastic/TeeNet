@@ -10,7 +10,7 @@
 #include <time.h>
 
 typedef int esp_err_t;
-enum { ESP_OK=0, ESP_FAIL=-1, HTTPD_400_BAD_REQUEST=400, HTTPD_500_INTERNAL_SERVER_ERROR=500 };
+enum { ESP_OK=0, ESP_FAIL=-1, ESP_ERR_NOT_FOUND=0x105, HTTPD_400_BAD_REQUEST=400, HTTPD_500_INTERNAL_SERVER_ERROR=500 };
 typedef struct { const char *uri; size_t chunks,length,fail_chunk; } httpd_req_t;
 static char body[256*1024];
 static energy_t energy;
@@ -44,7 +44,7 @@ static int httpd_query_key_value(const char *q,const char *key,char *buf,size_t 
         }
         q=strchr(q,'&');if(!q)break;q++;
     }
-    return ESP_FAIL;
+    return ESP_ERR_NOT_FOUND;
 }
 typedef union{max_align_t align;size_t size;} prefix_t;
 static void *tracked_alloc(size_t n){
@@ -138,6 +138,24 @@ int main(void){
         assert(peak==full_peak);
         printf("PASS %s: 3 and 512 records use same HTTP allocation, 1000 calls, read/transfer/allocation failures cleaned up\n",urls[route]);
     }
+    flash_count=512;
+    const char *deltas[]={"/api/export.json?after=1700000510_511",
+        "/api/export.json?after=1700000509_510","/api/export.json?after=1699999999_1"};
+    const int expected[]={0,1,510};
+    for(unsigned i=0;i<3;i++){
+        httpd_req_t request={.uri=deltas[i]};
+        assert(session_archive_handler(&request)==ESP_OK&&!live&&!readers);
+        cJSON *result=cJSON_Parse(body);assert(result);
+        cJSON *rows=field(result,"sessions");
+        assert(cJSON_GetArraySize(rows)==expected[i]);
+        assert(!strcmp(field(result,"cursor")->valuestring,"1700000510_511"));
+        if(expected[i])assert(field(cJSON_GetArrayItem(rows,0),"id")->valueint==511);
+        if(i==1)assert(request.length<512);
+        cJSON_Delete(result);
+    }
+    httpd_req_t invalid={.uri="/api/export.json?after=4294967296_1"};
+    assert(session_archive_handler(&invalid)==400&&!live&&!readers);
+    puts("PASS incremental export: unchanged head, one closed session, expired cursor and invalid cursor");
     minute=0;httpd_req_t r={.uri=urls[0]};assert(history_handler(&r)==ESP_OK&&!live);
     cJSON *tree=cJSON_Parse(body);assert(tree&&cJSON_GetArraySize(field(tree,"points"))==1);cJSON_Delete(tree);
 }

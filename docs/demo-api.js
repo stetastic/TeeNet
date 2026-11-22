@@ -199,7 +199,13 @@
     return '\uFEFF'+csv.join('\r\n')+'\r\n';
   }
   function sessionArchive(url) {
-    return {schema:1,device:'teenet_de00',sessions:selectedSessions(url).filter(s=>!s.active).map(({active,unknown_kwh,...r})=>r).sort((a,b)=>a.start_epoch-b.start_epoch)};
+    const rows=selectedSessions(url).filter(s=>!s.active).map(({active,unknown_kwh,...r})=>r).sort((a,b)=>a.start_epoch-b.start_epoch);
+    const result={schema:1,device:'teenet_de00',sessions:rows};
+    if(!url.searchParams.has('after'))return result;
+    const key=row=>row.start_epoch+'_'+row.id;
+    const after=url.searchParams.get('after');
+    const index=rows.findIndex(row=>key(row)===after);
+    return {...result,cursor:rows.length?key(rows.at(-1)):'0_0',sessions:rows.slice(index+1).reverse()};
   }
   function groupedSessions(url) {
     const params = url.searchParams;
