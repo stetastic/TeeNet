@@ -763,10 +763,10 @@ function powerFactor(phases=state?.charge_phases??3){const actual=phases===1?sta
 function phaseForPower(kw){return state?.phase_switch_enabled?(kw>0&&kw<=3.5?1:3):(state?.fixed_charge_phases??3);}
 function powerSteps(){
   const minimumA=state?.min_charge_a??7.8,factor=powerFactor(3),minimum=minimumA*factor,maximum=(state?.max_charge_a??16)*factor;
-  // The standard floor is an explicit 5.6-kW step, not a half-kilowatt preset.
-  // A higher electrical current floor still wins at unusually high voltage.
+  // Use the standard three-phase minimum unless a different current floor
+  // has been commissioned in the expert settings.
   const standard=Math.abs(minimumA-7.8)<.01;
-  const firstThree=Math.max(standard?5.6:0,Math.ceil((minimum-1e-6)*10)/10);
+  const firstThree=Math.max(standard?6:0,Math.ceil((minimum-1e-6)*10)/10);
   const three=firstThree<=maximum+1e-6?[firstThree,...Array.from({length:42},(_,i)=>1.5+i*.5).filter(kw=>kw>firstThree+1e-6&&kw<=maximum+1e-6)]:[];
   const one=(state?.phase_switch_enabled||state?.fixed_charge_phases===1)?Array.from({length:5},(_,i)=>1.5+i*.5).filter(kw=>kw>=minimumA*powerFactor(1)-.05&&kw<=state.max_charge_a*powerFactor(1)+.05):[];
   return [0,...one,...(state?.fixed_charge_phases===1?[]:three)];

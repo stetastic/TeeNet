@@ -133,7 +133,7 @@ static void mqtt_event(void *arg,esp_event_base_t base,int32_t id,void *data) {
     if(id==MQTT_EVENT_CONNECTED) {
         LOCK();if(settings.phase_output_transport==0)phase_mqtt_seen_connection=true;UNLOCK();
 
-        LOCK(); mqtt_online=true; UNLOCK(); char subscription[192];
+        LOCK(); mqtt_online=true; mqtt_archive_connection++; UNLOCK(); char subscription[192];
         snprintf(subscription,sizeof(subscription),"%s/private/grid_voltages",settings.mqtt_prefix);esp_mqtt_client_subscribe(e->client,subscription,0);
 
         snprintf(subscription,sizeof(subscription),"%s/command/#",settings.mqtt_prefix); esp_mqtt_client_subscribe(e->client,subscription,1);

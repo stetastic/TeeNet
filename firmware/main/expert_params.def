@@ -9,7 +9,7 @@ P(PV_DOWN,"Regelverhalten zur Shell","Leistung reduzieren alle","s",10,1,60,1,"P
 P(PV_STEP,"Regelverhalten zur Shell","Erhöhung pro Schritt","A",1,0.1,2,0.1,"PV-Regelung: maximaler Anstieg der Stromvorgabe pro Schritt.")
 P(PV_LEAD,"Regelverhalten zur Shell","Vorgabe höchstens über Messung","A",1,0.1,2,0.1,"PV-Regelung: wartet auf das Fahrzeug, wenn der Iststrom hinterherläuft.")
 P(PV_DEADBAND,"Regelverhalten zur Shell","Schwankungen ignorieren bis","A",0.2,0.05,1,0.05,"PV-Regelung: kleinere Stromabweichungen ändern die Vorgabe nicht.")
-P(MIN_CURRENT,"Ladegrenzen","Mindestladestrom je Phase","A",7.8,6,16,0.1,"Standard für die dreiphasige Untergrenze von 5,6 kW. Der Leistungsregler berücksichtigt die aktuellen Phasenspannungen. Abweichende Stromgrenzen erst unter Last prüfen.")
+P(MIN_CURRENT,"Ladegrenzen","Mindestladestrom je Phase","A",7.8,6,16,0.1,"Mit diesem Standard beginnt die manuelle dreiphasige Auswahl bei 6,0 kW. Der Leistungsregler berücksichtigt die aktuellen Phasenspannungen. Abweichende Stromgrenzen erst unter Last prüfen.")
 P(GRID_FALLBACK,"Ladegrenzen","Ersatzgrenze ohne Hausphasenwerte","W",8000,1000,11000,100,"Begrenzt die Ladung bei fehlenden Einzelphasenmessungen.")
 P(STOP_CONFIRM,"Ladeabbrüche","Ladeabbruch bestätigen","s",20,10,120,1,"So lange muss der zuvor vorhandene Ladestrom fehlen.")
 P(STOP_COUNT,"Ladeabbrüche","Abbrüche bis zur Sperre","",5,2,10,1,"Anzahl bestätigter Abbrüche innerhalb des Zeitfensters.")

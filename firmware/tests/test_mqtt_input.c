@@ -18,6 +18,7 @@ static settings_t settings;
 static bool wifi_online=true;
 static opendtu_state_t opendtu;
 static bool mqtt_online,phase_mqtt_seen_connection,phase_mqtt_allowed,phase_mqtt_pending;
+static uint32_t mqtt_archive_connection;
 static unsigned phase_goal,mqtt_rejected,apply_calls,cancel_calls,subscriptions;
 static int locks;
 static unsigned solis_ack_calls;
@@ -101,7 +102,7 @@ int main(void){
     settings_defaults(&settings);settings.mqtt_enabled=true;settings.nominal_v=236;
     assert(mqtt_input("command/power_kw","6"));
     assert(!mqtt_input("command/power_kw","5.5"));
-    assert(mqtt_input("command/power_kw","5.6"));
+    assert(!mqtt_input("command/power_kw","5.6"));
     assert(!mqtt_input("command/power_kw","5.55"));
     settings_defaults(&settings);settings.basic_mode=false;settings.heatpump_enabled=true;
     strcpy(settings.heatpump_source,"mqtt");strcpy(settings.heatpump_input_topic,"external/hp/watts");

@@ -26,7 +26,7 @@
 #define EMS_SETTINGS_STORAGE_KEY "settings_v" EMS_STRING_VALUE(EMS_SETTINGS_VERSION)
 #define EMS_MIN_CHARGE_A 6.0f
 #define EMS_DEFAULT_MIN_CHARGE_A 7.8f
-#define EMS_DEFAULT_THREE_PHASE_POWER_KW 5.6f
+#define EMS_DEFAULT_THREE_PHASE_POWER_KW 6.0f
 #define EMS_BATTERY_CAPACITY_KWH 20.0f
 #define EMS_BATTERY_DISCHARGE_MAX_W 4000.0f
 #define EMS_BATTERY_BUFFER_MS (ems_param_ms(EP_BAT_BUFFER))
@@ -332,6 +332,7 @@ config_gate_t hardware_config_gate(bool charging,bool quiescent,bool has_measure
 typedef enum { EMS_WIFI_AP, EMS_WIFI_STA, EMS_WIFI_AP_STA } ems_wifi_mode_t;
 ems_wifi_mode_t wifi_recovery_mode(bool configured, bool online, bool forced_ap, int64_t now, int64_t lost_at);
 float control_target(const settings_t *s, bool meter_ok, bool feedback_ok, bool pv_ok);
+float manual_minimum_current_a(const settings_t *s,unsigned phases);
 float manual_minimum_power_kw(const settings_t *s,unsigned phases);
 bool house_phase_currents_ready(bool supported, const float house[3],
                                 int64_t now, int64_t measured_at);

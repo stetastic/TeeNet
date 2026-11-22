@@ -4,10 +4,10 @@ const context={state:{min_charge_a:7.8,max_charge_a:16,fixed_charge_phases:3,pha
 vm.createContext(context);
 vm.runInContext(source.slice(source.indexOf('function powerFactor('),source.indexOf('function selectedPower(')),context);
 const steps=()=>Array.from(context.powerSteps());
-assert.equal(steps()[1],5.6);assert(steps().includes(6));assert(!steps().includes(5.5));
+assert.equal(steps()[1],6);assert(!steps().includes(5.6));
 for(const factor of [.66,.69,.70,.716,.75]){
  context.state.three_power_per_amp_kw=factor;
- const values=steps();assert(values[1]>=5.6);assert(values.every((v,i)=>i===0||v>values[i-1]));
+ const values=steps();assert(values[1]>=6);assert(values.every((v,i)=>i===0||v>values[i-1]));
  assert(values.slice(1).every(kw=>kw+1e-6>=7.8*factor&&kw<=16*factor+1e-6));
 }
 context.state.three_power_per_amp_kw=.70;context.state.min_charge_a=10;
@@ -17,4 +17,4 @@ for(const file of ['main/dashboard.html','main/dashboard.js','tools/expert_ui.js
  const text=fs.readFileSync(file,'utf8');
  assert(!/charge-minimum-power|expert-minimum-power|minimum_power_kw|\/api\/charge-limits/.test(text),file+' retains the removed preset selection');
 }
-console.log('PASS: explicit 5.6-kW first step, voltage/current bounds, commissioned expert floor, single-phase steps, removed preset selectors');
+console.log('PASS: 6-kW first step, voltage/current bounds, commissioned expert floor, single-phase steps, removed preset selectors');

@@ -1063,14 +1063,17 @@ ems_wifi_mode_t wifi_recovery_mode(bool configured,bool online,bool forced_ap,in
     if(lost_at>0 && now>=lost_at && now-lost_at>=300000) return EMS_WIFI_AP_STA;
     return EMS_WIFI_STA;
 }
+float manual_minimum_current_a(const settings_t *s,unsigned phases) {
+    float minimum=s->min_charge_a;
+    if(phases!=3||fabsf(minimum-EMS_DEFAULT_MIN_CHARGE_A)>=.01f)return minimum;
+    float watts_per_amp=ems_phase_voltage_sum(s,3)*s->power_factor;
+    return watts_per_amp>0?fmaxf(minimum,EMS_DEFAULT_THREE_PHASE_POWER_KW*1000/watts_per_amp):minimum;
+}
 float manual_minimum_power_kw(const settings_t *s,unsigned phases) {
     if(!s||(phases!=1&&phases!=3))return NAN;
-    float kw=s->min_charge_a*ems_phase_voltage_sum(s,phases)*s->power_factor/1000;
+    float kw=manual_minimum_current_a(s,phases)*ems_phase_voltage_sum(s,phases)*s->power_factor/1000;
     if(!isfinite(kw)||kw<=0)return NAN;
-    float minimum=ceilf((kw-.000001f)*10)/10;
-    if(phases==3&&fabsf(s->min_charge_a-EMS_DEFAULT_MIN_CHARGE_A)<.01f)
-        minimum=fmaxf(EMS_DEFAULT_THREE_PHASE_POWER_KW,minimum);
-    return minimum;
+    return ceilf((kw-.000001f)*10)/10;
 }
 float control_target(const settings_t *s,bool meter_ok,bool feedback_ok,bool pv_ok) {
     if (!s->enabled || s->mode==MODE_OFF || !meter_ok || !feedback_ok) return 0;
@@ -1078,6 +1081,11 @@ float control_target(const settings_t *s,bool meter_ok,bool feedback_ok,bool pv_
     float target=s->mode==MODE_MANUAL ? s->manual_current_a : s->mode==MODE_PV ? s->pv_surplus_a : s->max_charge_a;
     float minimum=s->min_charge_a;
     if (!isfinite(target) || target<minimum) return 0;
+    if(s->mode==MODE_MANUAL){
+        float manual_floor=manual_minimum_current_a(s,s->charge_phases);
+        if(manual_floor>s->max_charge_a)return 0;
+        target=fmaxf(target,manual_floor);
+    }
     return fminf(target,s->max_charge_a);
 }
 bool house_phase_currents_ready(bool supported,const float house[3],int64_t now,int64_t measured_at) {

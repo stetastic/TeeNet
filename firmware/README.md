@@ -5,7 +5,7 @@ Quellcode für Shell Recharge Advanced 3.0 mit zwei Hardwareprofilen:
 - **ESP32-S3 N16R8:** 16 MB Flash, Shell TX17/RX18, Zähler TX4/RX5.
 - **AtomS3 Lite + Tail485:** 8 MB Flash, Shell TX2/RX1. Versorgung und RS485 über A/B/+/- der Wallbox.
 
-Standard-Build: `44fe290af5f2`.
+Standard-Build: `25ae8542f6d6`.
 
 ## Bauen
 
@@ -27,7 +27,7 @@ Automatische RS485-Module mit 3,3-V-Logik verwenden. Erweiterungen, Profilanschl
 
 ## Laderegelung
 
-Unter **Wallbox-Regelung & Zähler** zwischen externem Zähler und experimenteller HTTP-Regelung wählen. HTTP wurde mit Mercedes GLB 250 erprobt. Ladetests mit weiteren Fahrzeugen ohne Shelly-Zähler stehen aus. Strom und Leistung werden geschätzt. Standard-Untergrenze dreiphasig: 5,6 kW. Phasenwechsel setzen eine unabhängige Stromstillstandsprüfung voraus.
+Unter **Wallbox-Regelung & Zähler** zwischen externem Zähler und experimenteller HTTP-Regelung wählen. HTTP wurde mit Mercedes GLB 250 erprobt. Ladetests mit weiteren Fahrzeugen ohne Shelly-Zähler stehen aus. Strom und Leistung werden geschätzt. Die manuelle dreiphasige Auswahl beginnt standardmäßig bei 6,0 kW. Phasenwechsel setzen eine unabhängige Stromstillstandsprüfung voraus.
 
 ## Darstellung und Wärmepumpe
 
