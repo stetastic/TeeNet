@@ -1272,6 +1272,16 @@ static void add_day(energy_store_t *s,uint32_t date,int source,double wh,int64_t
 }
 void energy_step(energy_t *e,int64_t now,int64_t epoch,uint32_t date,int64_t midnight,
                  const double power[2],const int64_t expires[2]) {
+    e->days_pruned=false;
+    if(date && date!=e->last_date){
+        if(e->last_date)e->days_pruned=true; /* Checkpoint the completed day promptly. */
+        uint32_t first=history_first_date(date);
+        for(unsigned d=0;d<EMS_DAYS;d++){
+            if(e->store.days[d].date && e->store.days[d].date<first){
+                e->store.days[d]=(energy_day_t){0};e->days_pruned=true;
+            }
+        }
+    }
     if(e->started && now>e->last_ms && now-e->last_ms<=5000) {
         int64_t dt=now-e->last_ms;
         bool clock_ok=date && e->last_date && llabs((epoch-e->last_epoch_ms)-dt)<=2000;
@@ -1414,28 +1424,40 @@ typedef struct {
     double wh[EMS_SOURCES];
     uint64_t covered_ms[EMS_SOURCES];
 } energy_day_v1_t;
-typedef struct {
-    uint32_t version;
-    double total_wh[EMS_SOURCES],undated_wh[EMS_SOURCES];
-    energy_day_v1_t days[EMS_DAYS];
-} energy_store_v1_t;
-bool energy_store_decode(const void *blob,size_t length,energy_store_t *out) {
-    if(!blob || !out) return false;
+bool energy_store_visit(const void *blob,size_t length,energy_store_t *out,
+                        energy_day_visitor_t visitor,void *context) {
+    size_t header=offsetof(energy_store_t,days);
+    if(!blob||!out||length<header)return false;
     energy_store_t decoded={0};
-    if(length==sizeof(decoded)) {
-        memcpy(&decoded,blob,sizeof(decoded));
-    } else if(length==sizeof(energy_store_v1_t)) {
-        const energy_store_v1_t *old=blob;
-        if(old->version!=1) return false;
-        decoded.version=2;
-        memcpy(decoded.total_wh,old->total_wh,sizeof(decoded.total_wh));
-        memcpy(decoded.undated_wh,old->undated_wh,sizeof(decoded.undated_wh));
-        for(int d=0;d<EMS_DAYS;d++) {
-            decoded.days[d].date=old->days[d].date;
-            memcpy(decoded.days[d].wh,old->days[d].wh,sizeof(decoded.days[d].wh));
-            memcpy(decoded.days[d].covered_ms,old->days[d].covered_ms,sizeof(decoded.days[d].covered_ms));
-        }
-    } else return false;
+    memcpy(&decoded,blob,header);
+    if(decoded.version!=1 && decoded.version!=2)return false;
+    size_t stride=decoded.version==1?sizeof(energy_day_v1_t):sizeof(energy_day_t);
+    size_t count=(length-header)/stride;
+    if((count!=EMS_DAYS&&count!=EMS_LEGACY_SHORT_DAYS&&count!=EMS_LEGACY_DAYS)||length!=header+count*stride)return false;
+    decoded.version=2;
+    for(unsigned i=0;i<count;i++){
+        energy_day_t day={0};
+        memcpy(&day,(const char *)blob+header+i*stride,stride);
+        if(!day.date)continue;
+        if(!history_date_valid(day.date)||day.charging_ms>day.covered_ms[0])return false;
+        for(unsigned s=0;s<EMS_SOURCES;s++)
+            if(!range(day.wh[s],0,decoded.total_wh[s]+0.01)||day.covered_ms[s]>172800000)return false;
+        energy_day_t *dst=day_bucket(&decoded,day.date);
+        if(dst)*dst=day;
+    }
     if(!energy_store_valid(&decoded)) return false;
+    if(visitor){
+        uint32_t latest=0;
+        for(unsigned i=0;i<EMS_DAYS;i++)if(decoded.days[i].date>latest)latest=decoded.days[i].date;
+        uint32_t first=history_first_date(latest);
+        for(unsigned i=0;i<count;i++){
+            energy_day_t day={0};
+            memcpy(&day,(const char *)blob+header+i*stride,stride);
+            if(day.date&&day.date>=first&&!visitor(&day,context))return false;
+        }
+    }
     *out=decoded; return true;
+}
+bool energy_store_decode(const void *blob,size_t length,energy_store_t *out){
+    return energy_store_visit(blob,length,out,NULL,NULL);
 }

@@ -2,6 +2,12 @@
  const dialog=document.getElementById('terms-dialog'),confirm=document.getElementById('terms-confirm'),accept=document.getElementById('terms-accept'),message=document.getElementById('terms-message');
  const selected=document.getElementById('terms-telemetry'),choice=document.getElementById('telemetry-enabled'),note=document.getElementById('telemetry-status');
  let pending=false,saving=false,revision='',filled=false,saveError='';
+ function telemetryStatus(){
+  const reason={wallbox:'Wartet auf Ladestillstand.',memory:'Wartet auf freien Arbeitsspeicher.',clock:'Wartet auf die Uhrzeit.',
+   connection:'Verbindung zum Statistikdienst fehlgeschlagen.',server:'Statistikdienst meldet HTTP '+state.telemetry_last_http+'.'}[state.telemetry_wait];
+  const last=state.telemetry_last_age_s>=0?'Letztes Lebenszeichen vor '+Math.round(state.telemetry_last_age_s/60)+' Min.':'';
+  return 'Aktiv · '+[reason,last].filter(Boolean).join(' ') + (reason||last?'':'Erstes Lebenszeichen steht aus.');
+ }
  function update(){
   if(!state||typeof state.terms_accepted!=='boolean')return;
   revision=state.terms_revision;
@@ -15,7 +21,7 @@
   if(!saving)note.textContent=saveError||(document.documentElement.dataset.demo==='true'?'Simulation: Diese Demo sendet keine Lebenszeichen.':
    state.telemetry_delete_pending?'Ausgeschaltet · Löschanforderung wird beim nächsten Kontakt gesendet.':
    !state.telemetry_enabled?'Ausgeschaltet · keine Lebenszeichen.':
-   state.telemetry_last_ok?'Aktiv · letztes Lebenszeichen vor '+Math.max(0,Math.round(state.telemetry_last_age_s/60))+' Minuten.':'Aktiv · wartet auf Internetverbindung, gültige Uhrzeit oder das nächste Lebenszeichen.');
+   telemetryStatus());
  }
  async function save(enabled){await api('/api/telemetry',{enabled,revision:state.telemetry_revision||'2026-10-16.1'});}
  dialog.addEventListener('cancel',event=>event.preventDefault());

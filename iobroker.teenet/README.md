@@ -1,4 +1,4 @@
-# TeeNet für ioBroker · Testversion 0.1.3
+# TeeNet für ioBroker · Version 0.2.0
 
 Wallbox steuern, Messwerte anzeigen und vorhandene PV-/Akku-Datenpunkte verbinden.
 Kompatibel mit der MQTT-Schnittstelle von Version 1.13. Die ESP-Firmware muss für den Adapter nicht geändert werden.
@@ -75,3 +75,11 @@ Die Tests prüfen Befehle, Rückmeldungen, Ausfälle, Quellenalter und einen ech
 ## Stand
 
 0.1.3: Rückmeldung der unteren TeeNet-Ladegrenze korrigiert. Der Objektbaum bleibt auf 22 wesentliche Datenpunkte begrenzt. Noch keine Aufnahme in das öffentliche ioBroker-Adapterverzeichnis und keine npm-Veröffentlichung. Die Adapter-Version ist unabhängig von der ESP-Version.
+
+## Ladearchiv ab TeeNet 1.25
+
+Unter **Erweitert → Ladearchiv** die Adresse des ESP eintragen. Der Adapter liest abgeschlossene Sitzungen alle fünf Minuten per HTTP. Die Archivierung funktioniert auch bei schreibgeschützter Wallboxsteuerung. Ein leeres Adressfeld beendet den Abruf. Für denselben ESP den separaten Archivskript-Timer ausschalten, sobald der Adapter übernimmt.
+
+Die Monatsarchive liegen dauerhaft unter `0_userdata.0.TeeNet.Archiv.<Gerät>.<JJJJMM>` und lassen sich mit der ioBroker-Datenbanksicherung sichern. Bestehende Monatsarchive des TeeNet-Skripts werden weiterverwendet. Gerätekennung, Startzeit und Sitzungsnummer verhindern Doppelzählungen. Nach einem Ausfall holt der Adapter alle abgeschlossenen Sitzungen nach, die der ESP noch gespeichert hat.
+
+Unter `teenet.0.stats` stehen Energie, Anzahl der Ladesitzungen, Solaranteil und die getrennten Kosten für heute, den laufenden Monat, das laufende Jahr und seit Aufzeichnungsbeginn. `months` enthält die Monatswerte als JSON, `recentSessions` die letzten zwölf Sitzungen. `lastSync` zeigt den letzten erfolgreichen Abruf. Für die Zuordnung zählt das Startdatum der Sitzung in der Zeitzone von TeeNet. Sitzungen ohne Datum fließen in die Gesamtsumme ein. Solar umfasst den Hausakku. TeeNet rechnet Energie unbekannter Herkunft dem Netz zu. Die Kosten stammen aus der jeweiligen Sitzung.

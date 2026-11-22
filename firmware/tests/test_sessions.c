@@ -1,5 +1,6 @@
 #include "charge_sessions.h"
 #include <assert.h>
+#include "session_archive.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -56,5 +57,16 @@ int main(void){
     assert(historic->flags&SESSION_COST_SPLIT_ESTIMATED);assert(restored.checkpoint);
     s=restored;assert(sessions_restore(&restored,&s.store,sizeof(s.store),.8f,.5f));
     historic=sessions_recent(&restored.store,0);near(historic->cost_eur,.74);near(historic->grid_cost_eur,.5);
+    /* The flash ring is bounded by session count, including sessions older
+       than the 30-day energy chart. Midnight must not prune its hot overlay. */
+    sessions_init(&s);s.store.count=4;s.store.next_slot=0;
+    for(unsigned i=0;i<4;i++)s.store.records[i]=(charge_session_t){.id=1+i,.grid_wh=1200,.start_date=20250901+i};
+    sessions_step(&s,1000,0,20260101,0,0,0,0,.25,.08);
+    assert(s.store.count==4&&sessions_recent(&s.store,3)->id==1);
+    charge_session_t row={.id=12,.start_epoch=1700000000,.grid_wh=2000,.solar_wh=3000,.charging_ms=75000};
+    char output[512];assert(session_archive_row(output,sizeof(output),"teenet_test",&row,false,false)>0);
+    assert(strstr(output,",{\"id\":12")&&strstr(output,"\"energy_kwh\":5.000000"));
+    assert(session_archive_row(output,sizeof(output),"teenet_test",&row,true,true)>0);
+    assert(strstr(output,"device=teenet_test,session=12 id=12i")&&strstr(output," 1700000000000000000\n"));
     puts("PASS: session boundaries, energy split, tariffs, expiry, restart, retention and monthly/yearly filters");
 }

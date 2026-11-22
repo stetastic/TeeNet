@@ -1,7 +1,7 @@
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
 const location={origin:'http://demo.local',search:''};
 const window={location,fetch(){throw Error('No real network in demo');}};
-vm.runInNewContext(fs.readFileSync('../teennet-demo/dist/demo-api.js','utf8'),{window,location,URL,URLSearchParams,Response,Date,Math,Number,String,Map,JSON,document:{addEventListener(){}}});
+vm.runInNewContext(fs.readFileSync('preview/demo-api.js','utf8'),{window,location,URL,URLSearchParams,Response,Date,Math,Number,String,Map,JSON,document:{addEventListener(){}}});
 const read=async(query)=>(await window.fetch('/api/sessions?'+query)).json();
 const date=value=>`${String(value).slice(0,4)}-${String(value).slice(4,6)}-${String(value).slice(6,8)}`;
 (async()=>{
@@ -16,7 +16,7 @@ const date=value=>`${String(value).slice(0,4)}-${String(value).slice(4,6)}-${Str
   const one=await read(`from=${day}&to=${day}`);
   assert.equal(one.count,1);assert.equal(one.days[0].date,last.date);assert(Math.abs(one.cost_eur-last.cost_eur)<.00001);
   const csv=await (await window.fetch(`/api/export.csv?from=${day}&to=${day}`)).text();
-  assert.equal(csv.trim().split('\n').length,last.sessions+1);assert(csv.includes(';Netz_EUR;'));assert(csv.includes(';Solar_Akku_EUR;'));
+  assert.equal(csv.trim().split('\n').length,last.sessions+2);assert(csv.includes(';Netz_Kosten_EUR;'));assert(csv.includes(';Solar_Akku_Kosten_EUR;'));
   assert.equal((await read('period=2024-01')).count,0);
   assert.equal((await read('from=2026-10-06&to=2026-10-05')).count,0);
   for(const month of new Set(all.days.map(s=>date(s.date).slice(0,7)))){

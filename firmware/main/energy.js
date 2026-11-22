@@ -27,11 +27,15 @@ if(typeof window!=='undefined')window.TeeNetWallboxDisplay={reading:wallboxDispl
   const gridVisible=extended&&!!(s.zero_feed_enabled||s.grid_guard_enabled);
   const currents=s.actual_a||s.meter_a||[];
   const measured=online&&s.feedback_ok&&currents.length===3&&currents.every(a=>finite(a)&&a>=0);
-  const charging=!!(measured&&Math.max(...currents)>=1);
+  const measuredCharging=!!(measured&&Math.max(...currents)>=1);
   const grid=gridVisible&&online&&s.house_meter_ok&&finite(s.house_power_w)?s.house_power_w:null;
   const pv=extended&&s.pv_display_enabled&&online&&finite(s.pv_generation_w)?Math.max(0,s.pv_generation_w):null;
   const battery=extended&&s.battery_protect&&online&&s.battery_power_ok!==false&&finite(s.battery_charge_w)&&finite(s.battery_discharge_w)?s.battery_charge_w-s.battery_discharge_w:null;
   const display=wallboxDisplayReading(s,online);
+  const vehicleCharging=online&&s.vehicle_status_known===true&&s.vehicle_connection_state==='charging';
+  // A pilot limit alone does not establish that the vehicle draws current.
+  const charging=display.http?display.charging&&(measuredCharging||vehicleCharging):measuredCharging;
+  const carFlow=charging?'forward':(display.http?display.valid&&display.stopped:measured)?'idle':'unknown';
   const measuredCarPower=measured&&finite(s.wallbox_w??s.estimate_w)?Math.max(0,s.wallbox_w??s.estimate_w):null;
   const carPower=display.http?display.power_w:measuredCarPower;
   // The house meter reports the exchange with the grid. The remaining power is
@@ -48,14 +52,13 @@ if(typeof window!=='undefined')window.TeeNetWallboxDisplay={reading:wallboxDispl
   const gridFlow=grid===null?'unknown':grid>50?'import':grid< -50?'export':'idle';
   const batteryFlow=battery===null?'unknown':battery>50?'charge':battery< -50?'discharge':'idle';
   const scene=gridFlow==='import'?'grid':gridFlow==='export'?'solar':gridFlow==='unknown'?'unknown':batteryFlow==='discharge'?'battery':'self';
-  // Emotions reflect the measured source mix, not a few watts of grid import.
-  // A 40–60% mixed range stays neutral instead of flipping around 50%.
+  // The house reacts to the meter's net grid import. The car's smile
+  // still describes the dominant source while it is charging.
   const sourcesKnown=pv!==null&&grid!==null&&(!s.battery_protect||battery!==null);
   const supply=sourcesKnown?pv+Math.max(0,grid)+Math.max(0,-(battery??0)):0;
   const solarDominant=supply>50&&pv/supply>=.6;
-  const gridDominant=supply>50&&Math.max(0,grid)/supply>=.6;
-  const houseMood=solarDominant?'happy':gridDominant?'sad':'neutral';
-  return {grid,pv,battery,carPower,houseLoad,houseVisible,houseNote,soc,carSoc,gridVisible,gridFlow,batteryFlow,scene,houseMood,charging,measured,display,
+  const houseMood=gridFlow==='import'?'sad':solarDominant?'happy':'neutral';
+  return {grid,pv,battery,carPower,houseLoad,houseVisible,houseNote,soc,carSoc,gridVisible,gridFlow,batteryFlow,scene,houseMood,charging,carFlow,measured,display,
    phaseCurrents:measured?currents:null,currentsEstimated:measured&&!!s.power_is_extrapolated,
    solarVisible:pv!==null,batteryVisible:soc!==null||battery!==null,
    pvFlow:pv!==null&&pv>50,pvNight:pv!==null&&pv<100,
@@ -159,7 +162,7 @@ if(typeof window!=='undefined')window.TeeNetWallboxDisplay={reading:wallboxDispl
   const points=[carX,...(showHome?[150]:[]),...shown.map((_,i)=>(i+.5)*600/shown.length)];
   find('.en-bus').setAttribute('d','M'+Math.min(...points)+' 45H'+Math.max(...points));
   route('home',m.houseLoad===null?'unknown':m.houseLoad>50?'forward':'idle',150,true);
-  route('car',m.charging?'forward':m.measured?'idle':'unknown',carX,true);
+  route('car',m.carFlow,carX,true);
   hide('[data-car-part]',!m.carVisible);
   hide('[data-car-soc-block]',!m.carVisible||m.carSoc===null);
   write('[data-car-power]',power(m.carPower));
@@ -203,6 +206,31 @@ if(typeof window!=='undefined')window.TeeNetWallboxDisplay={reading:wallboxDispl
  window.TeeNetEnergy={update,setView,setDensity,loadDensity(density){if(!densityRevision)setDensity(density);},loadView(view){if(!viewRevision)setView(view);},loadNotice(){ /* Retired presentation announcement; tolerate old firmware. */ }};
  for(const option of ['standard','graphic'])document.getElementById('view-'+option)?.addEventListener('click',()=>selectView(option));
  for(const option of ['standard','compact'])document.getElementById('density-'+option)?.addEventListener('click',()=>selectDensity(option));
+ const motionKey='teenet-energy-motion';
+ function applyMotion(always){
+  if(always)root.dataset.energyMotion='on';else delete root.dataset.energyMotion;
+  document.getElementById('motion-on')?.setAttribute('aria-pressed',String(always));
+  document.getElementById('motion-system')?.setAttribute('aria-pressed',String(!always));
+ }
+ function loadMotion(){
+  let always=false;
+  try{always=localStorage.getItem(motionKey)==='on';}catch{}
+  applyMotion(always);
+ }
+ function selectMotion(always){
+  applyMotion(always);
+  try{if(always)localStorage.setItem(motionKey,'on');else localStorage.removeItem(motionKey);}catch{}
+ }
+ function applyMotionLink(){
+  if(window.location.hash!=='#energiefluss-animation-an')return;
+  selectMotion(true);
+  window.history.replaceState(window.history.state,'','#overview');
+ }
+ document.getElementById('motion-on')?.addEventListener('click',()=>selectMotion(true));
+ document.getElementById('motion-system')?.addEventListener('click',()=>selectMotion(false));
+ window.addEventListener('hashchange',applyMotionLink);
+ window.addEventListener('storage',event=>{if(event.key===motionKey||event.key===null)loadMotion();});
+ loadMotion();applyMotionLink();
  let saved,savedDensity;try{saved=localStorage.getItem('teennet-view');savedDensity=localStorage.getItem('teennet-density');}catch{}setView(saved);setDensity(savedDensity);
  document.addEventListener('visibilitychange',()=>{root.dataset.paused=String(document.hidden||!current?.online);});
 })();

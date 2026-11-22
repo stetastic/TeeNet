@@ -2,12 +2,13 @@
    outside the control task and lock. The meter stays supplied from wallbox L1. */
 static void phase_voltage_task(void *arg){
     (void)arg;
-    char *body=malloc(4096);
-    if(!body){vTaskDelete(NULL);return;}
+    char *body=NULL;
     for(;;){
         char host[64];uint8_t protocol;
         LOCK();bool online=wifi_online,shared=phase_voltage_shared_locked();strcpy(host,settings.phase_voltage_host);protocol=settings.phase_voltage_protocol;
         bool normal_order=!strcmp(settings.wallbox_meter_type,"shelly_gen2")&&!strcmp(host,settings.wallbox_meter_host)&&!settings.wallbox_shelly_reverse;UNLOCK();
+        /* Modbus and shared voltage readings need no HTTP response buffer. */
+        if(body&&(shared||protocol==0)){free(body);body=NULL;}
         if(shared){vTaskDelay(ticks(500));continue;} /* The meter task supplies fresh samples once. */
         float logical[3]={0};bool ok=false;
         if(online){
@@ -17,8 +18,9 @@ static void phase_voltage_task(void *arg){
                     shelly_modbus_decode_voltage(data,sizeof(data),physical);
                 if(ok)for(unsigned i=0;i<3;i++)logical[i]=physical[2-i];
             }else{
+                if(!body)body=malloc(4096);
                 char url[160];snprintf(url,sizeof(url),"http://%s%s",host,protocol==1?"/rpc/EM.GetStatus?id=0":"/status");
-                ok=http_get_body(url,body,4096,800)==200&&shelly_phase_voltage_json(body,protocol==2,logical);
+                ok=body&&http_get_body(url,body,4096,800)==200&&shelly_phase_voltage_json(body,protocol==2,logical);
             }
         }
         if(ok&&normal_order){float first=logical[0];logical[0]=logical[2];logical[2]=first;}

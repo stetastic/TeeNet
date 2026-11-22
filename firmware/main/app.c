@@ -144,6 +144,7 @@ static uint32_t loaded_settings_version;
 static energy_t energy;
 static charge_counter_t charge_counter;
 typedef struct {uint32_t version;energy_store_t totals;charge_counter_checkpoint_t counter;} meter_totals_t;
+typedef struct {uint32_t version;energy_store_30_t totals;charge_counter_checkpoint_t counter;} meter_totals_30_t;
 static double energy_reset_wh[EMS_SOURCES];
 static uint32_t energy_reset_date;
 static sessions_t sessions;
@@ -169,8 +170,11 @@ static current_calibration_t current_calibration;
 static bool calibration_dirty;
 static int64_t calibration_saved_at;
 typedef struct { char host[16],type[20]; float watts; int64_t at; bool locked; } shelly_found_t;
-static shelly_found_t shelly_found[12];
-static struct {char host[16];shelly_phase_identity_t identity;bool contacts_checked;} phase_shelly_found[12];
+/* Each new search selects one family and resets both counts under state_lock. */
+static union {
+    shelly_found_t meters[12];
+    struct {char host[16];shelly_phase_identity_t identity;bool contacts_checked;} switches[12];
+} shelly_results;
 static unsigned phase_shelly_found_count;
 static bool scan_phase_shelly;
 static unsigned shelly_found_count,shelly_scan_progress,shelly_locked_count;
@@ -193,7 +197,7 @@ static esp_mqtt_client_handle_t mqtt_client;
 static bool wallbox_ready,meter_ready,mqtt_online,wifi_online;
 static bool shell_scan_running,shell_scan_partial;
 static unsigned shell_scan_progress,shell_found_count;
-static char shell_found_host[4][64],shell_active_host[64];
+static char shell_found_host[4][sizeof("255.255.255.255")],shell_active_host[64];
 static float shell_found_grid[4],shell_found_max[4],shell_grid_a,shell_max_a;
 static int64_t shell_limits_at;
 static int shell_limits_code;
@@ -444,6 +448,9 @@ static esp_err_t save_config(const settings_t *config) {
 }
 
 #include "session_storage.inc"
+#include "session_monolith.inc"
+#include "session_reader.inc"
+#include "daily_storage.inc"
 #include "charge_curve_runtime.inc"
 static void load_energy(void) {
 
@@ -454,53 +461,25 @@ static void load_energy(void) {
 
     nvs_handle_t nvs;
 
-    if(stats_storage_ok && nvs_open_from_partition("stats","energy",NVS_READONLY,&nvs)==ESP_OK) {
-
-        load_charge_curve(nvs);
-
-        size_t size=0; esp_err_t err=nvs_get_blob(nvs,"totals",NULL,&size);
-        if(err==ESP_OK) {
-            void *blob=size<=sizeof(energy.store)?malloc(size):NULL;
-            if(!blob) err=ESP_ERR_NO_MEM;
-            else {
-                err=nvs_get_blob(nvs,"totals",blob,&size);
-                if(err==ESP_OK && !energy_store_decode(blob,size,&energy.store)) err=ESP_ERR_INVALID_SIZE;
-                free(blob);
-            }
-        }
-        if(err!=ESP_ERR_NVS_NOT_FOUND && err!=ESP_OK) {
-            memset(&energy.store,0,sizeof(energy.store)); energy.store.version=2;
-            storage_error=true; stats_storage_ok=false;
-        }
-
-        meter_totals_t *meter_saved=malloc(sizeof(*meter_saved));
-        if(meter_saved){size=sizeof(*meter_saved);err=nvs_get_blob(nvs,"meter_totals",meter_saved,&size);
-            if(err==ESP_OK&&size==sizeof(*meter_saved)&&meter_saved->version==1&&energy_store_valid(&meter_saved->totals)&&charge_counter_checkpoint_valid(&meter_saved->counter)){
-                energy.store=meter_saved->totals;charge_counter.saved=meter_saved->counter;charge_counter.restored=true;
-            }
-            free(meter_saved);
-        }
-        size=0;
-        err=nvs_get_blob(nvs,"sessions",NULL,&size);
-        if(err==ESP_OK){
-            void *blob=size<=sizeof(session_store_t)?malloc(size):NULL;
-            if(!blob)err=ESP_ERR_NO_MEM;
-            else{err=nvs_get_blob(nvs,"sessions",blob,&size);if(err==ESP_OK&&!sessions_restore(&sessions,blob,size,settings.price_kwh,settings.solar_price_kwh))err=ESP_ERR_INVALID_SIZE;free(blob);}
-        }
-        if(err!=ESP_OK&&err!=ESP_ERR_NVS_NOT_FOUND){storage_error=true;stats_storage_ok=false;}
-        if(session_chunks_load(nvs)<0){storage_error=true;stats_storage_ok=false;}
-
-        size=sizeof(energy_reset_wh);
-        err=nvs_get_blob(nvs,"reset_base",energy_reset_wh,&size);
-        if(err!=ESP_OK||size!=sizeof(energy_reset_wh))memset(energy_reset_wh,0,sizeof(energy_reset_wh));
-        if(nvs_get_u32(nvs,"reset_date",&energy_reset_date)!=ESP_OK)energy_reset_date=0;
-        for(int i=0;i<EMS_SOURCES;i++)if(!isfinite(energy_reset_wh[i])||energy_reset_wh[i]<0||energy_reset_wh[i]>energy.store.total_wh[i]){
-            memset(energy_reset_wh,0,sizeof(energy_reset_wh));energy_reset_date=0;break;
-        }
-        nvs_close(nvs);
-
+    if(!stats_storage_ok)return;
+    if(nvs_open_from_partition("stats","energy",NVS_READWRITE,&nvs)!=ESP_OK){
+        storage_error=true;stats_storage_ok=false;return;
     }
+    load_charge_curve(nvs);
+    esp_err_t err=energy_days_load(nvs);
+    if(err!=ESP_OK){storage_error=true;stats_storage_ok=false;}
+    int chunks=session_chunks_load(nvs);
+    if(chunks==0)chunks=session_monolith_load(nvs);
+    if(chunks<0){storage_error=true;stats_storage_ok=false;}
 
+    size_t size=sizeof(energy_reset_wh);
+    err=nvs_get_blob(nvs,"reset_base",energy_reset_wh,&size);
+    if(err!=ESP_OK||size!=sizeof(energy_reset_wh))memset(energy_reset_wh,0,sizeof(energy_reset_wh));
+    if(nvs_get_u32(nvs,"reset_date",&energy_reset_date)!=ESP_OK)energy_reset_date=0;
+    for(int i=0;i<EMS_SOURCES;i++)if(!isfinite(energy_reset_wh[i])||energy_reset_wh[i]<0||energy_reset_wh[i]>energy.store.total_wh[i]){
+        memset(energy_reset_wh,0,sizeof(energy_reset_wh));energy_reset_date=0;break;
+    }
+    nvs_close(nvs);
 }
 
 static bool save_energy(void) {
@@ -520,7 +499,7 @@ static bool save_energy(void) {
         session_snapshot=malloc(sizeof(*session_snapshot)+count*sizeof(session_snapshot->records[0]));
         if(!session_snapshot)break;
         LOCK();captured=session_checkpoint_copy(session_snapshot,count,&sessions.store);
-        if(captured){*snapshot=(meter_totals_t){.version=1,.totals=energy.store,.counter=charge_counter.saved};if(!snapshot->counter.version)snapshot->counter.version=1;memcpy(reset_snapshot,energy_reset_wh,sizeof(reset_snapshot));reset_date_snapshot=energy_reset_date;}
+        if(captured){sessions.checkpoint=false;*snapshot=(meter_totals_t){.version=1,.totals=energy.store,.counter=charge_counter.saved};if(!snapshot->counter.version)snapshot->counter.version=1;memcpy(reset_snapshot,energy_reset_wh,sizeof(reset_snapshot));reset_date_snapshot=energy_reset_date;}
         UNLOCK();
         if(!captured){free(session_snapshot);session_snapshot=NULL;}
     }
@@ -530,19 +509,18 @@ static bool save_energy(void) {
 
     if(err==ESP_OK) {
 
-        err=nvs_set_blob(nvs,"meter_totals",snapshot,sizeof(*snapshot));
-        if(err==ESP_OK)err=nvs_set_blob(nvs,"totals",&snapshot->totals,sizeof(snapshot->totals));
-        if(err==ESP_OK)err=session_chunks_save_checkpoint(nvs,session_snapshot);
+        err=energy_days_save(nvs,snapshot);
         if(err==ESP_OK)err=nvs_set_blob(nvs,"reset_base",reset_snapshot,sizeof(reset_snapshot));
         if(err==ESP_OK)err=nvs_set_u32(nvs,"reset_date",reset_date_snapshot);
 
         if(err==ESP_OK) err=nvs_commit(nvs);
+        if(err==ESP_OK)err=session_chunks_save_checkpoint(nvs,session_snapshot);
 
         nvs_close(nvs);
 
     }
 
-    free(snapshot);free(session_snapshot); LOCK(); storage_error=err!=ESP_OK; if(err==ESP_OK){last_saved_ms=now_ms();sessions.checkpoint=false;} UNLOCK();
+    free(snapshot);free(session_snapshot); LOCK(); storage_error=err!=ESP_OK; if(err==ESP_OK)last_saved_ms=now_ms();else sessions.checkpoint=true; UNLOCK();
     xSemaphoreGive(status_snapshot_lock);
     if(err!=ESP_OK)ESP_LOGW(TAG,"Energy save failed: %s",esp_err_to_name(err));
 
@@ -1392,6 +1370,14 @@ static const char *vehicle_state_name(char state) {
 #include "http_display_status.inc"
 static cJSON *status_json_profile(bool include_token,bool include_diagnostics) {
 
+    /* Sample before building the response so diagnostics do not count their own tree. */
+    size_t available=0,minimum=0,largest=0;
+    if(include_diagnostics){
+        available=heap_caps_get_free_size(MALLOC_CAP_8BIT);
+        minimum=heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT);
+        largest=heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+    }
+
     cJSON *o=cJSON_CreateObject(); if(!o) return NULL;
 
     int64_t epoch,midnight; uint32_t date=calendar(&epoch,&midnight);
@@ -1681,8 +1667,9 @@ static cJSON *status_json_profile(bool include_token,bool include_diagnostics) {
 
     if(include_diagnostics) {
         cJSON_AddNumberToObject(o,"uptime_s",now/1000);
-        cJSON_AddNumberToObject(o,"min_free_heap",heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT));
-        cJSON_AddNumberToObject(o,"largest_free_block",heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));cJSON_AddNumberToObject(o,"reset_reason",esp_reset_reason());
+        cJSON_AddNumberToObject(o,"free_heap",available);
+        cJSON_AddNumberToObject(o,"min_free_heap",minimum);
+        cJSON_AddNumberToObject(o,"largest_free_block",largest);cJSON_AddNumberToObject(o,"reset_reason",esp_reset_reason());
 
         cJSON_AddNumberToObject(o,"meter_failures",meter_failures); cJSON_AddNumberToObject(o,"wallbox_requests",wallbox_requests);
 
@@ -1866,7 +1853,7 @@ static void homeassistant_publish_entity(const char *component,const char *objec
 
 static void homeassistant_discovery(bool enabled) {
     static const struct { const char *component,*object; } entities[]={
-        {"sensor","charging_power"},{"sensor","house_power"},{"binary_sensor","wallbox"},
+        {"sensor","charging_power"},{"sensor","charging_energy"},{"sensor","house_power"},{"binary_sensor","wallbox"},
         {"binary_sensor","meter"},{"select","mode"},{"number","charging_power_setpoint"},
         {"switch","cloud_buffer"},{"switch","battery_assist"},{"sensor","battery_soc"},
         {"sensor","pv_generation"},{"sensor","battery_charge"},{"sensor","battery_discharge"}};
@@ -1878,6 +1865,9 @@ static void homeassistant_discovery(bool enabled) {
     cJSON *o=homeassistant_entity("Ladeleistung","charging_power","sensor/estimate_w");
     cJSON_AddStringToObject(o,"device_class","power");cJSON_AddStringToObject(o,"state_class","measurement");cJSON_AddStringToObject(o,"unit_of_measurement","W");
     homeassistant_publish_entity("sensor","charging_power",o,true);
+    o=homeassistant_entity("Geladene Energie","charging_energy","sensor/energy/estimate_total_kwh");
+    cJSON_AddStringToObject(o,"device_class","energy");cJSON_AddStringToObject(o,"state_class","total_increasing");
+    cJSON_AddStringToObject(o,"unit_of_measurement","kWh");homeassistant_publish_entity("sensor","charging_energy",o,true);
     o=homeassistant_entity("Hausanschluss","house_power","sensor/house_power_w");
     cJSON_AddStringToObject(o,"device_class","power");cJSON_AddStringToObject(o,"state_class","measurement");cJSON_AddStringToObject(o,"unit_of_measurement","W");
     homeassistant_publish_entity("sensor","house_power",o,true);
@@ -3021,203 +3011,18 @@ static esp_err_t wifi_scan_handler(httpd_req_t *req) {
 
 }
 
-static int compare_days(const void *a,const void *b) {
+#include "energy_history_http.inc"
 
-    uint32_t da=((const energy_day_t *)a)->date,db=((const energy_day_t *)b)->date; return (da>db)-(da<db);
-
-}
-
-static esp_err_t history_handler(httpd_req_t *req) {
-
-    cJSON *o=cJSON_CreateObject(); if(!o) return send_json(req,o);
-
-    cJSON *points=cJSON_AddArrayToObject(o,"points"),*days=cJSON_AddArrayToObject(o,"days");
-
-    energy_t *copy=malloc(sizeof(*copy)); if(!copy) { cJSON_Delete(o); return send_json(req,NULL); }
-
-    LOCK(); *copy=energy; UNLOCK(); int64_t last=now_ms()/60000;
-
-    for(int64_t m=last-EMS_HISTORY+1;m<=last;m++) {
-
-        if(m<0) continue;
-
-        energy_point_t *p=&copy->history[m%EMS_HISTORY]; cJSON *item=cJSON_CreateObject(); cJSON_AddNumberToObject(item,"age_min",last-m);
-
-        for(int s=0;s<2;s++) nullable(item,s?"wallbox_w":"estimate_w",p->covered_ms[s]?p->wh[s]*3600000/p->covered_ms[s]:0,p->minute==m && p->covered_ms[s]>0);
-
-        json_add_owned_to_array(points,item);
-
-    }
-
-    qsort(copy->store.days,EMS_DAYS,sizeof(energy_day_t),compare_days);
-
-    for(int d=0;d<EMS_DAYS;d++) {
-
-        energy_day_t *day=&copy->store.days[d]; if(!day->date) continue;
-
-        cJSON *item=cJSON_CreateObject(); cJSON_AddNumberToObject(item,"date",day->date);
-
-        for(int s=0;s<2;s++) {
-
-            nullable(item,s?"wallbox_kwh":"estimate_kwh",day->wh[s]/1000,day->covered_ms[s]>0);
-
-            cJSON_AddNumberToObject(item,s?"wallbox_covered_s":"estimate_covered_s",day->covered_ms[s]/1000);
-
-        }
-
-        json_add_owned_to_array(days,item);
-
-    }
-
-    free(copy); return send_json(req,o);
-
-}
-
-typedef struct{uint32_t period,from_date,to_date;bool custom;} session_filter_t;
-static bool session_date_parse(const char *text,uint32_t *date){
-    if(!text||!date||strlen(text)!=10||text[4]!='-'||text[7]!='-')return false;
-    unsigned value=0;for(unsigned i=0;i<10;i++){if(i==4||i==7)continue;if(text[i]<'0'||text[i]>'9')return false;value=value*10+(unsigned)(text[i]-'0');}
-    unsigned year=value/10000,month=value/100%100,day=value%100;
-    if(year<2024||year>2100||month<1||month>12||day<1||day>31)return false;
-    *date=value;return true;
-}
-static bool session_filter_matches(const charge_session_t *r,const session_filter_t *filter){
-    return filter->custom?r->start_date>=filter->from_date&&r->start_date<=filter->to_date:session_matches(r,filter->period);
-}
-static bool session_query(httpd_req_t *req,session_filter_t *filter,unsigned *offset,char label[32]) {
-    char query[192]={0},text[16]={0},from[16]={0},to[16]={0};*offset=0;memset(filter,0,sizeof(*filter));
-    if(httpd_req_get_url_query_len(req)>=sizeof(query))return false;
-    if(httpd_req_get_url_query_str(req,query,sizeof(query))==ESP_OK){
-        bool has_from=httpd_query_key_value(query,"from",from,sizeof(from))==ESP_OK;
-        bool has_to=httpd_query_key_value(query,"to",to,sizeof(to))==ESP_OK;
-        if(has_from||has_to){if(!has_from||!has_to||!session_date_parse(from,&filter->from_date)||!session_date_parse(to,&filter->to_date)||filter->from_date>filter->to_date)return false;filter->custom=true;}
-        else if(httpd_query_key_value(query,"period",text,sizeof(text))==ESP_OK){if(!session_period_parse(text,&filter->period))return false;}
-        else{int64_t e,m;uint32_t date=calendar(&e,&m);if(!date)return false;filter->period=date/100;}
-        if(httpd_query_key_value(query,"offset",text,sizeof(text))==ESP_OK){double v;if(!parse_number(text,0,CHARGE_SESSION_CAPACITY,&v)||v!=floor(v))return false;*offset=(unsigned)v;}
-    }else{int64_t e,m;uint32_t date=calendar(&e,&m);if(!date)return false;filter->period=date/100;}
-    if(filter->custom)snprintf(label,32,"%08lu-bis-%08lu",(unsigned long)filter->from_date,(unsigned long)filter->to_date);
-    else if(filter->period<10000)snprintf(label,32,"%04lu",(unsigned long)filter->period);
-    else snprintf(label,32,"%04lu-%02lu",(unsigned long)filter->period/100,(unsigned long)filter->period%100);
-    return true;
-}
-typedef struct {
-    uint32_t date,flags;
-    unsigned sessions;
-    uint64_t charging_ms;
-    double grid_wh,solar_wh,unknown_wh,cost_eur,grid_cost_eur,solar_cost_eur;
-    bool active;
-} session_day_t;
-static void session_day_add(session_day_t *day,const charge_session_t *r,bool active){
-    day->date=r->start_date;day->sessions++;day->charging_ms+=r->charging_ms;
-    day->grid_wh+=r->grid_wh+r->unknown_wh;day->solar_wh+=r->solar_wh;day->cost_eur+=r->cost_eur;
-    day->grid_cost_eur+=r->grid_cost_eur;day->solar_cost_eur+=r->solar_cost_eur;
-    day->flags|=r->flags;day->active|=active;
-}
-static void session_day_emit(cJSON *rows,const session_day_t *day,unsigned offset,unsigned *count,unsigned *shown){
-    if((*count)++<offset||*shown>=20)return;
-    cJSON *item=cJSON_CreateObject();if(!item)return;
-    cJSON_AddNumberToObject(item,"date",day->date);cJSON_AddNumberToObject(item,"sessions",day->sessions);
-    cJSON_AddNumberToObject(item,"charging_s",day->charging_ms/1000);
-    cJSON_AddNumberToObject(item,"energy_kwh",(day->grid_wh+day->solar_wh+day->unknown_wh)/1000);
-    cJSON_AddNumberToObject(item,"grid_kwh",day->grid_wh/1000);cJSON_AddNumberToObject(item,"solar_kwh",day->solar_wh/1000);
-    cJSON_AddNumberToObject(item,"unknown_kwh",day->unknown_wh/1000);cJSON_AddNumberToObject(item,"cost_eur",day->cost_eur);
-    cJSON_AddNumberToObject(item,"grid_cost_eur",day->grid_cost_eur);cJSON_AddNumberToObject(item,"solar_cost_eur",day->solar_cost_eur);
-    cJSON_AddBoolToObject(item,"active",day->active);cJSON_AddNumberToObject(item,"flags",day->flags);
-    json_add_owned_to_array(rows,item);(*shown)++;
-}
-#include "session_snapshot.inc"
-
-static esp_err_t sessions_handler(httpd_req_t *req){
-    session_filter_t filter;unsigned offset;char label[32];
-    if(!session_query(req,&filter,&offset,label))return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Zeitraum pruefen.");
-    session_snapshot_t *copy=session_snapshot_create(&filter,0);if(!copy)return send_json(req,NULL);
-    cJSON *o=cJSON_CreateObject();if(!o){free(copy);return send_json(req,NULL);}
-    cJSON *rows=cJSON_AddArrayToObject(o,"days");unsigned count=0,shown=0;double grid=0,solar=0,cost=0,grid_cost=0,solar_cost=0;
-    session_day_t day={0};
-    for(unsigned i=0;i<copy->count;i++){
-        const charge_session_t *r=session_snapshot_recent(copy,i);if(!session_filter_matches(r,&filter))continue;
-        grid+=r->grid_wh+r->unknown_wh;solar+=r->solar_wh;cost+=r->cost_eur;
-        grid_cost+=r->grid_cost_eur;solar_cost+=r->solar_cost_eur;
-        if(day.sessions&&day.date!=r->start_date){session_day_emit(rows,&day,offset,&count,&shown);day=(session_day_t){0};}
-        session_day_add(&day,r,copy->active_id&&r->id==copy->active_id);
-    }
-    if(day.sessions)session_day_emit(rows,&day,offset,&count,&shown);
-    cJSON_AddStringToObject(o,"period",label);cJSON_AddNumberToObject(o,"count",count);cJSON_AddNumberToObject(o,"offset",offset);cJSON_AddNumberToObject(o,"retained",copy->retained);
-    cJSON_AddNumberToObject(o,"grid_kwh",grid/1000);cJSON_AddNumberToObject(o,"solar_kwh",solar/1000);cJSON_AddNumberToObject(o,"unknown_kwh",0);cJSON_AddNumberToObject(o,"cost_eur",cost);
-    cJSON_AddNumberToObject(o,"grid_cost_eur",grid_cost);cJSON_AddNumberToObject(o,"solar_cost_eur",solar_cost);
-    cJSON_AddNumberToObject(o,"oldest_date",copy->oldest_date);
-    free(copy);return send_json(req,o);
-}
-static esp_err_t session_day_handler(httpd_req_t *req){
-    char query[96]={0},date_text[16]={0},offset_text[16]={0};
-    if(httpd_req_get_url_query_len(req)>=sizeof(query)||httpd_req_get_url_query_str(req,query,sizeof(query))!=ESP_OK||
-       httpd_query_key_value(query,"date",date_text,sizeof(date_text))!=ESP_OK||strlen(date_text)!=8)
-        return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Datum als YYYYMMDD angeben.");
-    uint32_t date=0;
-    for(unsigned i=0;i<8;i++){if(date_text[i]<'0'||date_text[i]>'9')return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Ungueltiges Datum.");date=date*10+(uint32_t)(date_text[i]-'0');}
-    if(date/10000<2024||(date/100)%100<1||(date/100)%100>12||date%100<1||date%100>31)
-        return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Ungueltiges Datum.");
-    unsigned offset=0;
-    if(httpd_query_key_value(query,"offset",offset_text,sizeof(offset_text))==ESP_OK){
-        double value;if(!parse_number(offset_text,0,CHARGE_SESSION_CAPACITY,&value)||value!=floor(value))
-            return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Ungueltiger Offset.");
-        offset=(unsigned)value;
-    }
-    session_snapshot_t *copy=session_snapshot_create(NULL,date);if(!copy)return send_json(req,NULL);
-    cJSON *o=cJSON_CreateObject();if(!o){free(copy);return send_json(req,NULL);}
-    cJSON *rows=cJSON_AddArrayToObject(o,"sessions");unsigned count=0,shown=0;
-    for(unsigned i=0;i<copy->count;i++){
-        const charge_session_t *r=session_snapshot_recent(copy,i);if(r->start_date!=date)continue;
-        if(count++<offset||shown>=20)continue;
-        cJSON *item=cJSON_CreateObject();if(!item)continue;
-        cJSON_AddNumberToObject(item,"id",r->id);
-        cJSON_AddNumberToObject(item,"start_epoch",r->start_epoch);cJSON_AddNumberToObject(item,"end_epoch",r->end_epoch);
-        cJSON_AddNumberToObject(item,"charging_s",r->charging_ms/1000);
-        cJSON_AddNumberToObject(item,"energy_kwh",(r->grid_wh+r->solar_wh+r->unknown_wh)/1000);
-        cJSON_AddNumberToObject(item,"grid_kwh",(r->grid_wh+r->unknown_wh)/1000);cJSON_AddNumberToObject(item,"solar_kwh",r->solar_wh/1000);
-        cJSON_AddNumberToObject(item,"unknown_kwh",0);cJSON_AddNumberToObject(item,"cost_eur",r->cost_eur);
-        cJSON_AddNumberToObject(item,"grid_cost_eur",r->grid_cost_eur);cJSON_AddNumberToObject(item,"solar_cost_eur",r->solar_cost_eur);
-        cJSON_AddNumberToObject(item,"flags",r->flags);
-        cJSON_AddBoolToObject(item,"active",copy->active_id&&r->id==copy->active_id);
-        json_add_owned_to_array(rows,item);shown++;
-    }
-    cJSON_AddNumberToObject(o,"date",date);cJSON_AddNumberToObject(o,"count",count);cJSON_AddNumberToObject(o,"offset",offset);
-    free(copy);return send_json(req,o);
-}
-static void session_time(uint32_t stamp,char out[24]){
-    out[0]=0;if(!stamp)return;time_t t=stamp;struct tm tm;localtime_r(&t,&tm);strftime(out,24,"%Y-%m-%d %H:%M:%S",&tm);
-}
-static esp_err_t csv_handler(httpd_req_t *req) {
-    session_filter_t filter;unsigned offset;char label[32];
-    if(!session_query(req,&filter,&offset,label))return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Zeitraum pruefen.");
-    session_snapshot_t *copy=session_snapshot_create(&filter,0);if(!copy)return send_json(req,NULL);
-    char attachment[96];snprintf(attachment,sizeof(attachment),"attachment; filename=TeeNet-Ladesitzungen-%s.csv",label);
-    httpd_resp_set_type(req,"text/csv; charset=utf-8");httpd_resp_set_hdr(req,"Content-Disposition",attachment);
-    esp_err_t err=httpd_resp_sendstr_chunk(req,"\xEF\xBB\xBF" "Sitzung;Beginn;Letzte_Ladung;Ladezeit_Minuten;Energie_kWh;Netz_kWh;Netz_Kosten_EUR;Netz_Prozent;Solar_Akku_kWh;Solar_Akku_Kosten_EUR;Solar_Akku_Prozent;Kosten_EUR;Status\r\n");
-    char line[384],start[24],end[24];double grid=0,solar=0,cost=0,grid_cost=0,solar_cost=0;
-    for(unsigned i=copy->count;i>0&&err==ESP_OK;i--){
-        const charge_session_t *r=session_snapshot_recent(copy,i-1);if(!session_filter_matches(r,&filter))continue;
-        double total=(double)r->grid_wh+r->solar_wh+r->unknown_wh;
-        double session_grid=r->grid_wh+r->unknown_wh,session_cost=r->cost_eur;
-        grid+=session_grid;solar+=r->solar_wh;cost+=session_cost;
-        grid_cost+=r->grid_cost_eur;solar_cost+=r->solar_cost_eur;
-        session_time(r->start_epoch,start);session_time(r->end_epoch,end);
-        const char *status=copy->active_id&&r->id==copy->active_id?"Aktiv":"Abgeschlossen";
-        snprintf(line,sizeof(line),"%lu;%s;%s;%.1f;%.6f;%.6f;%.4f;%.2f;%.6f;%.4f;%.2f;%.4f;%s\r\n",(unsigned long)r->id,start,end,r->charging_ms/60000.0,total/1000,session_grid/1000,r->grid_cost_eur,total?session_grid*100/total:0,r->solar_wh/1000,r->solar_cost_eur,total?r->solar_wh*100/total:0,session_cost,status);
-        for(char *p=line;*p;p++)if(*p=='.')*p=',';
-        err=httpd_resp_sendstr_chunk(req,line);
-    }
-    if(err==ESP_OK){double total=grid+solar;snprintf(line,sizeof(line),"SUMME;;;;%.6f;%.6f;%.4f;%.2f;%.6f;%.4f;%.2f;%.4f;\r\n",total/1000,grid/1000,grid_cost,total?grid*100/total:0,solar/1000,solar_cost,total?solar*100/total:0,cost);for(char *p=line;*p;p++)if(*p=='.')*p=',';err=httpd_resp_sendstr_chunk(req,line);}
-    free(copy);if(err==ESP_OK)err=httpd_resp_send_chunk(req,NULL,0);return err;
-}
+#include "session_list_http.inc"
 
 
 
+
+#include "session_archive_http.inc"
 
 extern const uint8_t logo_start[] asm("_binary_teennet_logo_png_start"),logo_end[] asm("_binary_teennet_logo_png_end");
 
 extern const uint8_t hardware_start[] asm("_binary_hardware_plan_svg_start"),hardware_end[] asm("_binary_hardware_plan_svg_end");
-extern const uint8_t wiring_start[] asm("_binary_wiring_plan_jpg_start"),wiring_end[] asm("_binary_wiring_plan_jpg_end");
 
 extern const uint8_t html_gz_start[] asm("_binary_dashboard_html_gz_start"),html_gz_end[] asm("_binary_dashboard_html_gz_end");
 extern const uint8_t css_gz_start[] asm("_binary_dashboard_css_gz_start"),css_gz_end[] asm("_binary_dashboard_css_gz_end");
@@ -3259,12 +3064,11 @@ static esp_err_t asset_send(httpd_req_t *req) {
     if(!strcmp(req->uri,"/teennet-logo.png")) start=logo_start,end=logo_end,type="image/png";
 
     if(!strcmp(req->uri,"/hardware-plan.svg")) start=hardware_start,end=hardware_end,type="image/svg+xml";
-    if(!strcmp(req->uri,"/wiring-plan.jpg")) start=wiring_start,end=wiring_end,type="image/jpeg";
 
 
     if(!strcmp(req->uri,"/guide")) start=guide_gz_start,end=guide_gz_end,type="text/html; charset=utf-8";
 
-    bool gzip=start!=logo_start&&start!=hardware_start&&start!=wiring_start;
+    bool gzip=start!=logo_start&&start!=hardware_start;
     size_t length=(size_t)(end-start)-(gzip?0:1);
     if(gzip){
         char encoding[256];esp_err_t header=httpd_req_get_hdr_value_str(req,"Accept-Encoding",encoding,sizeof(encoding));
@@ -3310,7 +3114,7 @@ static void image_worker(void *arg) {
 }
 
 static esp_err_t asset_handler(httpd_req_t *req) {
-    bool picture=!strcmp(req->uri,"/teennet-logo.png") || !strcmp(req->uri,"/wiring-plan.jpg");
+    bool picture=!strcmp(req->uri,"/teennet-logo.png");
     if(!picture) return asset_send(req);
     if(xSemaphoreTake(image_slots,0)!=pdTRUE) {
         httpd_resp_set_status(req,"503 Service Unavailable");
@@ -3363,9 +3167,9 @@ static int shelly_discovery_get(const char *host,const char *path,char *body,siz
 }
 static void shelly_found_add(const char *host,const char *type,float watts,bool locked) {
     LOCK();
-    for(unsigned i=0;i<shelly_found_count;i++)if(!strcmp(shelly_found[i].host,host)){UNLOCK();return;}
+    for(unsigned i=0;i<shelly_found_count;i++)if(!strcmp(shelly_results.meters[i].host,host)){UNLOCK();return;}
     if(shelly_found_count<12){
-        shelly_found_t *item=&shelly_found[shelly_found_count++];
+        shelly_found_t *item=&shelly_results.meters[shelly_found_count++];
         strcpy(item->host,host);strcpy(item->type,type);item->watts=watts;item->at=now_ms();item->locked=locked;
     }
     if(locked)shelly_locked_count++;
@@ -3398,9 +3202,9 @@ static void shelly_scan_task(void *arg) {
                         LOCK();
                         if(phase_shelly_found_count<12){
                             unsigned index=phase_shelly_found_count++;
-                            strcpy(phase_shelly_found[index].host,host);
-                            phase_shelly_found[index].identity=identity;
-                            phase_shelly_found[index].contacts_checked=checked;
+                            strcpy(shelly_results.switches[index].host,host);
+                            shelly_results.switches[index].identity=identity;
+                            shelly_results.switches[index].contacts_checked=checked;
                         }
                         UNLOCK();
                     }
@@ -3432,8 +3236,8 @@ static esp_err_t shelly_scan_get(httpd_req_t *req) {
     cJSON *devices=cJSON_AddArrayToObject(o,"devices");
     for(unsigned i=0;scan_phase_shelly&&i<phase_shelly_found_count;i++){
         cJSON *device=cJSON_CreateObject();if(!device)break;
-        const shelly_phase_identity_t *identity=&phase_shelly_found[i].identity;
-        cJSON_AddStringToObject(device,"host",phase_shelly_found[i].host);
+        const shelly_phase_identity_t *identity=&shelly_results.switches[i].identity;
+        cJSON_AddStringToObject(device,"host",shelly_results.switches[i].host);
         cJSON_AddStringToObject(device,"name",identity->name);cJSON_AddStringToObject(device,"id",identity->id);
         cJSON_AddStringToObject(device,"model",identity->model);
         cJSON_AddBoolToObject(device,"protected",identity->protected_device);
@@ -3441,15 +3245,15 @@ static esp_err_t shelly_scan_get(httpd_req_t *req) {
         cJSON_AddNumberToObject(device,"profile",identity->profile);
         cJSON_AddNumberToObject(device,"inputs",identity->inputs);
         cJSON_AddBoolToObject(device,"modbus",identity->profile==4);
-        cJSON_AddBoolToObject(device,"contacts_checked",phase_shelly_found[i].contacts_checked);
+        cJSON_AddBoolToObject(device,"contacts_checked",shelly_results.switches[i].contacts_checked);
         json_add_owned_to_array(devices,device);
     }
     cJSON_AddNumberToObject(o,"progress",shelly_scan_progress);cJSON_AddNumberToObject(o,"locked",shelly_locked_count);
-    for(unsigned i=0;i<shelly_found_count;i++){
+    for(unsigned i=0;!scan_phase_shelly&&i<shelly_found_count;i++){
         cJSON *item=cJSON_CreateObject();if(!item)break;
-        cJSON_AddStringToObject(item,"host",shelly_found[i].host);cJSON_AddStringToObject(item,"type",shelly_found[i].type);
-        if(shelly_found[i].locked)cJSON_AddNullToObject(item,"watts");else cJSON_AddNumberToObject(item,"watts",shelly_found[i].watts);
-        cJSON_AddBoolToObject(item,"locked",shelly_found[i].locked);cJSON_AddNumberToObject(item,"age_ms",now_ms()-shelly_found[i].at);json_add_owned_to_array(items,item);
+        cJSON_AddStringToObject(item,"host",shelly_results.meters[i].host);cJSON_AddStringToObject(item,"type",shelly_results.meters[i].type);
+        if(shelly_results.meters[i].locked)cJSON_AddNullToObject(item,"watts");else cJSON_AddNumberToObject(item,"watts",shelly_results.meters[i].watts);
+        cJSON_AddBoolToObject(item,"locked",shelly_results.meters[i].locked);cJSON_AddNumberToObject(item,"age_ms",now_ms()-shelly_results.meters[i].at);json_add_owned_to_array(items,item);
     }
     UNLOCK();return send_json(req,o);
 }
@@ -3583,7 +3387,7 @@ static void start_web(void) {
         {.uri="/dashboard.js",.method=HTTP_GET,.handler=asset_handler},{.uri="/energy.js",.method=HTTP_GET,.handler=asset_handler},{.uri="/health.js",.method=HTTP_GET,.handler=asset_handler},{.uri="/firmware.js",.method=HTTP_GET,.handler=asset_handler},{.uri="/vehicle-pictures.js",.method=HTTP_GET,.handler=asset_handler},{.uri="/features.js",.method=HTTP_GET,.handler=asset_handler},{.uri="/qrcode.js",.method=HTTP_GET,.handler=asset_handler},{.uri="/teennet-logo.png",.method=HTTP_GET,.handler=asset_handler},
 
         {.uri="/hardware-plan.svg",.method=HTTP_GET,.handler=asset_handler},
-        {.uri="/wiring-plan.jpg",.method=HTTP_GET,.handler=asset_handler},{.uri="/guide",.method=HTTP_GET,.handler=asset_handler},
+        {.uri="/guide",.method=HTTP_GET,.handler=asset_handler},
         {.uri="/guide.js",.method=HTTP_GET,.handler=asset_handler},
         {.uri="/expert-schema.json",.method=HTTP_GET,.handler=asset_handler},
 
@@ -3597,6 +3401,7 @@ static void start_web(void) {
         {.uri="/api/theme",.method=HTTP_GET,.handler=theme_get},{.uri="/api/theme",.method=HTTP_POST,.handler=theme_post},
 
         {.uri="/api/history",.method=HTTP_GET,.handler=history_handler},{.uri="/api/charge-curve",.method=HTTP_GET,.handler=charge_curve_handler},{.uri="/api/sessions",.method=HTTP_GET,.handler=sessions_handler},{.uri="/api/sessions/day",.method=HTTP_GET,.handler=session_day_handler},{.uri="/api/export.csv",.method=HTTP_GET,.handler=csv_handler},
+        {.uri="/api/export.json",.method=HTTP_GET,.handler=session_archive_handler},{.uri="/api/export.lp",.method=HTTP_GET,.handler=session_archive_handler},
 
         {.uri="/api/expert",.method=HTTP_POST,.handler=expert_post},
         {.uri="/api/config",.method=HTTP_GET,.handler=config_get},{.uri="/api/config",.method=HTTP_POST,.handler=config_post},
@@ -3782,7 +3587,8 @@ static void relay_signals_locked(int64_t now) {
 
 static void status_task(void *arg) {
 
-    int64_t checkpoint=now_ms(),publish=0,reconnect=0,console=0; double saved_total[2]={energy.store.total_wh[0],energy.store.total_wh[1]};bool checkpoint_retry=false;
+    int64_t checkpoint=now_ms(),publish=0,reconnect=0,console=0,next_optional_check=0; double saved_total[2]={energy.store.total_wh[0],energy.store.total_wh[1]};bool checkpoint_retry=false;
+    const int64_t stats_start=now_ms()+20000;
 #if CONFIG_TEE_HTTP_CONTROL_TRIAL
     tcp_pcb_diag_start();
 #endif
@@ -3858,6 +3664,7 @@ static void status_task(void *arg) {
         charge_counter_delta_t counter_delta=charge_counter_step(&charge_counter,counter_enabled,&counter_input);
         energy.primary_metered=counter_enabled;sessions_meter_mode(&sessions,counter_enabled,counter_delta.new_session);
         energy_step(&energy,now,epoch,date,midnight,power,expires);
+        if(energy.days_pruned)sessions.checkpoint=true;
         if(counter_enabled)energy_add_metered(&energy,counter_delta.from_ms,counter_delta.to_ms,counter_delta.from_epoch_ms,counter_delta.to_epoch_ms,date,midnight,counter_delta.wh);
         sessions_step(&sessions,now,epoch,date,power[0],expires[0],house_power_w,
             house_power_at?house_power_at+house_meter_ttl():0,settings.price_kwh,settings.solar_price_kwh);
@@ -3958,6 +3765,11 @@ static void status_task(void *arg) {
         LOCK();personal_sync_locked(now_ms());UNLOCK();
         solis_hold_publish();
         maintain_wifi(now);
+        if(now>=next_optional_check){
+            huawei_reader_ensure();
+            if(now>=stats_start)telemetry_schedule();
+            next_optional_check=now+5000;
+        }
 
         if(now-publish>=ems_param_ms(EP_MQTT_PUBLISH)) { mqtt_state(); publish=now; }
 
@@ -4051,7 +3863,7 @@ void app_main(void) {
     if(settings.sungrow_enabled&&xTaskCreate(sungrow_task,"sungrow",4096,NULL,4,NULL)!=pdPASS)ESP_LOGE(TAG,"Sungrow reader task failed");
     huawei_io=xSemaphoreCreateMutex();
     if(xTaskCreate(shell_limits_task,"shell_limits",6144,NULL,4,NULL)!=pdPASS)ESP_LOGE(TAG,"Shell limits task failed");
-    if(huawei_io)xTaskCreate(huawei_task,"huawei",4096,NULL,6,NULL);
+    huawei_reader_ensure();
     if(xTaskCreate(house_meter_task,"house_meter",6144,NULL,6,NULL)!=pdPASS) ESP_LOGE(TAG,"House meter task failed");
     if(settings.heatpump_enabled&&!settings.basic_mode&&strcmp(settings.heatpump_source,"mqtt")&&
        xTaskCreate(heatpump_task,"heatpump",4096,NULL,3,NULL)!=pdPASS){
@@ -4059,7 +3871,6 @@ void app_main(void) {
     }
 
 
-    if(telemetry_lock&&xTaskCreate(telemetry_task,"device_stats",6144,NULL,2,NULL)!=pdPASS)ESP_LOGW(TAG,"Device statistics task unavailable");
     reset_clear_at=now_ms()+15000;
 
     if(xTaskCreate(status_task,"status",6144,NULL,5,NULL)!=pdPASS) abort();

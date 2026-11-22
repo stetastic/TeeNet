@@ -32,7 +32,7 @@ static void shell_scan_task(void *arg) {
             shell_scan_progress=(ip-first)*100/(last-first);UNLOCK();
             if(stop){partial=true;break;}
             if(ip==local || !meter_port_open_wait(ip,12800,900))continue;
-            char host[64];snprintf(host,sizeof(host),"%u.%u.%u.%u",(unsigned)(ip>>24),(unsigned)((ip>>16)&255),(unsigned)((ip>>8)&255),(unsigned)(ip&255));
+            char host[sizeof(shell_found_host[0])];snprintf(host,sizeof(host),"%u.%u.%u.%u",(unsigned)(ip>>24),(unsigned)((ip>>16)&255),(unsigned)((ip>>8)&255),(unsigned)(ip&255));
             float grid,maximum;if(shell_read_limits(host,&grid,&maximum)!=200)continue;
             LOCK();unsigned index=shell_found_count;
             if(index<4){strcpy(shell_found_host[index],host);shell_found_grid[index]=grid;shell_found_max[index]=maximum;shell_found_count++;}

@@ -4,6 +4,8 @@ const path = require('node:path');
 const root = path.join(__dirname, '..');
 const schema = require('../admin/jsonConfig.json');
 const en = {
+    'Ladearchiv: TeeNet-IP oder Hostname': 'Charging archive: TeeNet IP or hostname',
+    'Abgeschlossene Ladesitzungen alle fünf Minuten aus TeeNet ab Version 1.25 übernehmen. Leer lassen zum Ausschalten.': 'Import completed sessions every five minutes from TeeNet 1.25 or newer. Leave empty to disable.',
     'Verbindung': 'Connection',
     'TeeNet und dieser Adapter verbinden sich mit demselben MQTT-Broker. Für weitere Geräte eine weitere Adapter-Instanz mit eigenem Topic-Präfix anlegen.': 'TeeNet and this adapter connect to the same MQTT broker. Use another adapter instance and a separate topic prefix for each additional device.',
     'MQTT-Broker: IP oder Hostname': 'MQTT broker: IP address or hostname',

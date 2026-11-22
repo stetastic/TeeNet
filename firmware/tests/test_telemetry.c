@@ -1,6 +1,7 @@
 #include "telemetry_core.h"
 #include <assert.h>
 #include <stdio.h>
+static bool telemetry_runtime_ready(const telemetry_runtime_t *r){return telemetry_runtime_block(r)==NULL;}
 static void test_runtime(void){
  telemetry_runtime_t idle={.current_fresh=true,.shell_configured=true,.shell_known=true,.vehicle_state='A',
      .current_a={0.1f,0.2f,0.3f},.internal_free=TELEMETRY_MIN_INTERNAL_FREE,.internal_largest=TELEMETRY_MIN_INTERNAL_BLOCK};
@@ -19,6 +20,10 @@ static void test_runtime(void){
  r=idle;r.shell_configured=false;r.shell_known=false;r.vehicle_state='?';assert(telemetry_runtime_ready(&r));
  r.session_present=true;assert(!telemetry_runtime_ready(&r));
  r=idle;r.internal_free=200000;r.internal_largest=100000;r.charging_requested=true;assert(!telemetry_runtime_ready(&r));
+ r=idle;r.vehicle_state='B';r.shell_reports_idle=true;r.session_present=true;r.internal_largest=31744;
+ assert(telemetry_runtime_ready(&r));r.vehicle_state='D';assert(telemetry_runtime_ready(&r));
+ r.current_a[2]=1;assert(!telemetry_runtime_ready(&r));r.current_a[2]=0;
+ r.vehicle_state='C';assert(!telemetry_runtime_ready(&r));r.vehicle_state='B';r.shell_known=false;assert(!telemetry_runtime_ready(&r));
 #undef BLOCKED
  telemetry_config_t deletion={.schema=1,.delete_pending=1};memset(deletion.id,'a',32);memset(deletion.key,'b',64);
  telemetry_config_t before=deletion;

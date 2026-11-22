@@ -4,6 +4,9 @@
 static telemetry_config_t telemetry_config={.schema=1};
 static SemaphoreHandle_t telemetry_lock;
 static bool telemetry_last_ok;
+static const char *telemetry_wait_reason;
+static int telemetry_last_http;
+static uint32_t telemetry_duration_ms;
 static int64_t telemetry_last_at,telemetry_next_at;
 
 static void telemetry_load(void){
@@ -25,6 +28,9 @@ static void telemetry_json(cJSON *o){
     cJSON_AddBoolToObject(o,"telemetry_decided",telemetry_config.revision[0]!=0);
     cJSON_AddBoolToObject(o,"telemetry_delete_pending",telemetry_config.delete_pending);
     cJSON_AddBoolToObject(o,"telemetry_last_ok",telemetry_last_ok);
+    cJSON_AddStringToObject(o,"telemetry_wait",telemetry_wait_reason?telemetry_wait_reason:"");
+    cJSON_AddNumberToObject(o,"telemetry_last_http",telemetry_last_http);
+    cJSON_AddNumberToObject(o,"telemetry_duration_ms",telemetry_duration_ms);
     cJSON_AddNumberToObject(o,"telemetry_last_age_s",telemetry_last_at?(now_ms()-telemetry_last_at)/1000:-1);
     cJSON_AddStringToObject(o,"telemetry_revision",TELEMETRY_REVISION);
 }
@@ -53,64 +59,9 @@ static esp_err_t telemetry_post(httpd_req_t *req){
     /* Revoke in memory even if NVS fails. The UI explicitly reports a failed persistent save. */
     if(!enable){LOCK();telemetry_config=next;UNLOCK();}
     bool stored=telemetry_valid(&next)&&telemetry_store(&next);
-    if(stored){LOCK();telemetry_config=next;telemetry_next_at=0;telemetry_last_ok=false;UNLOCK();}
+    if(stored){LOCK();telemetry_config=next;telemetry_next_at=0;telemetry_last_ok=false;telemetry_wait_reason=NULL;telemetry_last_http=0;telemetry_duration_ms=0;UNLOCK();}
     xSemaphoreGive(telemetry_lock);
     if(!stored)return httpd_resp_send_err(req,HTTPD_500_INTERNAL_SERVER_ERROR,"Statistikauswahl nicht dauerhaft gespeichert. Erneut versuchen.");
     return ok_json(req);
 }
-static void telemetry_task(void *arg){
-    (void)arg;
-    vTaskDelay(ticks(15000));
-    for(;;){
-        vTaskDelay(ticks(5000));
-        if(!TELEMETRY_ENDPOINT[0]||!telemetry_lock||xSemaphoreTake(telemetry_lock,0)!=pdTRUE)continue;
-        LOCK();int64_t now=now_ms();telemetry_config_t c=telemetry_config;
-        bool due=telemetry_due(&c,terms_accepted,wifi_online,
-            ota_in_progress||restarting||backup_in_progress||boot_validation_pending,now,telemetry_next_at);
-        telemetry_runtime_t runtime={
-            .charging_requested=settings.enabled||evcc_control.enabled,
-            .phase_busy=phase_config_saving||(settings.phase_switch_enabled&&
-                (phase_startup||phase_state!=PHASE_READY||phase_shelly_pending||phase_shelly_inflight||
-                 phase_shelly_rechecking||phase_mqtt_pending||phase_mqtt_inflight)),
-            .test_active=phase_test_active,
-            .current_fresh=fresh(now,actual_at,wallbox_meter_ttl()),
-            .shell_configured=evcc_control.configured||settings.shell_limits_auto||
-                settings.shell_setup_host[0]||shell_active_host[0],
-            .shell_known=shell_vehicle_fresh(&evcc_shell,evcc_shell_at,now),
-            .session_present=evcc_shell.session.present,.vehicle_state=evcc_shell.state,
-            .current_a={actual_a[0],actual_a[1],actual_a[2]}};
-#if CONFIG_TEE_HTTP_CONTROL_TRIAL
-        runtime.test_active=runtime.test_active||normal_offset_trial.armed||shell_http_trial.armed;
-#endif
-        UNLOCK();
-        runtime.internal_free=heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);
-        runtime.internal_largest=heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);
-        /* Defer without changing consent, pending deletion or the due time.
-           On a small Atom this may remain pending until enough RAM is free. */
-        if(!due||time(NULL)<1735689600||!telemetry_runtime_ready(&runtime)){xSemaphoreGive(telemetry_lock);continue;}
-        char body[288],auth[73];
-        if(c.delete_pending)snprintf(body,sizeof(body),"{\"id\":\"%s\"}",c.id);
-        else snprintf(body,sizeof(body),"{\"id\":\"%s\",\"version\":\"%s\",\"build\":\"%s\",\"hardware\":\"%s\",\"consent_revision\":\"%s\"}",c.id,VERSION,EMS_BUILD_ID,EMS_HARDWARE_ID,TELEMETRY_REVISION);
-        snprintf(auth,sizeof(auth),"Bearer %s",c.key);
-        esp_http_client_config_t cfg={.url=TELEMETRY_ENDPOINT,.method=c.delete_pending?HTTP_METHOD_DELETE:HTTP_METHOD_POST,
-            .timeout_ms=5000,.crt_bundle_attach=esp_crt_bundle_attach,.disable_auto_redirect=true,.buffer_size=512,.buffer_size_tx=512};
-        esp_http_client_handle_t client=esp_http_client_init(&cfg);bool ok=false;
-        if(client){
-            esp_http_client_set_header(client,"Content-Type","application/json");
-            esp_http_client_set_header(client,"Authorization",auth);
-            esp_http_client_set_header(client,"User-Agent","TeeNet-installation-statistics");
-            esp_http_client_set_post_field(client,body,strlen(body));
-            esp_err_t err=esp_http_client_perform(client);int status=esp_http_client_get_status_code(client);
-            ok=err==ESP_OK&&status>=200&&status<300;
-            esp_http_client_cleanup(client);
-        }
-        memset(auth,0,sizeof(auth));
-        if(ok&&c.delete_pending){
-            c.delete_pending=0;memset(c.id,0,sizeof(c.id));memset(c.key,0,sizeof(c.key));
-            if(telemetry_store(&c)){LOCK();telemetry_config=c;UNLOCK();}
-        }
-        LOCK();telemetry_last_ok=ok;if(ok)telemetry_last_at=now_ms();
-        telemetry_next_at=now_ms()+TELEMETRY_INTERVAL_MS+(esp_random()%15000);UNLOCK();
-        memset(&c,0,sizeof(c));xSemaphoreGive(telemetry_lock);
-    }
-}
+#include "telemetry_worker.inc"

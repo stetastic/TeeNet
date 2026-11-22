@@ -1,8 +1,8 @@
-# TeeNet 1.24
+# TeeNet 1.26
 
 Lokale Ladesteuerung für die Shell Recharge Advanced 3.0: manuelles Laden, PV-Überschuss, Hausakku, Fahrzeugprofile und Ladepläne. Bedienung im Browser; ioBroker, Home Assistant und MQTT sind optional.
 
-[Demo](https://stetastic.github.io/TeeNet/) · [Anleitung](https://stetastic.github.io/TeeNet/help.html) · [Downloads & USB-Installation](https://stetastic.github.io/TeeNet/downloads.html) · [Version 1.24](https://github.com/stetastic/TeeNet/releases/tag/v1.24)
+[Demo](https://stetastic.github.io/TeeNet/) · [Anleitung](https://stetastic.github.io/TeeNet/help.html) · [Downloads & USB-Installation](https://stetastic.github.io/TeeNet/downloads.html) · [Version 1.26](https://github.com/stetastic/TeeNet/releases/tag/v1.26)
 
 ## Hardware
 
@@ -15,14 +15,9 @@ AtomS3 Lite und N16R8 sind reguläre Hardwareprofile. Bestehende Atom-Installati
 
 Optional: Shelly 3EM als Wallbox-Zähler, Hausanschlusszähler für PV-Laden und ein über Netzwerk angesteuertes Phasenschütz. Die Anleitung beschreibt Öffner-/Schließerkontakte und die optionale Stellungsprüfung über Phasenspannungen.
 
-## Neu in 1.24
+## Neu in 1.26
 
-- HTTP-Regelung ohne externen Wallbox-Zähler ist dauerhaft auswählbar; sie läuft selbstständig im ESP.
-- Mit Mercedes GLB 250 getestet. Ladetests mit weiteren Fahrzeugen ohne Shelly-Zähler stehen aus; andere Netzwerklatenzen sind nicht bestätigt.
-- Neue dreiphasige Standard-Untergrenze: 5,6 kW. Die früheren Auswahlschalter für 5,5 und 6 kW entfallen. Individuelle Expertenparameter bleiben erhalten.
-- Kürzere Einstellungen, zusammengeführte Downloads für beide Boards und überarbeitete Anleitung.
-
-Bei HTTP-Regelung werden Strom und Leistung geschätzt. Die kWh-Abrechnung nutzt die Zählerstände der Wallbox. Fehlende HTTP-Daten stoppen die Regelung; ein Phasenwechsel benötigt weiterhin einen unabhängigen Nachweis des Stromstillstands.
+- RAM-Optimierungen
 
 ## Installieren
 

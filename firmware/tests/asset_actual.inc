@@ -19,12 +19,11 @@ static esp_err_t asset_send(httpd_req_t *req) {
     if(!strcmp(req->uri,"/teennet-logo.png")) start=logo_start,end=logo_end,type="image/png";
 
     if(!strcmp(req->uri,"/hardware-plan.svg")) start=hardware_start,end=hardware_end,type="image/svg+xml";
-    if(!strcmp(req->uri,"/wiring-plan.jpg")) start=wiring_start,end=wiring_end,type="image/jpeg";
 
 
     if(!strcmp(req->uri,"/guide")) start=guide_gz_start,end=guide_gz_end,type="text/html; charset=utf-8";
 
-    bool gzip=start!=logo_start&&start!=hardware_start&&start!=wiring_start;
+    bool gzip=start!=logo_start&&start!=hardware_start;
     size_t length=(size_t)(end-start)-(gzip?0:1);
     if(gzip){
         char encoding[256];esp_err_t header=httpd_req_get_hdr_value_str(req,"Accept-Encoding",encoding,sizeof(encoding));

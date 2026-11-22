@@ -67,29 +67,7 @@
       cost_eur:grid*cfg.price_kwh+solar*cfg.solar_price_kwh, flags:0, active:false };
   });
 
-
-  // Local preview only: preserve saved feature choices without resuming a charging plan.
-  const rememberLocalDemoFeatures=(()=>{
-    if(!['localhost','127.0.0.1','[::1]','::1'].includes(location.hostname))return ()=>{};
-    const key='teenet-local-demo-features-v1',defaults={"basic_mode":false,"zero_feed_enabled":true,"pv_display_enabled":true,"battery_protect":true,"vehicle_soc_enabled":true,"vehicle_manual_soc_prompt":true,"vehicle_fixed_profile":0,"wallbox_shelly_reverse":true,"charge_plan_enabled":true,"heatpump_enabled":false,"huawei_enabled":false,"huawei_battery":false,"huawei_pv":false,"grid_guard_enabled":false,"relay_board_enabled":false,"phase_switch_enabled":false,"external_mode_input_enabled":false,"evu_input_enabled":false,"pv_allocation_enabled":false,"mqtt_input_source":0};
-    let saved=null;try{saved=JSON.parse(localStorage.getItem(key)||'null');}catch{}
-    const firstRun=!saved||saved.version!==1||!saved.values||typeof saved.values!=='object'||Array.isArray(saved.values);
-    const values={...defaults};
-    if(!firstRun)for(const name of Object.keys(defaults)){
-      const value=saved.values[name];
-      if(name==='vehicle_fixed_profile'?Number.isInteger(value)&&value>=0&&value<=4:name==='mqtt_input_source'?Number.isInteger(value)&&value>=0&&value<=2:typeof value==='boolean')values[name]=value;
-    }
-    Object.assign(cfg,values);
-    window.teenetLocalDemoFeatures={firstRun};
-    if(firstRun)try{
-      localStorage.setItem('teenet-demo-evcc-feature','false');
-      const pumpKey='teenet-demo-heatpump-v1',pump=JSON.parse(localStorage.getItem(pumpKey)||'null');
-      if(pump&&typeof pump==='object'&&!Array.isArray(pump))localStorage.setItem(pumpKey,JSON.stringify({...pump,heatpump_enabled:false}));
-    }catch{}
-    return ()=>{try{localStorage.setItem(key,JSON.stringify({version:1,values:Object.fromEntries(Object.keys(defaults).map(name=>[name,cfg[name]]))}));}catch{}};
-  })();
   basicConfig();
-  rememberLocalDemoFeatures();
   const phases=()=>cfg.phase_switch_enabled?(control.manual_phases??3):(cfg.fixed_charge_phases??3);
   function measurements() {
     const seconds = (Date.now() - started) / 1000;
@@ -133,7 +111,7 @@
     const soc = 73-((Date.now()-started)/3600000)*2;
     return {
       huawei_enabled:cfg.huawei_enabled,huawei_ok:cfg.huawei_enabled,huawei_model:cfg.huawei_enabled?'SUN2000-8KTL-M1':'',battery_source:cfg.huawei_battery?'Huawei':'MQTT',pv_source:cfg.huawei_pv?'Huawei':'MQTT',
-      version:'1.24',build_id:'demo-v1.24',charge_plan:{...plan},charge_plan_enabled:cfg.charge_plan_enabled, token:'demo-token', hostname:'TeeNet-Demo',
+      version:'1.26',build_id:'demo-v1.26',charge_plan:{...plan},charge_plan_enabled:cfg.charge_plan_enabled, token:'demo-token', hostname:'TeeNet-Demo',
       ...control, mqtt_enabled:cfg.mqtt_enabled, mqtt_ok:true, homeassistant_enabled:cfg.homeassistant_enabled,
       wifi_ok:true, ap_active:false, ap_forced:false, wifi_fallback:false, station_ip:'teennet.demo.local',
       basic_mode:cfg.basic_mode,expert_mode:cfg.expert_mode, pv_display_enabled:cfg.pv_display_enabled,
@@ -185,7 +163,7 @@
       points:Array.from({length:120},(_,i)=>({age_min:119-i,
         estimate_w:Math.max(0,6100+2100*Math.sin((i+t/60)/13)+520*Math.cos(i/4)),
         wallbox_w:Math.max(0,5700+1700*Math.sin((i+t/60)/15))})),
-      days:Array.from({length:18},(_,i)=>{const d=new Date(now);d.setDate(now.getDate()-17+i);return {
+      days:Array.from({length:30},(_,i)=>{const d=new Date(now);d.setDate(now.getDate()-29+i);return {
         date:ymd(d),estimate_kwh:9+(i%6)*2.1,wallbox_kwh:4.5+(i%5)*1.3,
         estimate_covered_s:86000,wallbox_covered_s:82000};})
     };
@@ -203,8 +181,25 @@
     });
   }
   function sessionCsv(url) {
-    const header='Datum;Energie_kWh;Netz_kWh;Netz_EUR;Solar_Akku_kWh;Solar_Akku_EUR;Kosten_EUR\n';
-    return header+selectedSessions(url).map(s=>`${s.date};${s.energy_kwh.toFixed(3)};${s.grid_kwh.toFixed(3)};${s.grid_cost_eur.toFixed(2)};${s.solar_kwh.toFixed(3)};${s.solar_cost_eur.toFixed(2)};${s.cost_eur.toFixed(2)}`).join('\n');
+    const rows=selectedSessions(url).slice().sort((a,b)=>a.start_epoch-b.start_epoch);
+    const number=(v,d)=>v.toFixed(d).replace('.',',');
+    const time=t=>{
+      if(!t)return '';
+      const d=new Date(t*1000);
+      return new Date((t-d.getTimezoneOffset()*60)*1000).toISOString().slice(0,19).replace('T',' ');
+    };
+    const values=r=>[number(r.energy_kwh,6),number(r.grid_kwh,6),number(r.grid_cost_eur,4),number(r.energy_kwh?100*r.grid_kwh/r.energy_kwh:0,2),number(r.solar_kwh,6),number(r.solar_cost_eur,4),number(r.energy_kwh?100*r.solar_kwh/r.energy_kwh:0,2),number(r.cost_eur,4)];
+    const csv=['Sitzung;Beginn;Letzte_Ladung;Ladezeit_Minuten;Energie_kWh;Netz_kWh;Netz_Kosten_EUR;Netz_Prozent;Solar_Akku_kWh;Solar_Akku_Kosten_EUR;Solar_Akku_Prozent;Kosten_EUR;Status'];
+    const totals={energy_kwh:0,grid_kwh:0,grid_cost_eur:0,solar_kwh:0,solar_cost_eur:0,cost_eur:0};
+    for(const r of rows){
+      csv.push([r.id,time(r.start_epoch),time(r.end_epoch),number(r.charging_s/60,1),...values(r),r.active?'Aktiv':'Abgeschlossen'].join(';'));
+      for(const k of Object.keys(totals))totals[k]+=r[k];
+    }
+    csv.push(['SUMME','','','',...values(totals),''].join(';'));
+    return '\uFEFF'+csv.join('\r\n')+'\r\n';
+  }
+  function sessionArchive(url) {
+    return {schema:1,device:'teenet_de00',sessions:selectedSessions(url).filter(s=>!s.active).map(({active,unknown_kwh,...r})=>r).sort((a,b)=>a.start_epoch-b.start_epoch)};
   }
   function groupedSessions(url) {
     const params = url.searchParams;
@@ -242,7 +237,7 @@
         const restartNeeded=restartFields.some(key=>key in body&&body[key]!==cfg[key]);
         rebootRequired ||= restartNeeded;
         if(rebootRequired){control.enabled=false;control.mode='off';}
-        Object.assign(cfg, body);if(!cfg.battery_protect||!cfg.zero_feed_enabled)cfg.pv_allocation_enabled=false;basicConfig();if(!cfg.charge_plan_enabled&&plan.active){plan.active=false;plan.phase='off';control.enabled=false;control.mode='off';}logEvent('settings_saved');rememberLocalDemoFeatures();
+        Object.assign(cfg, body);if(!cfg.battery_protect||!cfg.zero_feed_enabled)cfg.pv_allocation_enabled=false;basicConfig();if(!cfg.charge_plan_enabled&&plan.active){plan.active=false;plan.phase='off';control.enabled=false;control.mode='off';}logEvent('settings_saved');
         return json({ok:true,reboot_required:rebootRequired,restart_needed:restartNeeded,applied:!restartNeeded});
       }
       else if (url.pathname === '/api/reboot') rebootRequired=false;
@@ -255,7 +250,7 @@
       }
       else if(url.pathname==='/api/restore'){
         if(body.format!=='TeeNet-settings'||body.schema!==1||!body.settings)return json({error:'Keine passende Sicherung'},400);
-        Object.assign(cfg,body.settings);basicConfig();cfg.control_verified=false;control.enabled=false;control.mode='off';plan.active=false;plan.phase='off';logEvent('settings_restored');rememberLocalDemoFeatures();
+        Object.assign(cfg,body.settings);basicConfig();cfg.control_verified=false;control.enabled=false;control.mode='off';plan.active=false;plan.phase='off';logEvent('settings_restored');
         return json({ok:true,reboot_required:true});
       }
       else if (url.pathname === '/api/huawei/preview') huaweiProbe={...huaweiProbe,...body};
@@ -274,10 +269,13 @@
       delete settings.wifi_password_set;delete settings.mqtt_password_set;
       if(secrets){settings.wifi_password='demo-password';settings.mqtt_password='demo-password';}
       else {delete settings.wifi_password;delete settings.mqtt_password;}
-      return json({format:'TeeNet-settings',schema:1,build_id:'demo-v1.24',includes_passwords:secrets,settings});
+      return json({format:'TeeNet-settings',schema:1,build_id:'demo-v1.26',includes_passwords:secrets,settings});
     }
     if (url.pathname === '/api/history') return json(history());
     if (url.pathname === '/api/sessions') return json(groupedSessions(url));
+    if (url.pathname === '/api/export.json') return json(sessionArchive(url));
+    if (url.pathname === '/api/export.lp') return new Response(sessionArchive(url).sessions.filter(s=>s.start_epoch).map(s=>
+      `teenet_session,device=teenet_de00,session=${s.id} id=${s.id}i,end_epoch=${s.end_epoch}i,charging_s=${s.charging_s}i,energy_kwh=${s.energy_kwh},grid_kwh=${s.grid_kwh},solar_kwh=${s.solar_kwh},cost_eur=${s.cost_eur},grid_cost_eur=${s.grid_cost_eur},solar_cost_eur=${s.solar_cost_eur},flags=${s.flags}i ${s.start_epoch}000000000`).join('\n'));
     if (url.pathname === '/api/export.csv') return Promise.resolve(new Response(sessionCsv(url),{headers:{'Content-Type':'text/csv'}}));
     if (url.pathname === '/api/sessions/day') {
       const date=Number(url.searchParams.get('date')||0),offset=Number(url.searchParams.get('offset')||0);
@@ -294,6 +292,12 @@
   };
 
   document.addEventListener('DOMContentLoaded', () => {
+    const jsonLink=document.getElementById('session-json');
+    if(jsonLink)jsonLink.addEventListener('click',event=>{
+      event.preventDefault();
+      const url=URL.createObjectURL(new Blob([JSON.stringify(sessionArchive(new URL(jsonLink.href,location.origin)))],{type:'application/json'}));
+      const link=document.createElement('a');link.href=url;link.download='TeeNet-Ladesitzungen.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+    });
     const csv = document.getElementById('session-csv');
     if (csv) csv.addEventListener('click', event => {
       event.preventDefault();

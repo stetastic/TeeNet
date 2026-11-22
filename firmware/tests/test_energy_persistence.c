@@ -33,6 +33,7 @@ static int write_result(void){return ++write_calls==fail_write?ESP_FAIL:ESP_OK;}
 static int nvs_open_from_partition(const char*p,const char*n,int mode,int*h){assert(!strcmp(p,"stats")&&!strcmp(n,"energy")&&mode==NVS_READWRITE&&status_lock);*h=7;return ESP_OK;}
 static int nvs_set_blob(int h,const char*k,const void*p,size_t n){assert(h==7);if(!strcmp(k,"meter_totals")){assert(n==sizeof(saved_meter));memcpy(&saved_meter,p,n);}return write_result();}
 static int nvs_set_u32(int h,const char*k,uint32_t v){assert(h==7&&!strcmp(k,"reset_date")&&v==energy_reset_date);return write_result();}
+static int energy_days_save(int h,const meter_totals_t *meter){return nvs_set_blob(h,"meter_totals",meter,sizeof(*meter));}
 static int nvs_commit(int h){assert(h==7);return write_result();}
 static void nvs_close(int h){assert(h==7);}
 static int session_chunks_save_checkpoint(int h,const session_checkpoint_t*c){assert(h==7);saved_count=c->count;saved_first=c->count?c->records[0].id:0;saved_last=c->count?c->records[c->count-1].id:0;return write_result();}
@@ -74,16 +75,21 @@ int main(void){
  for(unsigned i=0;i<3;i++)sessions.store.records[i]=(charge_session_t){.id=i+1,.grid_wh=1500};
  assert(save_energy());clean();assert(saved_count==3&&saved_first==1&&saved_last==3&&last_saved_ms==12000&&!storage_error);
  assert(saved_meter.totals.total_wh[0]==1234.5&&saved_meter.counter.raw_wh==2345.6&&saved_meter.counter.version==1);
- size_t small_peak=peak;assert(small_peak<8192&&sizeof(session_store_t)>8192);
+ size_t small_peak=peak;assert(small_peak<8192&&sizeof(session_store_t)<2500);
  busy=true;write_calls=0;assert(!save_energy()&&!storage_error&&!write_calls);busy=false;clean();
  for(unsigned i=1;i<=2;i++){calls=0;fail_allocation=i;write_calls=0;assert(!save_energy()&&storage_error&&!write_calls);clean();fail_allocation=0;assert(save_energy()&&!storage_error);clean();}
- for(int i=1;i<=6;i++){write_calls=0;fail_write=i;assert(!save_energy()&&storage_error);clean();fail_write=0;assert(save_energy()&&!storage_error);clean();}
- sessions.store.count=512;sessions.store.next_slot=0;sessions.store.next_id=513;for(unsigned i=0;i<512;i++)sessions.store.records[i].id=i+1;
- assert(!save_energy()&&storage_error);clean();allocation_limit=64000;assert(save_energy()&&!storage_error&&saved_count==512&&saved_first==1&&saved_last==512);clean();
+ int steps=write_calls;
+ for(int i=1;i<=steps;i++){write_calls=0;fail_write=i;assert(!save_energy()&&storage_error);clean();fail_write=0;assert(save_energy()&&!storage_error);clean();}
+ sessions.store.count=CHARGE_SESSION_CAPACITY;sessions.store.next_slot=0;sessions.store.next_id=513;
+ for(unsigned i=0;i<CHARGE_SESSION_CAPACITY;i++)sessions.store.records[i].id=513-CHARGE_SESSION_CAPACITY+i;
+ allocation_limit=1024;assert(save_energy()&&!storage_error&&saved_count==CHARGE_SESSION_CAPACITY&&saved_first==513-CHARGE_SESSION_CAPACITY&&saved_last==512);clean();
+ peak=0;
+ for(unsigned cycle=0;cycle<1000;cycle++){assert(save_energy());clean();}
+ printf("PASS 1000 full checkpoints: peak %zu bytes, 0 retained after every cycle\n",peak);
  sessions.store.count=3;sessions.store.next_slot=3;allocation_limit=8192;
  httpd_req_t r={.status=200};busy=true;assert(system_backup_handler(&r)==ESP_OK&&r.status==503&&strstr(r.message,"Verbrauchsdaten")&&!r.bytes);busy=false;clean();
  r=(httpd_req_t){.status=200};chunks=0;assert(system_backup_handler(&r)==ESP_OK&&r.status==200&&r.bytes==4*1024*1024);clean();
  r=(httpd_req_t){.status=200};chunks=0;fail_chunk=2;assert(system_backup_handler(&r)==ESP_FAIL&&r.bytes==4096);fail_chunk=0;clean();
  settings.enabled=true;r=(httpd_req_t){.status=200};assert(system_backup_handler(&r)==ESP_OK&&r.status==409&&!r.bytes);clean();
- printf("PASS: actual energy save succeeds with 8KB budget (%zu-byte peak); allocation/write faults release all memory and recover; 512-row capacity; busy backup gives 503, complete/interrupted streams and charge guard\n",small_peak);
+ printf("PASS: active session checkpoint fits a 1 KiB heap budget, failures release memory, and complete/interrupted backup streams retain their charge guard (small snapshot %zu bytes)\n",small_peak);
 }

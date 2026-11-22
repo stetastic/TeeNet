@@ -31,6 +31,8 @@
   "Fahrzeug-Ladezustand (%)": "Fahrzeug-Ladezustand (%)",
   "Die Datenweitergabe steuert den Wechselrichter nicht. TeeNet kann damit das Entladen des Hausakkus nicht sperren.": "Die Datenweitergabe steuert den Wechselrichter nicht. TeeNet kann damit das Entladen des Hausakkus nicht sperren.",
   "Erweitert": "Erweitert",
+  "Ladearchiv: TeeNet-IP oder Hostname": "Ladearchiv: TeeNet-IP oder Hostname",
+  "Abgeschlossene Ladesitzungen alle fünf Minuten aus TeeNet ab Version 1.25 übernehmen. Leer lassen zum Ausschalten.": "Abgeschlossene Ladesitzungen alle fünf Minuten aus TeeNet ab Version 1.25 übernehmen. Leer lassen zum Ausschalten.",
   "Verbindung gilt als veraltet nach (Sekunden)": "Verbindung gilt als veraltet nach (Sekunden)",
   "Messwerte weitergeben alle": "Messwerte weitergeben alle",
   "5 Sekunden": "5 Sekunden",

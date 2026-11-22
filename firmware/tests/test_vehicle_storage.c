@@ -43,7 +43,18 @@ int main(void){
  cJSON_Hooks hooks={checked_malloc,checked_free};cJSON_InitHooks(&hooks);
  vehicles.rows[0]=(vehicle_profile_t){.name="Saved car",.plate="AB 123",.cards={"CARD",""},.capacity_kwh=60,.maximum_kw=11,.efficiency=.9,.target_soc=80,.picture=3};
  vehicle_assets_t *a=vehicle_assets_read();assert(a&&a->store.rows[0].picture==3);assert(vehicle_assets_commit(a));assert(disk_size<1024);
- a->photo_size[0]=1536;a->photos[0][0]=0xff;a->photos[0][1]=0xd8;a->photos[0][1534]=0xff;a->photos[0][1535]=0xd9;assert(vehicle_assets_commit(a));checked_free(a);assert(disk_size<3000);
+ a->photo_size[0]=1536;a->photos[0][0]=0xff;a->photos[0][1]=0xd8;a->photos[0][1534]=0xff;a->photos[0][1535]=0xd9;
+ static const unsigned char second[]={0xff,0xd8,0x12,0xff,0xd9}, fourth[]={0xff,0xd8,0x34,0x56,0xff,0xd9};
+ a->photo_size[1]=sizeof(second);memcpy(a->photos[1],second,sizeof(second));
+ a->photo_size[3]=sizeof(fourth);memcpy(a->photos[3],fourth,sizeof(fourth));
+ assert(vehicle_assets_commit(a));checked_free(a);assert(disk_size<3000);
+ /* Reading the compact bundle needs a single allocation even with several photos. */
+ fail_at=1;calls=0;a=vehicle_assets_read();fail_at=-1;
+ assert(a&&calls==1&&a->photo_size[0]==1536&&!a->photo_size[2]);
+ assert(a->photo_size[1]==sizeof(second)&&!memcmp(a->photos[1],second,sizeof(second)));
+ assert(a->photo_size[3]==sizeof(fourth)&&!memcmp(a->photos[3],fourth,sizeof(fourth)));
+ checked_free(a);
+ disk_size--;assert(!vehicle_assets_read()&&!live);disk_size++;
  cJSON *json=vehicle_assets_json();assert(json);char *text=cJSON_PrintUnformatted(json);assert(text);vehicle_assets_t *parsed=vehicle_assets_parse(json);assert(parsed&&parsed->photo_size[0]==1536&&parsed->store.rows[0].picture==3);checked_free(parsed);checked_free(text);cJSON_Delete(json);assert(!live);
  a=vehicle_assets_read();strcpy(a->store.rows[0].name,"Different");fail_commit=true;assert(!vehicle_assets_commit(a));fail_commit=false;checked_free(a);a=vehicle_assets_read();assert(!strcmp(a->store.rows[0].name,"Saved car"));checked_free(a);
  vehicle_assets_boot();assert(!storage_error&&vehicles.rows[0].picture==3);

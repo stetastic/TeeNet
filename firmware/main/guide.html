@@ -86,7 +86,63 @@ a:not(.button){color:#0879b4;text-decoration:underline;text-underline-offset:3px
 <details id="opendtu"><summary>OpenDTU-OnBattery</summary><p>MQTT-Broker, DTU-Präfix und Solar-Topic in Watt eintragen. Akku-Lade-/Entladerichtung prüfen. Akku-Wechselrichterleistung ist keine reine PV-Erzeugung; ersetzt keinen Haus-/Wallbox-Zähler. <a href="https://opendtu-onbattery.net/firmware/mqtt_topics/" target="_blank" rel="noopener">Topics</a>.</p></details>
 <details id="hausanschlussschutz"><summary>Überlastungsschutz Hausanschluss</summary><p>Aktuelle Ströme aller drei Phasen und passende Netzgrenze erforderlich. Bei fehlenden Phasenwerten: keine Hausstromüberwachung; Ladeleistung höchstens 8 kW. Gesamtleistung allein genügt nicht.</p></details>
 <details id="evcc"><summary>evcc</summary><p>Aktivieren, Shell-IP eintragen, erzeugte evcc-Konfiguration übernehmen. evcc gibt Start, Stopp und Leistung vor; TeeNet schaltet die Phasen. Lokaler Stopp sperrt neue evcc-Starts; Kommunikationsverlust nimmt die Ladeanforderung zurück.</p></details>
-<details id="verbrauch"><summary>Verbrauch &amp; Kosten</summary><p>Mit Shell-IP kommen geladene kWh aus dem Wallbox-Zähler; Datenlücken werden nachgetragen. Nur ohne Shell-Netzwerkadresse wird Leistung × Zeit gerechnet. Sitzungen unter <b>1 kWh</b> fehlen in der Historie, zählen aber zur Gesamtenergie.</p><p>Tag antippen für Details; CSV-Export verfügbar. Neue Preise gelten für künftige Mengen. Gesamtzähler und Historie sind getrennt rücksetzbar.</p></details></section>
+<details id="verbrauch"><summary>Verbrauch &amp; Kosten</summary><p>Mit Shell-IP kommen geladene kWh aus dem Wallbox-Zähler; Datenlücken werden nachgetragen. Nur ohne Shell-Netzwerkadresse wird Leistung × Zeit gerechnet. Sitzungen unter <b>1 kWh</b> fehlen in der Historie, zählen aber zur Gesamtenergie.</p><p>Unter Ladesitzungen zwischen heute, 3 Tagen, 7 Tagen und einem Monat (30 Tage) wählen. Einen Tag für die einzelnen Sitzungen aufklappen. Die Downloads enthalten das gesamte Archiv.</p><p>TeeNet speichert die Tageswerte der letzten 30 Kalendertage und die letzten 512 Ladesitzungen im Flash. Der Gesamtzähler läuft weiter. CSV enthält auch laufende Sitzungen ab 1 kWh. JSON enthält abgeschlossene Sitzungen mit Beginn, Ende, Ladezeit, kWh und Kosten je Stromquelle.</p>
+<p>Im TeeNet-Adapter für ioBroker ab 0.2.0 die ESP-Adresse für das Sitzungsarchiv eintragen. Unter <code>teenet.0.stats</code> stehen Energie und Kosten für Solar- und Netzladung bereit.</p>
+<details><summary>ioBroker ohne TeeNet-Adapter</summary><p>Im JavaScript-Adapter (ab 7.9) ein Skript anlegen und den folgenden Inhalt einfügen. Bei Bedarf die ESP-IP einsetzen. Das Skript ergänzt alle fünf Minuten die Monatsarchive unter <code>0_userdata.0.TeeNet.Archiv</code>. Bereits übernommene Sitzungen bleiben beim nächsten Abruf erhalten.</p><pre style="overflow-x:auto"><code>// ioBroker JavaScript ab 7.9. Bei Bedarf teenet.local durch die ESP-IP ersetzen.
+const url = &#x27;http://teenet.local/api/export.json&#x27;;
+let busy = false;
+
+async function archive() {
+    if (busy) return;
+    busy = true;
+    try {
+        const data = await new Promise((resolve, reject) =&gt; {
+            httpGet(url, { timeout: 10000 }, (err, res) =&gt; {
+                if (err || res.statusCode !== 200) reject(Error(err || &#x27;HTTP &#x27; + res.statusCode));
+                else resolve(res.data);
+            });
+        });
+        const payload = JSON.parse(data);
+        if (payload.schema !== 1 || !/^teenet(?:_[0-9a-f]+)?$/.test(payload.device) ||
+            !Array.isArray(payload.sessions)) throw Error(&#x27;Unbekanntes TeeNet-Archivformat&#x27;);
+        const months = new Map();
+        for (const row of payload.sessions) {
+            const month = row.date ? String(row.date).slice(0, 6) : &#x27;ohneDatum&#x27;;
+            if (!months.has(month)) months.set(month, []);
+            months.get(month).push(row);
+        }
+        for (const [month, rows] of months) {
+            const state = &#x27;0_userdata.0.TeeNet.Archiv.&#x27; + payload.device + &#x27;.&#x27; + month;
+            if (!existsState(state)) {
+                await createStateAsync(state, &#x27;{}&#x27;, false, { type: &#x27;string&#x27;, role: &#x27;json&#x27;, read: true, write: false });
+            }
+            const previous = (await getStateAsync(state)).val;
+            const entries = JSON.parse(previous);
+            if (!entries || typeof entries !== &#x27;object&#x27; || Array.isArray(entries)) throw Error(&#x27;Ungültiges Monatsarchiv &#x27; + month);
+            for (const row of rows) entries[row.start_epoch + &#x27;_&#x27; + row.id] = row;
+            const next = JSON.stringify(entries);
+            if (next !== previous) await setStateAsync(state, next, true);
+        }
+    } catch (err) {
+        log(&#x27;TeeNet-Archiv: &#x27; + err.message, &#x27;warn&#x27;);
+    } finally {
+        busy = false;
+    }
+}
+
+schedule(&#x27;*/5 * * * *&#x27;, archive);
+archive();
+</code></pre></details>
+<details><summary>InfluxDB · Sitzungen mit Telegraf abrufen</summary><p>Diesen Eingang zur vorhandenen Telegraf-Konfiguration mit InfluxDB-Ausgabe hinzufügen. Die Messreihe <code>teenet_session</code> verwendet den Ladebeginn als Zeitstempel. Bei Unterbrechungen holt Telegraf die noch lokal vorhandenen, datierten Sitzungen nach.</p><pre style="overflow-x:auto"><code># Zum vorhandenen Telegraf mit InfluxDB-Ausgabe hinzufügen.
+[[inputs.http]]
+  urls = [&quot;http://teenet.local/api/export.lp&quot;]
+  interval = &quot;5m&quot;
+  timeout = &quot;10s&quot;
+  data_format = &quot;influx&quot;
+  tagexclude = [&quot;url&quot;, &quot;host&quot;]
+</code></pre></details>
+<details><summary>Home Assistant · Energie langfristig erfassen</summary><p>MQTT mit Home Assistant verbinden und die TeeNet-Geräteerkennung aktivieren. Im Energie-Dashboard unter Einzelgeräte den Sensor <b>Geladene Energie</b> hinzufügen. Für einzelne Ladevorgänge mit Netzanteil und Kosten das Sitzungsarchiv verwenden.</p></details>
+<p>Für eigene Auswertungen <code>/api/export.json</code> regelmäßig abrufen. Pro Gerät identifizieren <code>start_epoch</code> und <code>id</code> eine Sitzung. Vor dem ersten Update ältere Sitzungen bei Bedarf mit dem bisherigen CSV-Export sichern.</p></details></section>
 
 <section class="card" id="wartung"><h2>5 · Sicherung &amp; Hilfe</h2>
 <p><b>Vor Änderungen sichern.</b> Unter <b>Firmware &amp; Sicherung → Update aus Datei</b> die OTA-.bin für das eigene Board wählen. OTA erhält Einstellungen; USB-Erstinstallation und Werksreset löschen Daten. Während des Updates Stromversorgung erhalten.</p>
@@ -100,6 +156,6 @@ a:not(.button){color:#0879b4;text-decoration:underline;text-underline-offset:3px
 <details id="probleme"><summary>Fehler finden</summary><div class="table-wrap"><table><thead><tr><th>Problem</th><th>Prüfen</th></tr></thead><tbody><tr><td>Kein Zugriff</td><td>WLAN, Router-IP, <a href="#wlan">Einrichtungs-AP</a>.</td></tr><tr><td>Zähler ohne Daten</td><td>Versorgung, A/B, Typ, IP/RS485-Parameter; Shelly-Modbus aktiv?</td></tr><tr><td>Nicht gespeichert</td><td>Rot markiertes Feld öffnen und Fehler beheben.</td></tr><tr><td>Phasenwechsel gesperrt</td><td>Aktor, Kontaktart, frische Stromwerte; bei Spannungsprüfung auch 3EM-Zuordnung.</td></tr><tr><td>PV wartet</td><td>Vorzeichen, Überschuss, Akkuhilfe, Entladegrenze.</td></tr><tr><td>Warte auf Fahrzeug</td><td>Stecker und Freigabe in Fahrzeug/Shell.</td></tr><tr><td>MQTT-Wert fehlt</td><td>Broker, Präfix, Topic, Einheit, Aktualität.</td></tr></tbody></table></div><p id="laufzeit"><b>Diagnose:</b> Verbindungen, freier Speicher, Laufzeit seit Reset. Vor Neustart Version und Ereignisse sichern.</p><p id="ladeabbrueche">Nach wiederholten Ladeabbrüchen erst Ursache beheben und Messwerte prüfen, dann entsperren.</p></details></section>
 <details class="card terms" id="haftung"><summary>Nutzung &amp; Haftung</summary><h3>Privates Projekt</h3><p>TeeNet ist ein privates, nichtkommerzielles Bastelprojekt. Software und Dokumentation werden unentgeltlich in ihrem jeweiligen Entwicklungsstand bereitgestellt. Eine fehlerfreie Funktion, bestimmte Verfügbarkeit oder Eignung für einen bestimmten Aufbau wird nicht zugesichert. Es besteht keine Zusage für Wartung, Support oder zukünftige Updates.</p><h3>Sicherheit und Inbetriebnahme</h3><p>Die Nutzung erfolgt auf eigene Gefahr. Vor dem Betrieb sind Hardware, Verdrahtung, Einstellungen und das Verhalten bei Fehlern am eigenen Aufbau zu prüfen. Arbeiten an Netzspannung und die elektrische Inbetriebnahme dürfen nur durch Elektrofachkräfte erfolgen.</p><p>Die Software ersetzt keine vorgeschriebenen Schutzmaßnahmen oder Sicherheitseinrichtungen. Das gilt auch für Lastmanagement und Phasenumschaltung. Automatische Prüfungen der Software ersetzen keine Prüfung der elektrischen Anlage. Vorgaben der Gerätehersteller und geltende Anschlussbedingungen sind einzuhalten.</p><h3>Haftungsausschluss</h3><p>Der Projektanbieter übernimmt keine Haftung für Schäden oder Folgeschäden jeglicher Art, die aus Installation, Konfiguration, Betrieb, Änderungen oder Weitergabe der Software und Dokumentation entstehen. Die Nutzung erfolgt ausschließlich auf eigene Verantwortung.</p><h3>Gerätegarantien</h3><p>Änderungen an Wallbox, Fahrzeug oder anderen Komponenten können nach den jeweiligen Herstellerbedingungen Garantieansprüche beeinträchtigen. Es gelten die Bedingungen des jeweiligen Geräteherstellers.</p><h3>Softwarelizenzen</h3><p>Dieser Hinweis erteilt keine Softwarelizenz und ersetzt keine vorhandenen Lizenzbedingungen. Die Lizenzen verwendeter Bibliotheken und sonstiger Komponenten bleiben maßgeblich.
 </p></details>
-<footer class="footer">TeeNet 1.24 · <a href="/#overview">Zur Übersicht</a><!-- HELP_IMAGE_SOURCES --></footer></main></div>
+<footer class="footer">TeeNet 1.26 · <a href="/#overview">Zur Übersicht</a><!-- HELP_IMAGE_SOURCES --></footer></main></div>
 <dialog class="image-dialog" id="image-viewer" aria-labelledby="image-caption"><div class="dialog-top"><p id="image-caption"></p><button class="image-close" id="image-close" type="button" aria-label="Bild schließen">×</button></div><img id="image-full" alt=""></dialog>
 <script defer src="/guide.js"></script></body></html>

@@ -56,6 +56,9 @@ static battery_buffer_t battery_buffer;
 static expert_values_t expert_saved;
 static telemetry_config_t telemetry_config;
 static bool telemetry_last_ok;
+static const char *telemetry_wait_reason;
+static int telemetry_last_http;
+static uint32_t telemetry_duration_ms;
 static int64_t telemetry_last_at;
 static bool terms_accepted,evcc_configuring,phase_test_active,boot_validation_pending,ota_in_progress,restarting,backup_in_progress;
 static bool fault_storage_ok,phase_mqtt_allowed,phase_mqtt_known,phase_idle_inhibit,phase_gpio_ready;
@@ -100,6 +103,7 @@ static uint32_t calendar(int64_t *epoch,int64_t *midnight){*epoch=1792742400;*mi
 static int esp_wifi_get_mode(wifi_mode_t *mode){wifi_queries++;*mode=fixture_wifi_mode;return ESP_OK;}
 static int esp_wifi_sta_get_ap_info(wifi_ap_record_t *record){wifi_queries++;record->rssi=-57;return signal_valid?ESP_OK:-1;}
 static const esp_app_desc_t *esp_app_get_description(void){static const esp_app_desc_t value={{1,2,3,4}};app_description_queries++;return &value;}
+static size_t heap_caps_get_free_size(int flags){assert(flags==MALLOC_CAP_8BIT);heap_queries++;return 72000;}
 static size_t heap_caps_get_minimum_free_size(int flags){assert(flags==MALLOC_CAP_8BIT);heap_queries++;return 42000;}
 static size_t heap_caps_get_largest_free_block(int flags){assert(flags==MALLOC_CAP_8BIT);heap_queries++;return 32000;}
 static int esp_reset_reason(void){return 1;}
@@ -246,7 +250,7 @@ static void compare(const measured_t *full,const measured_t *compact,bool token)
     }
     assert(!cJSON_GetObjectItemCaseSensitive(a,"status_profile"));
     assert(cJSON_IsString(cJSON_GetObjectItemCaseSensitive(b,"status_profile")));
-    static const char *omitted[]={"min_free_heap","largest_free_block","reset_reason","meter_failures","wallbox_requests","wallbox_rx_bytes","wallbox_valid_frames","wallbox_other_address","wallbox_crc_resyncs","wallbox_last_address","wallbox_last_function","wallbox_last_register","wallbox_last_count","wallbox_reply_age_s","wallbox_tx_errors","wallbox_rx_tail_hex","wallbox_rx_age_ms","mqtt_rejected","saved_ago_s"};
+    static const char *omitted[]={"free_heap","min_free_heap","largest_free_block","reset_reason","meter_failures","wallbox_requests","wallbox_rx_bytes","wallbox_valid_frames","wallbox_other_address","wallbox_crc_resyncs","wallbox_last_address","wallbox_last_function","wallbox_last_register","wallbox_last_count","wallbox_reply_age_s","wallbox_tx_errors","wallbox_rx_tail_hex","wallbox_rx_age_ms","mqtt_rejected","saved_ago_s"};
     for(unsigned i=0;i<sizeof(omitted)/sizeof(*omitted);i++){assert(cJSON_GetObjectItemCaseSensitive(a,omitted[i]));assert(!cJSON_GetObjectItemCaseSensitive(b,omitted[i]));}
     assert(missing>=sizeof(omitted)/sizeof(*omitted));
     assert((cJSON_GetObjectItemCaseSensitive(a,"token")!=NULL)==token);
@@ -330,7 +334,7 @@ int main(void){
         assert(compact.bytes<full.bytes&&compact.nodes<full.nodes&&compact.build_calls<full.build_calls);
         assert(compact.tree_bytes<full.tree_bytes&&compact.locked_calls<full.locked_calls&&compact.locked_bytes<full.locked_bytes);
         assert(full.entries==1&&compact.entries==1&&legacy.entries==1);
-        assert(full.heap_reads==2&&compact.heap_reads==0);
+        assert(full.heap_reads==3&&compact.heap_reads==0);
         assert(full.wifi_reads==2&&compact.wifi_reads==0);
         measured_t *both[]={&full,&compact};
         for(unsigned i=0;i<2;i++){measured_t *m=both[i];printf("%s,%u,%s,%zu,%zu,%zu,%zu,%zu,%zu,%zu,%zu,%zu\n",names[scenario],token,i?"dashboard":"full",m->bytes,m->fields,m->nodes,m->build_calls,m->build_bytes,m->tree_bytes,m->peak_bytes,m->locked_calls,m->locked_bytes);}
@@ -347,6 +351,15 @@ int main(void){
         fail_at=0;
         printf("PASS: %s serializer releases all allocations for each of %zu injected allocation failures\n",diagnostics?"full":"dashboard",count);
     }
+    size_t high=0;
+    for(unsigned cycle=0;cycle<1000;cycle++){
+        fixture(cycle%6);peak=0;
+        cJSON *o=cycle%3==0?mqtt_status_snapshot():status_json_profile(true,cycle%3==1);
+        assert(o);char *payload=json_print_compact(o);assert(payload);
+        cJSON_Delete(o);cJSON_free(payload);assert(!used&&!locks);
+        if(peak>high)high=peak;
+    }
+    printf("PASS 1000 mixed dashboard/diagnostic/MQTT cycles: peak %zu bytes, 0 retained after each cycle\n",high);
     cJSON_InitHooks(NULL);
     puts("PASS: actual status serialization; compact/full values; legacy full wrapper; token semantics; conditional phase and stale data; fewer bytes/allocations and less allocation work under LOCK; no retained allocations");
 }

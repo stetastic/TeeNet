@@ -3,13 +3,16 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#define CHARGE_SESSION_CAPACITY 512
+/* Keep only the active session and a short checkpoint overlay in SRAM. */
+#define CHARGE_SESSION_CAPACITY 4
+#define SESSION_ARCHIVE_CAPACITY 512
 #define SESSION_PAUSE_MS 300000
 #define SESSION_MIN_WH 1000.0
 #define SESSION_INTERRUPTED 1u
 #define SESSION_METER_GAP 2u
 #define SESSION_CLOCK_GAP 4u
 #define SESSION_COST_SPLIT_ESTIMATED 8u
+#define SESSION_ARCHIVE_GAP 16u /* Earlier sessions were lost while storage was unavailable. */
 
 typedef struct {
     uint32_t id,start_epoch,end_epoch,start_date,charging_ms;
@@ -33,6 +36,13 @@ typedef struct {
     bool pending_active;
 } sessions_t;
 
+typedef struct {
+    uint32_t id,start_epoch,end_epoch,start_date,charging_ms;
+    float grid_wh,solar_wh,unknown_wh,cost_eur;
+    uint32_t flags;
+} session_v1_t;
+
+bool session_decode_row(charge_session_t *row,const void *src,bool legacy,float grid_price,float solar_price);
 void sessions_init(sessions_t *s);
 bool sessions_restore(sessions_t *s,const void *blob,size_t size,float legacy_grid_price,float legacy_solar_price);
 void sessions_step(sessions_t *s,int64_t now,int64_t epoch,uint32_t date,

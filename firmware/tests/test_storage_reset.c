@@ -53,6 +53,7 @@ static int nvs_set_blob(nvs_handle_t handle,const char *key,const void *value,si
     return ESP_OK;
 }
 static int nvs_set_u32(nvs_handle_t handle,const char *key,uint32_t value){assert(handle==7&&flash_held&&!strcmp(key,"reset_date"));persisted_date=value;return ESP_OK;}
+static int energy_days_save(nvs_handle_t h,const meter_totals_t *meter){return nvs_set_blob(h,"meter_totals",meter,sizeof(*meter));}
 static int nvs_commit(nvs_handle_t handle){assert(handle==7&&flash_held&&!locks);commits++;return ESP_OK;}
 static void nvs_close(nvs_handle_t handle){assert(handle==7&&flash_held&&!locks);}
 static int session_chunks_save_checkpoint(nvs_handle_t h,const session_checkpoint_t *s){session_store_t copy={.version=2,.count=s->count,.next_slot=s->next_slot,.next_id=s->next_id,.active_slot=s->active_slot};for(unsigned i=0;i<CHARGE_SESSION_CAPACITY;i++){const charge_session_t*r=session_checkpoint_at(s,i);if(r)copy.records[i]=*r;}return nvs_set_blob(h,"sessions",&copy,sizeof(copy));}

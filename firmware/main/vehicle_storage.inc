@@ -22,11 +22,26 @@ static vehicle_assets_t *vehicle_assets_read(void){
     if(e!=ESP_OK){free(a);return NULL;}
     size_t n=0;e=nvs_get_blob(h,"bundle_v1",NULL,&n);
     if(e==ESP_OK){
-        size_t header=offsetof(vehicle_assets_t,photos);unsigned char *packed=n>=header&&n<=sizeof(*a)?malloc(n):NULL;
-        if(!packed){nvs_close(h);free(a);return NULL;}
-        e=nvs_get_blob(h,"bundle_v1",packed,&n);bool valid=e==ESP_OK;size_t offset=header;
-        if(valid){memcpy(a,packed,header);for(unsigned i=0;i<VEHICLE_COUNT;i++){size_t count=a->photo_size[i];if(count>VEHICLE_PHOTO_BYTES||count>n-offset){valid=false;break;}memcpy(a->photos[i],packed+offset,count);offset+=count;}}
-        free(packed);if(!valid||offset!=n){nvs_close(h);free(a);return NULL;}n=sizeof(*a);
+        const size_t header=offsetof(vehicle_assets_t,photos), expected=n;
+        if(n<header||n>sizeof(*a)||nvs_get_blob(h,"bundle_v1",a,&n)!=ESP_OK||n!=expected){
+            nvs_close(h);free(a);return NULL;
+        }
+        size_t offset=header;
+        for(unsigned i=0;i<VEHICLE_COUNT;i++){
+            size_t count=a->photo_size[i];
+            if(count>VEHICLE_PHOTO_BYTES||count>n-offset){nvs_close(h);free(a);return NULL;}
+            offset+=count;
+        }
+        if(offset!=n){nvs_close(h);free(a);return NULL;}
+        /* Expand from the end: each fixed slot starts at or after its packed
+           position, so earlier packed photos are still available for copying. */
+        for(unsigned i=VEHICLE_COUNT;i>0;){
+            i--;
+            size_t count=a->photo_size[i];
+            offset-=count;
+            memmove(a->photos[i],(unsigned char *)a+offset,count);
+        }
+        n=sizeof(*a);
     }
     if(e==ESP_ERR_NVS_NOT_FOUND){
         for(unsigned i=0;i<VEHICLE_COUNT;i++){
@@ -76,10 +91,19 @@ static cJSON *vehicle_assets_json(void){
         if(ok){ok=json_add_owned_to_object(r,"cards",cards);cards=NULL;}
         if(ok){ok=json_add_owned_to_array(rows,r);r=NULL;}
         cJSON_Delete(cards);cJSON_Delete(r);
-        unsigned char *encoded=malloc(2049);size_t length=0;
-        if(!encoded){ok=false;break;}
-        if(a->photo_size[i]){if(mbedtls_base64_encode(encoded,2049,&length,a->photos[i],a->photo_size[i])!=0)ok=false;}
-        encoded[length]=0;if(ok)ok=json_add_owned_to_array(photos,cJSON_CreateString((const char *)encoded));free(encoded);
+        const size_t bytes=a->photo_size[i];
+        if(ok&&!bytes)ok=json_add_owned_to_array(photos,cJSON_CreateString(""));
+        if(ok&&bytes){
+            const size_t capacity=4*((bytes+2)/3)+1;
+            unsigned char *encoded=malloc(capacity);
+            size_t length=0;
+            ok=encoded&&mbedtls_base64_encode(encoded,capacity,&length,a->photos[i],bytes)==0;
+            if(ok){
+                encoded[length]=0;
+                ok=json_add_owned_to_array(photos,cJSON_CreateString((const char *)encoded));
+            }
+            free(encoded);
+        }
     }
     if(ok){ok=json_add_owned_to_object(root,"profiles",rows);rows=NULL;}
     if(ok){ok=json_add_owned_to_object(root,"photos",photos);photos=NULL;}

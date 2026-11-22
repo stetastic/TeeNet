@@ -4,7 +4,10 @@
 #include <stdint.h>
 #include "expert_params.h"
 
-#define EMS_DAYS 30
+#include "history_window.h"
+#define EMS_DAYS 3 /* Mutable working days; earlier dates are read from flash. */
+#define EMS_LEGACY_SHORT_DAYS 7
+#define EMS_LEGACY_DAYS 30
 #define EMS_HISTORY 120
 #define EMS_SOURCES 2
 #define EMS_METER_TTL (ems_param_ms(EP_METER_TTL))
@@ -223,6 +226,11 @@ typedef struct {
     energy_day_t days[EMS_DAYS];
 } energy_store_t;
 typedef struct {
+    uint32_t version;
+    double total_wh[EMS_SOURCES], undated_wh[EMS_SOURCES];
+    energy_day_t days[EMS_LEGACY_DAYS];
+} energy_store_30_t; /* Disk format before the seven-day window. */
+typedef struct {
     int64_t minute;
     double wh[EMS_SOURCES];
     uint32_t covered_ms[EMS_SOURCES];
@@ -235,6 +243,7 @@ typedef struct {
     double previous_w[EMS_SOURCES];
     uint32_t last_date;
     bool started;
+    bool days_pruned;
     bool primary_metered; /* RAM-only mode; the persisted energy_store_t is unchanged. */
 } energy_t;
 
@@ -368,3 +377,6 @@ void energy_step(energy_t *e, int64_t now, int64_t epoch_ms, uint32_t date,
 bool energy_store_valid(const energy_store_t *store);
 void energy_add_metered(energy_t *e,int64_t from_ms,int64_t to_ms,int64_t from_epoch,int64_t to_epoch,uint32_t date,int64_t midnight,double wh);
 bool energy_store_decode(const void *blob, size_t length, energy_store_t *out);
+typedef bool (*energy_day_visitor_t)(const energy_day_t *day,void *context);
+bool energy_store_visit(const void *blob,size_t length,energy_store_t *out,
+                        energy_day_visitor_t visitor,void *context);

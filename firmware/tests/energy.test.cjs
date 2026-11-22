@@ -19,33 +19,46 @@ test('the small wallbox stays visible beside a selected profile and without one'
 const live={basic_mode:false,zero_feed_enabled:true,feedback_ok:true,actual_a:[9,0,0],wallbox_w:2070,house_meter_ok:true,house_power_w:2000,pv_display_enabled:true,pv_generation_w:1500,battery_protect:true,battery_power_ok:true,battery_soc_ok:true,battery_soc_pct:60,battery_charge_w:0,battery_discharge_w:1200,mode:'pv'};
 test('mixed PV, battery and grid retain independent flow directions',()=>{
  const m=model(live,true);assert.equal(m.scene,'grid');assert.equal(m.pvFlow,true);assert.equal(m.batteryFlow,'discharge');assert.equal(m.gridFlow,'import');assert.equal(m.carHappy,false);assert.equal(m.houseLoad,2630);
- assert.equal(m.houseMood,'neutral');
+ assert.equal(m.houseMood,'sad');
 });
 
-test('predominantly solar supply makes the house and charging car happy despite grid import',()=>{
- const solar={...live,pv_generation_w:9430,house_power_w:570,battery_discharge_w:0,wallbox_w:8340,actual_a:[12.1,12.1,12.1]};
+test('3 kW net import makes the house frown even when PV mainly supplies the car',()=>{
+ const solar={...live,pv_generation_w:6350,house_power_w:3000,battery_discharge_w:0,wallbox_w:8000,actual_a:[11.6,11.6,11.6]};
  for(const mode of ['pv','manual']){
   const m=model({...solar,mode},true);
-  assert.equal(m.houseMood,'happy');assert.equal(m.carHappy,true);
-  assert.equal(m.gridFlow,'import');assert.equal(m.houseLoad,1660);
+  assert.equal(m.houseMood,'sad');assert.equal(m.carHappy,true);
+  assert.equal(m.gridFlow,'import');assert.equal(m.houseLoad,1350);
  }
- const stopped=model({...solar,actual_a:[0,0,0],wallbox_w:0},true);
- assert.equal(stopped.houseMood,'happy');assert.equal(stopped.carHappy,false);
+ const surplus=model({...solar,house_power_w:-1500,wallbox_w:0,actual_a:[0,0,0]},true);
+ assert.equal(surplus.gridFlow,'export');assert.equal(surplus.houseMood,'happy');assert.equal(surplus.carHappy,false);
+ const balanced=model({...solar,house_power_w:45,wallbox_w:0,actual_a:[0,0,0]},true);
+ assert.equal(balanced.gridFlow,'idle');assert.equal(balanced.houseMood,'happy');
 });
 
-test('grid dominance, balanced mixes, battery supply and missing values have distinct moods',()=>{
+test('house reacts to fresh net import even if PV or battery values are missing',()=>{
  const known={...live,battery_discharge_w:0};
- assert.equal(model({...known,pv_generation_w:2000,house_power_w:8000},true).houseMood,'sad');
- for(const pv of [4500,5000,5500]){
-  const m=model({...known,pv_generation_w:pv,house_power_w:10000-pv},true);
-  assert.equal(m.houseMood,'neutral');assert.equal(m.carHappy,false);
+ for(const extra of [{},{pv_display_enabled:false},{battery_power_ok:false}]){
+  assert.equal(model({...known,...extra},true).houseMood,'sad');
  }
  assert.equal(model({...known,pv_generation_w:0,house_power_w:0,battery_discharge_w:4000},true).houseMood,'neutral');
- for(const extra of [{house_meter_ok:false},{pv_display_enabled:false},{battery_power_ok:false}]){
-  const m=model({...known,...extra},true);assert.equal(m.houseMood,'neutral');assert.equal(m.carHappy,false);
- }
+ const unavailable=model({...known,house_meter_ok:false},true);
+ assert.equal(unavailable.houseMood,'neutral');assert.equal(unavailable.carHappy,false);
  assert.equal(model(known,false).houseMood,'neutral');
 });
+
+test('HTTP estimate animates the wallbox only with confirmed charging and stops immediately',()=>{
+ const http={...live,feedback_ok:false,shell_http_control_enabled:true,enabled:true,wallbox_estimate_valid:true,
+  wallbox_estimate_source:'http_pilot',wallbox_estimate_age_ms:100,wallbox_estimated_a:[10,10,10],wallbox_estimated_w:6900};
+ const waiting=model({...http,vehicle_status_known:true,vehicle_connection_state:'connected'},true);
+ assert.equal(waiting.carPower,6900);assert.equal(waiting.carFlow,'unknown');
+ const charging={...http,vehicle_status_known:true,vehicle_connection_state:'charging'};
+ const active=model(charging,true);
+ assert.equal(active.carFlow,'forward');assert.equal(active.phaseCurrents,null);
+ assert.equal(model({...charging,wallbox_estimate_age_ms:5000},true).carFlow,'unknown');
+ const stopped=model({...charging,enabled:false},true);
+ assert.equal(stopped.carFlow,'idle');assert.equal(stopped.carPower,0);
+});
+
 test('zero, missing and offline values are distinct and never animate stale data',()=>{
  assert.equal(model({...live,house_power_w:0,pv_generation_w:0},true).gridFlow,'idle');
  const missing=model({...live,house_meter_ok:false,pv_generation_w:null,battery_power_ok:false},true);assert.equal(missing.grid,null);assert.equal(missing.pvFlow,false);assert.equal(missing.batteryFlow,'unknown');

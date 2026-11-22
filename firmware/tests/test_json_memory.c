@@ -43,7 +43,13 @@ int main(void){
     fail_at=0;assert(shelly_phase_feedback(status,&f));assert(used==0);
     cJSON *tree=cJSON_CreateObject(),*numbers=cJSON_AddArrayToObject(tree,"numbers");
     cJSON_AddStringToObject(tree,"quote\"\\\n","\"\\\b\f\n\r\t\001\037 UTF-8: äöü");
-    double values[]={0,-0.0,DBL_MIN,DBL_MAX,-DBL_MAX,1e-300,-1e300,NAN,INFINITY};
+    int integers[]={INT_MIN,-1000,-10,-1,0,9,10,99,100,1000,INT_MAX};
+    for(size_t i=0;i<sizeof(integers)/sizeof(*integers);i++){
+        cJSON *n=cJSON_CreateNumber(integers[i]);char *expected=cJSON_PrintUnformatted(n);
+        assert(expected&&json_output_bound(n,0)==strlen(expected));
+        cJSON_free(expected);cJSON_AddItemToArray(numbers,n);
+    }
+    double values[]={0,-0.0,0.125,-23.8,(double)INT_MAX+1.0,DBL_MIN,DBL_MAX,-DBL_MAX,1e-300,-1e300,NAN,INFINITY};
     for(unsigned i=0;i<sizeof(values)/sizeof(*values);i++){
         cJSON *number=cJSON_CreateNumber(isnan(values[i])?0:values[i]);number->valuedouble=values[i];cJSON_AddItemToArray(numbers,number);
     }

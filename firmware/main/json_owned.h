@@ -2,6 +2,7 @@
 #include "cJSON.h"
 #include <stdbool.h>
 #include <limits.h>
+#include <math.h>
 #include <stddef.h>
 #include <string.h>
 
@@ -31,7 +32,15 @@ static inline size_t json_output_bound(const cJSON *o,unsigned depth){
     unsigned type=(unsigned)o->type&255;
     if(type==cJSON_String)return json_string_bound(o->valuestring);
     if(type==cJSON_Raw){size_t n=o->valuestring?strlen(o->valuestring):0;return n&&n<=(size_t)INT_MAX-5?n:0;}
-    if(type==cJSON_Number)return 32; /* cJSON uses at most 26 bytes for a number. */
+    if(type==cJSON_Number){
+        if(!isfinite(o->valuedouble))return 4; /* null */
+        if(o->valuedouble!=(double)o->valueint)return 25; /* cJSON number_buffer[26] includes NUL. */
+        unsigned magnitude=(unsigned)o->valueint;
+        size_t digits=1;
+        if(o->valueint<0){magnitude=0u-magnitude;digits++;}
+        while(magnitude>=10){magnitude/=10;digits++;}
+        return digits;
+    }
     if(type==cJSON_True||type==cJSON_NULL)return 4;
     if(type==cJSON_False)return 5;
     if(type!=cJSON_Array&&type!=cJSON_Object)return 0;

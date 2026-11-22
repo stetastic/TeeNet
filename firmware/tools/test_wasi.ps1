@@ -17,7 +17,7 @@ foreach ($extraSuite in @('config_storage','ota_gate')) {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
  }
 }
-foreach ($suite in @('shell_http_runtime','charge_limits','wallbox_modbus_session','tcp_pcb_diagnostic','shell_http_control','shell_http_trial_api','http_display_estimate','normal_offset_trial','control_revision','diagnostic_http','energy_persistence','expert_standards','soc_goal','meter_hold','charge_curve','low_current','phase_simple','phase_simple_atom','charge_voltage','sdkconfig','sdkconfig_atom','sungrow','sungrow_network','phase_voltage','session_storage','charge_counter','vehicle_storage','vehicle_config_http','vehicle_plan_http','vehicle_runtime','vehicles','personal_voltage','gpio_relay','upgrade_compat','heatpump','telemetry','phase_setup','assets','appearance','boot_check','http_encoding','gpio','gpio_atom','gpio_http','core','pv','battery_regression','energy_profiles','runtime','restart','review','sessions','calibration','hardware','hardware_atom','features','huawei','network','grid_fallback','fixed_phase','basic_mode','priority','support','support_atom','em24','opendtu','github_release','github_release_atom','evcc','rs485','rs485_io','bounded_socket','control_storage','expert_storage','wallbox_network','phase_status','phase_controller','phase_mqtt','phase_mqtt_storage','http_json','http_post_guard','storage_reset','session_snapshot','xemex_two','mqtt_input','phase_output_network','shelly_phase','json_memory','status_profile','config_apply','plan_http','terms','expert')) {
+foreach ($suite in @('shell_http_runtime','charge_limits','wallbox_modbus_session','tcp_pcb_diagnostic','shell_http_control','shell_http_trial_api','http_display_estimate','normal_offset_trial','control_revision','diagnostic_http','energy_persistence','history_memory','daily_storage','expert_standards','soc_goal','meter_hold','charge_curve','low_current','phase_simple','phase_simple_atom','charge_voltage','sdkconfig','sdkconfig_atom','sungrow','sungrow_network','phase_voltage','session_storage','charge_counter','vehicle_storage','vehicle_config_http','vehicle_plan_http','vehicle_runtime','vehicles','personal_voltage','gpio_relay','upgrade_compat','heatpump','telemetry','telemetry_worker','phase_setup','assets','appearance','boot_check','http_encoding','gpio','gpio_atom','gpio_http','core','pv','battery_regression','energy_profiles','runtime','restart','review','sessions','calibration','hardware','hardware_atom','features','huawei','huawei_reader','network','grid_fallback','fixed_phase','basic_mode','priority','support','support_atom','em24','opendtu','github_release','github_release_atom','evcc','rs485','rs485_io','bounded_socket','control_storage','expert_storage','wallbox_network','phase_status','phase_controller','phase_mqtt','phase_mqtt_storage','http_json','http_post_guard','storage_reset','session_snapshot','xemex_two','mqtt_input','phase_output_network','shelly_phase','json_memory','status_profile','config_apply','plan_http','terms','expert')) {
     if ($Only.Count -gt 0 -and $suite -notin $Only) { continue }
     $baseSuite = $suite -replace '_atom$',''
     $defines = @('-DCJSON_NESTING_LIMIT=16')
@@ -46,11 +46,12 @@ foreach ($suite in @('shell_http_runtime','charge_limits','wallbox_modbus_sessio
     if ($baseSuite -eq 'sdkconfig') { $inputFiles += 'main/firmware_check.c' }
     if ($suite -eq 'diagnostic_http') { $inputFiles += @('main/ems_features.c','main/diagnostic_store.c') }
     if ($suite -eq 'session_storage') { $inputFiles += 'main/charge_sessions.c' }
+    if ($suite -eq 'daily_storage') { $inputFiles += 'main/charge_counter.c' }
     if ($suite -eq 'charge_curve') { $inputFiles += 'main/charge_curve.c' }
     if ($suite -eq 'charge_counter') { $inputFiles += @('main/charge_counter.c','main/charge_sessions.c') }
     if ($suite -eq 'vehicle_storage') { $inputFiles += 'main/vehicle_profiles.c' }
     if ($suite -in @('sungrow','sungrow_network')) { $inputFiles += @('main/sungrow_modbus.c') }
-    if ($suite -eq 'huawei') { $inputFiles += @('main/huawei_modbus.c') }
+    if ($suite -in @('huawei','huawei_reader')) { $inputFiles += @('main/huawei_modbus.c') }
     if ($suite -in @('em24','wallbox_modbus_session')) { $inputFiles += @('main/em24_modbus.c') }
     if ($suite -in @('em24','wallbox_network')) { $inputFiles += @('main/shelly_modbus.c') }
     if ($suite -eq 'opendtu') { $inputFiles += @('main/opendtu_mqtt.c') }
@@ -109,7 +110,7 @@ foreach ($suite in @('shell_http_runtime','charge_limits','wallbox_modbus_sessio
     if ($suite -eq 'evcc') { $inputFiles = @('main/evcc_bridge.c',(Join-Path $jsonDir 'cJSON.c')) }
     if ($suite -eq 'shell_http_trial_api') { $inputFiles += @('main/evcc_bridge.c','main/vehicle_profiles.c') }
     if ($suite -in @('vehicle_config_http','vehicle_plan_http','vehicle_runtime','vehicles','evcc','phase_controller','status_profile')) { $inputFiles += 'main/vehicle_profiles.c' }
-    if ($suite -eq 'session_snapshot') { $inputFiles += @('main/charge_sessions.c') }
+    if ($suite -in @('session_snapshot','history_memory')) { $inputFiles += @('main/charge_sessions.c') }
     if ($suite -eq 'sessions') { $inputFiles = @('main/charge_sessions.c') }
     if ($suite -eq 'phase_voltage') { $inputFiles += 'main/shelly_modbus.c' }
     if ($suite -eq 'review') { $inputFiles += @('main/meter_json.c','main/shelly_modbus.c',(Join-Path $jsonDir 'cJSON.c')) }

@@ -11,21 +11,25 @@
    handshake and network allocations). Optional traffic must leave headroom
    for control and measurements; PSRAM does not satisfy this reserve. */
 #define TELEMETRY_MIN_INTERNAL_FREE (96u*1024u)
-#define TELEMETRY_MIN_INTERNAL_BLOCK (32u*1024u)
+/* The 16 KiB TLS input and 4 KiB output records are separate allocations.
+   Allow 8 KiB above the input record for overhead and contiguous headroom. */
+#define TELEMETRY_MIN_INTERNAL_BLOCK (24u*1024u)
 typedef struct {
     bool charging_requested,phase_busy,test_active,current_fresh;
-    bool shell_configured,shell_known,session_present;
+    bool shell_configured,shell_known,session_present,shell_reports_idle;
     char vehicle_state;
     float current_a[3];
     size_t internal_free,internal_largest;
 } telemetry_runtime_t;
-static inline bool telemetry_runtime_ready(const telemetry_runtime_t *r){
-    if(!r||r->charging_requested||r->phase_busy||r->test_active||!r->current_fresh||
-       r->session_present||(r->shell_configured&&(!r->shell_known||r->vehicle_state!='A'))||
-       r->vehicle_state=='B'||r->vehicle_state=='C'||r->vehicle_state=='D'||r->vehicle_state=='F'||
-       r->internal_free<TELEMETRY_MIN_INTERNAL_FREE||r->internal_largest<TELEMETRY_MIN_INTERNAL_BLOCK)return false;
-    for(unsigned i=0;i<3;i++)if(!isfinite(r->current_a[i])||r->current_a[i]<0||r->current_a[i]>=1)return false;
-    return true;
+static inline const char *telemetry_runtime_block(const telemetry_runtime_t *r){
+    if(!r||r->charging_requested||r->phase_busy||r->test_active||!r->current_fresh)return "wallbox";
+    for(unsigned i=0;i<3;i++)if(!isfinite(r->current_a[i])||r->current_a[i]<0||r->current_a[i]>=1)return "wallbox";
+    /* A Shell transaction may stay open with statusCar "idle" while parked. */
+    bool parked=r->shell_known&&r->shell_reports_idle&&(r->vehicle_state=='B'||r->vehicle_state=='D');
+    if(!parked&&(r->session_present||(r->shell_configured&&(!r->shell_known||r->vehicle_state!='A'))||
+        r->vehicle_state=='B'||r->vehicle_state=='C'||r->vehicle_state=='D'||r->vehicle_state=='F'))return "wallbox";
+    if(r->internal_free<TELEMETRY_MIN_INTERNAL_FREE||r->internal_largest<TELEMETRY_MIN_INTERNAL_BLOCK)return "memory";
+    return NULL;
 }
 typedef struct {
     uint32_t schema;

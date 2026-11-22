@@ -14,50 +14,44 @@ static void promote(sessions_t *s){
     if(s->store.count<CHARGE_SESSION_CAPACITY)s->store.count++;
     s->pending_active=false;s->checkpoint=true;
 }
-typedef struct {
-    uint32_t id,start_epoch,end_epoch,start_date,charging_ms;
-    float grid_wh,solar_wh,unknown_wh,cost_eur;
-    uint32_t flags;
-} session_v1_t;
-typedef struct {
-    uint32_t version,count,next_slot,next_id,active_slot;
-    session_v1_t records[CHARGE_SESSION_CAPACITY];
-} session_store_v1_t;
 void sessions_init(sessions_t *s){memset(s,0,sizeof(*s));s->store.version=2;s->store.next_id=1;}
+
+bool session_decode_row(charge_session_t *row,const void *src,bool legacy,float grid_price,float solar_price){
+    memset(row,0,sizeof(*row));
+    memcpy(row,src,legacy?sizeof(session_v1_t):sizeof(*row));
+    if(!bounded(row->grid_wh,1e9)||!bounded(row->solar_wh,1e9)||!bounded(row->unknown_wh,1e9)||!bounded(row->cost_eur,1e8))return false;
+    if(!legacy)return bounded(row->grid_cost_eur,1e8)&&bounded(row->solar_cost_eur,1e8)&&
+        fabs((double)row->grid_cost_eur+row->solar_cost_eur-row->cost_eur)<=fmax(.01,row->cost_eur*1e-5);
+
+    /* The old row stored only the total cost. Freeze the estimate on import. */
+    grid_price=bounded(grid_price,10)?grid_price:.25f;
+    solar_price=bounded(solar_price,10)?solar_price:.08f;
+    double weight=(double)row->grid_wh*grid_price+(double)row->solar_wh*solar_price;
+    double share=weight>0?(double)row->grid_wh*grid_price/weight:
+        row->grid_wh+row->solar_wh>0?row->grid_wh/(double)(row->grid_wh+row->solar_wh):1;
+    row->grid_cost_eur=(float)(row->cost_eur*share+row->unknown_wh*grid_price/1000);
+    row->solar_cost_eur=(float)(row->cost_eur*(1-share));
+    row->cost_eur=row->grid_cost_eur+row->solar_cost_eur;
+    row->grid_wh+=row->unknown_wh;row->unknown_wh=0;
+    if(row->id)row->flags|=SESSION_COST_SPLIT_ESTIMATED;
+    return true;
+}
+
 bool sessions_restore(sessions_t *s,const void *blob,size_t size,float grid_price,float solar_price){
-    if(!blob || (size!=sizeof(session_store_t) && size!=sizeof(session_store_v1_t)))return false;
+    const size_t header=offsetof(session_store_t,records);
+    if(!blob||size<header)return false;
     const session_store_t *in=blob;
-    bool legacy=size==sizeof(session_store_v1_t);
-    if(in->version!=(legacy?1u:2u)||in->count>CHARGE_SESSION_CAPACITY||in->next_slot>=CHARGE_SESSION_CAPACITY||in->active_slot>CHARGE_SESSION_CAPACITY||!in->next_id)return false;
+    bool legacy=in->version==1;
+    size_t row_size=legacy?sizeof(session_v1_t):sizeof(charge_session_t);
+    if((!legacy&&in->version!=2)||size!=header+CHARGE_SESSION_CAPACITY*row_size||
+       in->count>CHARGE_SESSION_CAPACITY||in->next_slot>=CHARGE_SESSION_CAPACITY||
+       in->active_slot>CHARGE_SESSION_CAPACITY||!in->next_id)return false;
+    session_store_t tmp={0};
+    memcpy(&tmp,blob,header);tmp.version=2;
     for(unsigned i=0;i<CHARGE_SESSION_CAPACITY;i++){
-        charge_session_t row={0};
-        if(legacy)memcpy(&row,&((const session_store_v1_t *)blob)->records[i],sizeof(session_v1_t));
-        else row=in->records[i];
-        if(!bounded(row.grid_wh,1e9)||!bounded(row.solar_wh,1e9)||!bounded(row.unknown_wh,1e9)||!bounded(row.cost_eur,1e8))return false;
-        if(!legacy && (!bounded(row.grid_cost_eur,1e8)||!bounded(row.solar_cost_eur,1e8)||
-            fabs((double)row.grid_cost_eur+row.solar_cost_eur-row.cost_eur)>fmax(.01,row.cost_eur*1e-5)))return false;
+        if(!session_decode_row(&tmp.records[i],(const char *)blob+header+i*row_size,legacy,grid_price,solar_price))return false;
     }
-    sessions_init(s);
-    if(!legacy)s->store=*in;
-    else {
-        const session_store_v1_t *old=blob;
-        s->store.count=old->count;s->store.next_slot=old->next_slot;s->store.next_id=old->next_id;s->store.active_slot=old->active_slot;
-        grid_price=bounded(grid_price,10)?grid_price:.25f;solar_price=bounded(solar_price,10)?solar_price:.08f;
-        for(unsigned i=0;i<CHARGE_SESSION_CAPACITY;i++){
-            charge_session_t *r=&s->store.records[i];memcpy(r,&old->records[i],sizeof(session_v1_t));
-            /* Old firmware stored the total only. Preserve that total and
-               freeze the estimated source split once, never on page render. */
-            double weight=(double)r->grid_wh*grid_price+(double)r->solar_wh*solar_price;
-            double share=weight>0?(double)r->grid_wh*grid_price/weight:
-                r->grid_wh+r->solar_wh>0?r->grid_wh/(double)(r->grid_wh+r->solar_wh):1;
-            r->grid_cost_eur=(float)(r->cost_eur*share+r->unknown_wh*grid_price/1000);
-            r->solar_cost_eur=(float)(r->cost_eur*(1-share));
-            r->cost_eur=r->grid_cost_eur+r->solar_cost_eur;
-            r->grid_wh+=r->unknown_wh;r->unknown_wh=0;
-            if(r->id)r->flags|=SESSION_COST_SPLIT_ESTIMATED;
-        }
-        s->checkpoint=true;
-    }
+    sessions_init(s);s->store=tmp;s->checkpoint=legacy;
     if(active(s)){active(s)->flags|=SESSION_INTERRUPTED;s->store.active_slot=0;s->checkpoint=true;}
     return true;
 }

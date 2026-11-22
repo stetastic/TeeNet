@@ -1,11 +1,11 @@
-# TeeNet 1.24
+# TeeNet 1.26
 
 Quellcode für Shell Recharge Advanced 3.0 mit zwei Hardwareprofilen:
 
 - **ESP32-S3 N16R8:** 16 MB Flash, Shell TX17/RX18, Zähler TX4/RX5.
 - **AtomS3 Lite + Tail485:** 8 MB Flash, Shell TX2/RX1. Versorgung und RS485 über A/B/+/- der Wallbox.
 
-Standard-Build: `7f345fd06193`.
+Standard-Build: `f1e29a33b49d`.
 
 ## Bauen
 

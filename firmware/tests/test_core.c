@@ -97,7 +97,7 @@ int main(void) {
     near(e.store.days[0].wh[1],11000); assert(e.store.days[0].covered_ms[0]==3600000);
     assert(e.store.days[0].charging_ms==3600000);
     typedef struct { uint32_t date; double wh[EMS_SOURCES]; uint64_t covered_ms[EMS_SOURCES]; } old_day_t;
-    typedef struct { uint32_t version; double total_wh[EMS_SOURCES],undated_wh[EMS_SOURCES]; old_day_t days[EMS_DAYS]; } old_store_t;
+    typedef struct { uint32_t version; double total_wh[EMS_SOURCES],undated_wh[EMS_SOURCES]; old_day_t days[EMS_LEGACY_DAYS]; } old_store_t;
     old_store_t old={.version=1};
     memcpy(old.total_wh,e.store.total_wh,sizeof(old.total_wh));
     memcpy(old.undated_wh,e.store.undated_wh,sizeof(old.undated_wh));
@@ -111,6 +111,13 @@ int main(void) {
     near(upgraded.total_wh[0],1000); assert(upgraded.version==2);
     assert(upgraded.days[0].covered_ms[0]==3600000 && upgraded.days[0].charging_ms==0);
     assert(!energy_store_decode(&old,sizeof(old)-1,&upgraded));
+    energy_store_30_t large={.version=2,.total_wh={5000,5000}};
+    for(unsigned d=0;d<30;d++)large.days[29-d]=(energy_day_t){.date=20261001+d,.wh={d,d}};
+    assert(energy_store_decode(&large,sizeof(large),&upgraded));
+    for(unsigned d=0;d<EMS_DAYS;d++)assert(upgraded.days[d].date>=20261024);
+    e=(energy_t){.store=upgraded};step(0,0,0,1000,20261207);
+    for(unsigned d=0;d<EMS_DAYS;d++)assert(!e.store.days[d].date);
+    near(e.store.total_wh[0],5000);
     memset(&e,0,sizeof(e));
     step(0,500,500,10000,20240101); step(1000,500,500,10000,20240101);
     assert(e.store.days[0].covered_ms[0]==1000 && e.store.days[0].charging_ms==0);
@@ -135,7 +142,7 @@ int main(void) {
     /* Reboot keeps totals but never integrates the power-off interval. */
     energy_store_t persisted=e.store;memset(&e,0,sizeof(e));e.store=persisted;
     step(500,3600,3600,30000,20240103);near(e.store.total_wh[0],2);near(e.boot_wh[0],0);
-    /* Ring buffers retain the latest 30 days / 120 minutes. */
+    /* Only recent mutable dates and 120 minutes live in RAM. */
     memset(&e,0,sizeof(e));
     for(int d=1;d<=31;d++) { step(d*2000,3600,3600,d*2000+10000,20240100+d);step(d*2000+1000,3600,3600,d*2000+10000,20240100+d); }
     bool oldest=false,newest=false;for(int d=0;d<EMS_DAYS;d++){oldest|=e.store.days[d].date==20240101;newest|=e.store.days[d].date==20240131;}assert(!oldest && newest);

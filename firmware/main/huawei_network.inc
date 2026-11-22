@@ -5,7 +5,7 @@ static char huawei_model[31];
 static bool huawei_scan_running,huawei_scan_partial,huawei_preview_running;
 static unsigned huawei_scan_progress,huawei_found_count;
 static int64_t huawei_scan_started;
-typedef struct {char host[64],model[31];uint8_t unit;} huawei_found_t;
+typedef struct {char host[sizeof("255.255.255.255")],model[31];uint8_t unit;} huawei_found_t;
 static huawei_found_t huawei_found[8];
 typedef struct {
     char host[64],model[31];uint8_t unit;
@@ -83,15 +83,23 @@ static bool huawei_read(const char *host,uint8_t unit,bool grid,bool pv,bool bat
     if(sock>=0)close(sock);
     xSemaphoreGive(huawei_io);return r->connected;
 }
+static bool huawei_reader_running;
 static void huawei_task(void *arg){
     (void)arg;unsigned failures=0;
     while(true){
         int64_t started=now_ms();char host[64];uint8_t unit;bool grid,pv,battery,zero_feed,grid_guard;
-        LOCK();strcpy(host,settings.huawei_host);unit=settings.huawei_unit_id;
+        LOCK();
+        if(!settings.huawei_enabled){
+            huawei_reader_running=false;
+            UNLOCK();
+            vTaskDelete(NULL);
+            return;
+        }
+        strcpy(host,settings.huawei_host);unit=settings.huawei_unit_id;
         zero_feed=settings.zero_feed_enabled;grid_guard=settings.grid_guard_enabled;
-        grid=settings.huawei_enabled&&!strcmp(settings.house_meter_type,"huawei")&&(zero_feed||grid_guard);
-        pv=settings.huawei_enabled&&settings.huawei_pv&&settings.pv_display_enabled;
-        battery=settings.huawei_enabled&&settings.huawei_battery&&settings.battery_protect;
+        grid=!strcmp(settings.house_meter_type,"huawei")&&(zero_feed||grid_guard);
+        pv=settings.huawei_pv&&settings.pv_display_enabled;
+        battery=settings.huawei_battery&&settings.battery_protect;
         bool ready=wifi_online&&!restarting&&!ota_in_progress&&!huawei_scan_running&&!huawei_preview_running;
         UNLOCK();
         uint32_t interval=5000;
@@ -125,5 +133,17 @@ static void huawei_task(void *arg){
             interval=failures>=5?30000:failures>=3?15000:5000;
         }else if(!(grid||pv||battery))failures=0;
         int64_t wait=interval-(now_ms()-started);vTaskDelay(ticks(wait>200?wait:200));
+    }
+}
+
+/* Start on demand, including after a live settings change. Leave discovery and
+   preview independent of the reader. Retry on the next check if RAM was busy. */
+static void huawei_reader_ensure(void){
+    LOCK();
+    bool start=huawei_io&&settings.huawei_enabled&&!huawei_reader_running&&!ota_in_progress&&!restarting;
+    if(start)huawei_reader_running=true;
+    UNLOCK();
+    if(start&&xTaskCreate(huawei_task,"huawei",4096,NULL,6,NULL)!=pdPASS){
+        LOCK();huawei_reader_running=false;UNLOCK();
     }
 }

@@ -16,7 +16,7 @@ static bool save_energy(void) {
         session_snapshot=malloc(sizeof(*session_snapshot)+count*sizeof(session_snapshot->records[0]));
         if(!session_snapshot)break;
         LOCK();captured=session_checkpoint_copy(session_snapshot,count,&sessions.store);
-        if(captured){*snapshot=(meter_totals_t){.version=1,.totals=energy.store,.counter=charge_counter.saved};if(!snapshot->counter.version)snapshot->counter.version=1;memcpy(reset_snapshot,energy_reset_wh,sizeof(reset_snapshot));reset_date_snapshot=energy_reset_date;}
+        if(captured){sessions.checkpoint=false;*snapshot=(meter_totals_t){.version=1,.totals=energy.store,.counter=charge_counter.saved};if(!snapshot->counter.version)snapshot->counter.version=1;memcpy(reset_snapshot,energy_reset_wh,sizeof(reset_snapshot));reset_date_snapshot=energy_reset_date;}
         UNLOCK();
         if(!captured){free(session_snapshot);session_snapshot=NULL;}
     }
@@ -26,19 +26,18 @@ static bool save_energy(void) {
 
     if(err==ESP_OK) {
 
-        err=nvs_set_blob(nvs,"meter_totals",snapshot,sizeof(*snapshot));
-        if(err==ESP_OK)err=nvs_set_blob(nvs,"totals",&snapshot->totals,sizeof(snapshot->totals));
-        if(err==ESP_OK)err=session_chunks_save_checkpoint(nvs,session_snapshot);
+        err=energy_days_save(nvs,snapshot);
         if(err==ESP_OK)err=nvs_set_blob(nvs,"reset_base",reset_snapshot,sizeof(reset_snapshot));
         if(err==ESP_OK)err=nvs_set_u32(nvs,"reset_date",reset_date_snapshot);
 
         if(err==ESP_OK) err=nvs_commit(nvs);
+        if(err==ESP_OK)err=session_chunks_save_checkpoint(nvs,session_snapshot);
 
         nvs_close(nvs);
 
     }
 
-    free(snapshot);free(session_snapshot); LOCK(); storage_error=err!=ESP_OK; if(err==ESP_OK){last_saved_ms=now_ms();sessions.checkpoint=false;} UNLOCK();
+    free(snapshot);free(session_snapshot); LOCK(); storage_error=err!=ESP_OK; if(err==ESP_OK)last_saved_ms=now_ms();else sessions.checkpoint=true; UNLOCK();
     xSemaphoreGive(status_snapshot_lock);
     if(err!=ESP_OK)ESP_LOGW(TAG,"Energy save failed: %s",esp_err_to_name(err));
 

@@ -305,7 +305,11 @@ function render(){if(!state)return;const s=state,valid=online;
     diagnostics.push(diagnostic('Laufzeit seit Reset',window.TeeNetHealth?.uptimeText(s.uptime_s)||'—'));
     if(typeof s.firmware_check_ok==='boolean')diagnostics.push(diagnostic('Firmware-Selbsttest',s.firmware_check_ok?'Bestanden':s.firmware_check_failed?'Fehlgeschlagen · Ladung gesperrt':'Prüfung läuft'));
     if(s.runtime_watchdog_failed){const names=['Steuerung','Shell-Kommunikation','Wallbox-Zähler','Hauszähler','Phasenaktor'];diagnostics.push(diagnostic('Interne Aufgaben',names.filter((_,i)=>Number(s.runtime_watchdog_tasks)&(1<<i)).join(', ')+' reagiert nicht · Neustart erforderlich'));}
-    if([s.min_free_heap,s.largest_free_block].every(Number.isFinite))diagnostics.push(diagnostic('Arbeitsspeicher',`${Number.isFinite(s.free_heap)?`${format(s.free_heap/1024,0)} KiB frei · `:''}Minimum ${format(s.min_free_heap/1024,0)} KiB · größter Block ${format(s.largest_free_block/1024,0)} KiB`));
+    if([s.min_free_heap,s.largest_free_block].every(Number.isFinite)){
+      const memorySize=value=>value<1024?`${value} B`:`${format(value/1024,value%1024?1:0)} KiB`;
+      const free=Number.isFinite(s.free_heap)?`${memorySize(s.free_heap)} frei · `:'';
+      diagnostics.push(diagnostic('Arbeitsspeicher',`${free}Minimum ${memorySize(s.min_free_heap)} · größter Block ${memorySize(s.largest_free_block)}`));
+    }
     if(s.external_mode_input_enabled)diagnostics.push(diagnostic('Betriebsart-Kontakt',s.external_mode_contact?'PV-Überschuss':'Manuell'));
     if(s.evu_input_enabled)diagnostics.push(diagnostic('Extern Start / Stopp / EVU-Kontakt',s.evu_active?'Aktiv':'Frei'));
     if(s.huawei_enabled&&s.house_meter_type==='huawei')diagnostics.push(diagnostic('Hausströme',s.house_current_ok&&Array.isArray(s.house_a)?s.house_a.map((a,i)=>`L${i+1} ${format(a,2)} A`).join(' · '):'Keine gültige dreiphasige Messung'));
@@ -324,79 +328,171 @@ function chartBase(canvas,max,unit){const rect=canvas.getBoundingClientRect(),ra
 
 function drawCharts(){if(!$('statistics').hidden&&!document.hidden)drawPower();}
 
+function renderDailyValues(){
+  if(!$('daily-archive').open)return;
+  const key=source===0?'estimate_kwh':'wallbox_kwh';
+  const rows=(history.days||[]).slice().reverse().map(day=>{
+    const row=document.createElement('div'),label=document.createElement('dt'),value=document.createElement('dd');
+    const date=String(day.date);
+    label.textContent=date.slice(6,8)+'.'+date.slice(4,6)+'.'+date.slice(0,4);
+    value.textContent=Number.isFinite(day[key])?format(day[key],2)+' kWh':'—';
+    row.append(label,value);
+    return row;
+  });
+  $('daily-values').replaceChildren(...rows);
+  $('daily-empty').hidden=rows.length>0;
+}
+$('daily-archive').addEventListener('toggle',renderDailyValues);
+
 function drawPower(){const key=source===0?'estimate_w':'wallbox_w',points=history.points||[],values=points.filter(p=>p[key]!==null).map(p=>p[key]/1000);const max=Math.max(1,...values)*1.15,{c,plot}=chartBase($('power-chart'),max,'kW');$('power-empty').hidden=values.length>0;let previous=null;
 
   const colors=chartColors();points.forEach(p=>{const value=p[key];if(value===null){previous=null;return;}const x=plot.x+plot.w*(1-p.age_min/119),y=plot.y+plot.h*(1-value/1000/max);if(previous&&previous.age-p.age_min===1){c.fillStyle=colors.fill;c.beginPath();c.moveTo(previous.x,plot.y+plot.h);c.lineTo(previous.x,previous.y);c.lineTo(x,y);c.lineTo(x,plot.y+plot.h);c.closePath();c.fill();c.strokeStyle=colors.line;c.lineWidth=2;c.beginPath();c.moveTo(previous.x,previous.y);c.lineTo(x,y);c.stroke();}c.fillStyle=colors.line;c.beginPath();c.arc(x,y,2.3,0,Math.PI*2);c.fill();previous={x,y,age:p.age_min};});
 
   c.fillStyle=colors.text;c.textAlign='left';c.fillText('−2 h',plot.x,plot.y+plot.h+22);c.textAlign='center';c.fillText('−1 h',plot.x+plot.w/2,plot.y+plot.h+22);c.textAlign='right';c.fillText('Jetzt',plot.x+plot.w,plot.y+plot.h+22);$('power-chart').title=values.length?`${values.length} Minuten mit Daten. Höchstes Minutenmittel: ${format(Math.max(...values))} kW.`:'Keine Messdaten';}
 
-let sessionOffset=0,sessionCount=0,sessionsBusy=false;
-function selectedPeriod(){return $('export-range').value==='year'?$('export-year').value:$('export-month').value;}
-function sessionQuery(){return $('export-range').value==='custom'?`from=${encodeURIComponent($('export-from').value)}&to=${encodeURIComponent($('export-to').value)}`:`period=${encodeURIComponent(selectedPeriod())}`;}
+let sessionsBusy=false,sessionPageOffset=0;
 function sessionShare(value,total,cost){return `${format(value,2)} kWh · ${format(cost,2)} € · ${format(total?value/total*100:0,0)} %`;}
+const sessionClock=new Intl.DateTimeFormat('de-DE',{hour:'2-digit',minute:'2-digit',timeZone:'Europe/Berlin'});
+const sessionDate=new Intl.DateTimeFormat('de-DE',{day:'2-digit',month:'2-digit',year:'numeric',timeZone:'Europe/Berlin'});
+function sessionTime(epoch,startEpoch){
+  if(!epoch)return '—';
+  const time=new Date(epoch*1000);
+  return startEpoch&&sessionDate.format(time)!==sessionDate.format(new Date(startEpoch*1000))
+    ?sessionDate.format(time)+' '+sessionClock.format(time):sessionClock.format(time);
+}
+function addSessionEntries(row){
+  const section=document.createElement('div'),table=document.createElement('table'),body=document.createElement('tbody');
+  section.className='session-entries';
+  table.setAttribute('aria-label','Einzelne Ladesitzungen');
+  const header=table.createTHead().insertRow();
+  for(const title of ['Beginn','Ende','Energie']){
+    const th=document.createElement('th');th.scope='col';th.textContent=title;header.append(th);
+  }
+  table.append(body);table.hidden=true;
+  const message=document.createElement('p'),buttons=document.createElement('div');
+  message.setAttribute('role','status');buttons.className='actions';
+  function button(label,run){
+    const el=document.createElement('button');el.type='button';el.textContent=label;el.hidden=true;
+    el.addEventListener('click',run);buttons.append(el);return el;
+  }
+  let offset=0,pending='',loaded='',request=0;
+  const previous=button('Zurück',()=>load(offset-20)),next=button('Weiter',()=>load(offset+20));
+  const retry=button('Erneut laden',()=>load(offset));
+  async function load(at=offset){
+    if(!row.open||!row.isConnected)return;
+    const key=row.dataset.sessionRevision+'/TeeNet/'+at;
+    if(key===pending||key===loaded)return;
+    const id=++request;
+    pending=key;loaded='';offset=at;
+    previous.disabled=next.disabled=true;retry.hidden=true;
+    if(table.hidden){message.textContent='Sitzungen werden geladen …';message.hidden=false;}
+    try{
+      const page=await api('/api/sessions/day?date='+row.dataset.day+'&offset='+at);
+      if(id!==request||!row.isConnected)return;
+      if(at&&!page.sessions.length){offset=0;return load(0);}
+      body.replaceChildren(...page.sessions.map(s=>{
+        const tr=document.createElement('tr');
+        for(const value of [sessionTime(s.start_epoch),s.active?'Läuft':sessionTime(s.end_epoch,s.start_epoch),format(s.energy_kwh,2)+' kWh']){
+          tr.insertCell().textContent=value;
+        }
+        return tr;
+      }));
+      loaded=key;table.hidden=!page.sessions.length;
+      message.hidden=!table.hidden;message.textContent=table.hidden?'Keine Sitzungen an diesem Tag.':'';
+      previous.hidden=next.hidden=page.count<=20;
+      previous.disabled=at===0;next.disabled=at+page.sessions.length>=page.count;
+    }catch(error){
+      if(id!==request||!row.isConnected)return;
+      table.hidden=true;previous.hidden=next.hidden=true;retry.hidden=false;
+      message.textContent='Einzelsitzungen konnten nicht geladen werden.';message.hidden=false;
+    }finally{if(id===request)pending='';}
+  }
+  row.addEventListener('toggle',()=>{if(row.open)load();});
+  section.append(table,message,buttons);row.append(section);
+  return load;
+}
 function renderSessions(data){
   const total=data.grid_kwh+data.solar_kwh+data.unknown_kwh;
-  sessionCount=data.count;
   $('session-total').textContent=`${format(total,2)} kWh`;
   $('session-grid').textContent=sessionShare(data.grid_kwh,total,data.grid_cost_eur);
   $('session-solar').textContent=sessionShare(data.solar_kwh,total,data.solar_cost_eur);
   $('session-cost').textContent=`${format(data.cost_eur,2)} €`;
   const list=$('session-rows');
-  const expanded=new Set(Array.from(list.querySelectorAll('details[open]'),node=>node.dataset.day));
-  const focused=list.contains(document.activeElement)?document.activeElement.closest('details')?.dataset.day:null;
+  const existing=new Map(Array.from(list.children,row=>[row.dataset.day,row]));
+  const focused=list.contains(document.activeElement)?document.activeElement:null;
   const rows=data.days.map(s=>{
     const day=String(s.date),dayLabel=day.length===8?`${day.slice(6,8)}.${day.slice(4,6)}.${day.slice(0,4)}`:'Datum unbekannt';
-    const row=document.createElement('details');row.className='session-day';row.dataset.day=day;row.open=expanded.has(day);
-    const summary=document.createElement('summary'),heading=document.createElement('span'),date=document.createElement('b'),subtitle=document.createElement('small');
-    date.textContent=dayLabel;
+    const row=existing.get(day)||document.createElement('details'),revision=JSON.stringify(s);
+    if(row.dataset.sessionRevision===revision)return row;
+    if(!row.refreshEntries){
+      row.className='session-day';row.dataset.day=day;
+      const summary=document.createElement('summary'),heading=document.createElement('span'),date=document.createElement('b');
+      date.textContent=dayLabel;
+      heading.append(date,document.createElement('small'));summary.append(heading);row.append(summary,document.createElement('dl'));
+      row.refreshEntries=addSessionEntries(row);
+    }
+    row.dataset.sessionRevision=revision;
+    const subtitle=row.querySelector('summary small');
     subtitle.textContent=`${s.sessions} ${s.sessions===1?'Ladesitzung':'Ladesitzungen'} · ${format(s.charging_s/60,0)} Min. Ladezeit${s.active?' · Läuft / kurze Pause':''}`;
-    heading.append(date,subtitle);summary.append(heading);row.append(summary);
     const facts=document.createElement('dl');
     function detail(label,value,note){const pair=document.createElement('div'),term=document.createElement('dt'),description=document.createElement('dd');term.textContent=label;description.textContent=value;if(note){const small=document.createElement('small');small.textContent=note;description.append(small);}pair.append(term,description);facts.append(pair);}
     detail('Energie',`${format(s.energy_kwh,2)} kWh`);
     detail('Netz',`${format(s.grid_kwh,2)} kWh · ${format(s.grid_cost_eur,2)} €`,`${format(s.energy_kwh?s.grid_kwh/s.energy_kwh*100:0,0)} %`);
     detail('Solar / Akku',`${format(s.solar_kwh,2)} kWh · ${format(s.solar_cost_eur,2)} €`,`${format(s.energy_kwh?s.solar_kwh/s.energy_kwh*100:0,0)} %`);
     detail('Kosten',`${format(s.cost_eur,2)} €`);
-    row.append(facts);return row;
+    row.querySelector('dl').replaceWith(facts);
+    if(row.open)row.refreshEntries();
+    return row;
   });
-  list.replaceChildren(...rows);
-  if(focused)rows.find(row=>row.dataset.day===focused)?.querySelector('summary').focus({preventScroll:true});
+  if(list.children.length!==rows.length||rows.some((row,i)=>list.children[i]!==row)){
+    list.replaceChildren(...rows);
+    if(focused?.isConnected)focused.focus({preventScroll:true});
+  }
   $('session-empty').hidden=data.days.length>0;
-  $('session-empty').textContent='Noch keine Ladesitzungen in diesem Zeitraum.';
-  $('session-page').textContent=data.count?`${sessionOffset+1}–${Math.min(sessionOffset+20,data.count)} von ${data.count} Tagen`:'0 Tage';
-  $('sessions-prev').disabled=sessionOffset===0;$('sessions-next').disabled=sessionOffset+20>=data.count;
+  $('session-empty').textContent='Keine Ladesitzungen ab 1 kWh in diesem Zeitraum.';
+  $('session-pages').hidden=data.count<=20;
+  $('session-prev').disabled=data.offset===0;
+  $('session-next').disabled=data.offset+data.days.length>=data.count;
+
 }
 function clearSessions(message){
   for(const id of ['session-total','session-grid','session-solar','session-cost'])$(id).textContent='—';
-  sessionCount=0;$('session-rows').replaceChildren();$('session-empty').hidden=false;$('session-empty').textContent=message;
-  $('session-page').textContent='';$('sessions-prev').disabled=$('sessions-next').disabled=true;
+  $('session-rows').replaceChildren();$('session-empty').hidden=false;$('session-empty').textContent=message;
+  $('session-pages').hidden=true;
 }
-function validSessionPeriod(){
-  if($('export-range').value==='custom')return /^\d{4}-\d{2}-\d{2}$/.test($('export-from').value)&&/^\d{4}-\d{2}-\d{2}$/.test($('export-to').value)&&$('export-from').value<=$('export-to').value;
-  return /^\d{4}(-\d{2})?$/.test(selectedPeriod());
+
+function sessionDateQuery(days){
+  const deviceDay=String(state?.current_date||'');
+  const today=/^\d{8}$/.test(deviceDay)
+    ? deviceDay.slice(0,4)+'-'+deviceDay.slice(4,6)+'-'+deviceDay.slice(6)
+    : new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Berlin',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+  const first=new Date(today+'T00:00:00Z');
+  first.setUTCDate(first.getUTCDate()-Number(days)+1);
+  return 'from='+first.toISOString().slice(0,10)+'&to='+today;
 }
-async function loadSessions(){
+
+async function loadSessions(offset=sessionPageOffset){
+  sessionPageOffset=offset;
   if(sessionsBusy||!online||document.hidden)return;
-  const query=sessionQuery(),offset=sessionOffset;
-  if(!validSessionPeriod()){clearSessions('Bitte einen gültigen Zeitraum wählen: Von darf nicht nach Bis liegen.');return;}
-  lastSessionsAt=Date.now();
   sessionsBusy=true;
-  try{const data=await api(`/api/sessions?${query}&offset=${offset}`);if(query===sessionQuery()&&offset===sessionOffset)renderSessions(data);}
-  catch(error){if(query===sessionQuery()&&offset===sessionOffset)clearSessions('Sitzungsdaten gerade nicht erreichbar.');}
-  finally{sessionsBusy=false;if(query!==sessionQuery()||offset!==sessionOffset)loadSessions();}
+  try{
+    while(online&&!document.hidden){
+      lastSessionsAt=Date.now();
+      const days=$('session-range').value, requestedOffset=sessionPageOffset;
+      try{
+        const query=sessionDateQuery(days);
+        const page=await api('/api/sessions?'+query+'&offset='+requestedOffset);
+        if(days!==$('session-range').value||requestedOffset!==sessionPageOffset)continue;
+        if(requestedOffset&&!page.days.length){sessionPageOffset=0;continue;}
+        renderSessions(page);
+      }catch(error){
+        if(days!==$('session-range').value||requestedOffset!==sessionPageOffset)continue;
+        clearSessions('Sitzungsdaten gerade nicht erreichbar.');
+      }
+      break;
+    }
+  }finally{sessionsBusy=false;}
 }
-function changeSessionPeriod(){
-  const range=$('export-range').value;$('export-month-label').hidden=range!=='month';$('export-year-label').hidden=range!=='year';$('export-from-label').hidden=$('export-to-label').hidden=range!=='custom';
-  sessionOffset=0;const valid=validSessionPeriod();$('session-csv').setAttribute('aria-disabled',String(!valid));$('session-csv').href=`/api/export.csv?${sessionQuery()}`;if(!valid)clearSessions('Bitte einen gültigen Zeitraum wählen: Von darf nicht nach Bis liegen.');else loadSessions();
-}
-function localDateValue(date){return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;}
-const initialDate=new Date(),initialYear=initialDate.getFullYear();
-$('export-month').value=localDateValue(initialDate).slice(0,7);$('export-year').value=initialYear;$('export-from').value=`${initialYear}-01-01`;$('export-to').value=localDateValue(initialDate);
-$('session-csv').addEventListener('click',e=>{if(!validSessionPeriod()){e.preventDefault();toast('Bitte einen gültigen Zeitraum wählen.',true);}});
-for(const id of ['export-range','export-month','export-year','export-from','export-to'])$(id).addEventListener('change',changeSessionPeriod);
-$('sessions-prev').addEventListener('click',()=>{sessionOffset=Math.max(0,sessionOffset-20);loadSessions();});
-$('sessions-next').addEventListener('click',()=>{if(sessionOffset+20<sessionCount){sessionOffset+=20;loadSessions();}});
-$('session-csv').href=`/api/export.csv?${sessionQuery()}`;
 
 function shellPinChoices(values,field){
   const occupied=new Map();
@@ -883,7 +979,13 @@ $('settings-notice-later').addEventListener('click',()=>{settingsRebootDeferred=
 $('factory-reset').addEventListener('click',()=>{if(!window.confirm('Alle WLAN-, MQTT-, Einstellungs- und Statistikdaten löschen?'))return;action(async()=>{await api('/api/factory-reset',{});toast('Werksreset wird ausgeführt.');initialized=false;dirty=false;showConnection(false);});});
 
 $('reset-total').addEventListener('click',()=>{if(!window.confirm('Gesamtzähler auf 0 kWh setzen? Ladesitzungen und Tageswerte bleiben erhalten.'))return;action(async()=>{await api('/api/energy/reset',{});await pollStatus();toast('Gesamtzähler zurückgesetzt.');});});
-$('reset-sessions').addEventListener('click',()=>{if(!window.confirm('Alle gespeicherten Ladesitzungen und den CSV-Inhalt löschen?'))return;action(async()=>{await api('/api/sessions/reset',{});sessionOffset=0;await loadSessions();toast('Ladesitzungen gelöscht.');});});
+$('session-prev').addEventListener('click',()=>loadSessions(Math.max(0,sessionPageOffset-20)));
+$('session-range').addEventListener('change',()=>{
+  clearSessions('Ladesitzungen werden geladen …');
+  loadSessions(0);
+});
+$('session-next').addEventListener('click',()=>loadSessions(sessionPageOffset+20));
+$('reset-sessions').addEventListener('click',()=>{if(!window.confirm('Alle gespeicherten Ladesitzungen und den CSV-Inhalt löschen?'))return;action(async()=>{await api('/api/sessions/reset',{});await loadSessions(0);toast('Ladesitzungen gelöscht.');});});
 
 async function stopForMaintenance(){
   if(state.enabled)await api('/api/control',{enabled:false,mode:'off'});
@@ -1011,7 +1113,7 @@ function refreshStatusProfile(){
 for(let section=$('diagnostic-settings');section;section=section.parentElement)
   if(section.tagName==='DETAILS')section.addEventListener?.('toggle',refreshStatusProfile);
 
-async function loadHistory(){if(historyBusy||!online||document.hidden)return;historyBusy=true;lastHistoryAt=Date.now();try{history=await api('/api/history',undefined,15000);drawCharts();}catch(error){}finally{historyBusy=false;}}
+async function loadHistory(){if(historyBusy||!online||document.hidden)return;historyBusy=true;lastHistoryAt=Date.now();try{history=await api('/api/history',undefined,15000);drawCharts();renderDailyValues();}catch(error){}finally{historyBusy=false;}}
 
 let lastHistoryAt=-Infinity,lastSessionsAt=-Infinity;
 

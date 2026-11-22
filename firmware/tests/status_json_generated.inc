@@ -33,6 +33,9 @@ static void telemetry_json(cJSON *o){
     cJSON_AddBoolToObject(o,"telemetry_decided",telemetry_config.revision[0]!=0);
     cJSON_AddBoolToObject(o,"telemetry_delete_pending",telemetry_config.delete_pending);
     cJSON_AddBoolToObject(o,"telemetry_last_ok",telemetry_last_ok);
+    cJSON_AddStringToObject(o,"telemetry_wait",telemetry_wait_reason?telemetry_wait_reason:"");
+    cJSON_AddNumberToObject(o,"telemetry_last_http",telemetry_last_http);
+    cJSON_AddNumberToObject(o,"telemetry_duration_ms",telemetry_duration_ms);
     cJSON_AddNumberToObject(o,"telemetry_last_age_s",telemetry_last_at?(now_ms()-telemetry_last_at)/1000:-1);
     cJSON_AddStringToObject(o,"telemetry_revision",TELEMETRY_REVISION);
 }
@@ -49,6 +52,14 @@ static const char *vehicle_state_name(char state) {
 
 #include "http_display_status.inc"
 static cJSON *status_json_profile(bool include_token,bool include_diagnostics) {
+
+    /* Sample before building the response so diagnostics do not count their own tree. */
+    size_t available=0,minimum=0,largest=0;
+    if(include_diagnostics){
+        available=heap_caps_get_free_size(MALLOC_CAP_8BIT);
+        minimum=heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT);
+        largest=heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+    }
 
     cJSON *o=cJSON_CreateObject(); if(!o) return NULL;
 
@@ -339,8 +350,9 @@ static cJSON *status_json_profile(bool include_token,bool include_diagnostics) {
 
     if(include_diagnostics) {
         cJSON_AddNumberToObject(o,"uptime_s",now/1000);
-        cJSON_AddNumberToObject(o,"min_free_heap",heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT));
-        cJSON_AddNumberToObject(o,"largest_free_block",heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));cJSON_AddNumberToObject(o,"reset_reason",esp_reset_reason());
+        cJSON_AddNumberToObject(o,"free_heap",available);
+        cJSON_AddNumberToObject(o,"min_free_heap",minimum);
+        cJSON_AddNumberToObject(o,"largest_free_block",largest);cJSON_AddNumberToObject(o,"reset_reason",esp_reset_reason());
 
         cJSON_AddNumberToObject(o,"meter_failures",meter_failures); cJSON_AddNumberToObject(o,"wallbox_requests",wallbox_requests);
 

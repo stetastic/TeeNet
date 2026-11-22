@@ -35,7 +35,7 @@
  #teenet-house-mood[data-heatpump-enabled="true"] .en-consumers .en-art{height:72px}
  #teenet-house-mood[data-heatpump-enabled="true"] .en-consumers .en-label{font-size:11px}
 }
-@media(prefers-reduced-motion:reduce){#teenet-house-mood .en-heatpump-fan{animation:none!important}}
+@media(prefers-reduced-motion:reduce){#teenet-house-mood:not([data-energy-motion="on"]) .en-heatpump-fan{animation:none!important}}
 #heatpump-settings .heatpump-demo-divider{margin-top:20px;padding-top:18px;border-top:1px solid var(--line)}
 #heatpump-settings .heatpump-demo-test{margin-top:20px;padding:16px;border:1px solid var(--line);border-radius:12px;background:var(--raised,#f2f7f9)}
 #heatpump-settings .heatpump-demo-test>strong{display:block;font-size:13px;margin-bottom:8px;color:var(--ink,#244a62)}

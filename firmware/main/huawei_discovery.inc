@@ -21,7 +21,7 @@ static void huawei_scan_task(void *arg){
             LOCK();bool stop=!wifi_online||restarting||ota_in_progress||now_ms()>deadline;uint8_t configured=settings.huawei_unit_id;UNLOCK();
             if(stop)break;
             if(ip!=local&&meter_port_open(ip,502)){
-                char host[64],model[31];snprintf(host,sizeof(host),"%u.%u.%u.%u",(unsigned)(ip>>24),(unsigned)((ip>>16)&255),(unsigned)((ip>>8)&255),(unsigned)(ip&255));
+                char host[sizeof(huawei_found[0].host)],model[31];snprintf(host,sizeof(host),"%u.%u.%u.%u",(unsigned)(ip>>24),(unsigned)((ip>>16)&255),(unsigned)((ip>>8)&255),(unsigned)(ip&255));
                 uint8_t units[3]={configured,1,0};
                 for(unsigned n=0;n<3;n++){
                     bool duplicate=false;for(unsigned j=0;j<n;j++)if(units[j]==units[n])duplicate=true;if(duplicate)continue;

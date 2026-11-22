@@ -3,6 +3,7 @@
 const utils = require('@iobroker/adapter-core');
 const mqtt = require('mqtt');
 const Bridge = require('./lib/bridge');
+const { SessionArchive } = require('./lib/archive');
 
 class TeeNet extends utils.Adapter {
     constructor(options = {}) {
@@ -14,6 +15,8 @@ class TeeNet extends utils.Adapter {
 
     async onReady() {
         this.bridge = new Bridge(this, mqtt);
+        this.archive = new SessionArchive(this);
+        this.archiveStartup = this.archive.start().catch(error => this.log.error('Ladearchiv: ' + error.message));
         try { await this.bridge.start(); }
         catch (error) {
             this.log.error(`Einrichtung prüfen: ${error.message}`);
@@ -25,8 +28,7 @@ class TeeNet extends utils.Adapter {
     onStateChange(id, state) { this.bridge?.enqueue(() => this.bridge.write(id, state)); }
 
     onUnload(callback) {
-        if (!this.bridge) return callback();
-        this.bridge.stop().then(() => callback(), () => callback());
+        Promise.allSettled([this.archive?.stop(), this.archiveStartup, this.bridge?.stop()]).then(() => callback());
     }
 }
 
