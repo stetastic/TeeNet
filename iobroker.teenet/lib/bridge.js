@@ -1,7 +1,7 @@
 'use strict';
 
 const { randomBytes } = require('node:crypto');
-const { METRICS, CONTROLS, CONTROL_FEEDBACK, config, parseMetric, command, validSource } = require('./protocol');
+const { METRICS, CONTROLS, CONTROL_FEEDBACK, MAX_CONTROL_POWER_KW, config, parseMetric, command, validSource } = require('./protocol');
 
 class Bridge {
     constructor(adapter, mqtt, now = Date.now, archive) {
@@ -34,6 +34,9 @@ class Bridge {
     }
 
     async state(id, val, q = 0) {
+        // Voltage-dependent feedback can exceed the command range. Keep the
+        // raw value in the feedback cache for command confirmation.
+        if (id === 'control.power_kw' && typeof val === 'number') val = Math.min(val, MAX_CONTROL_POWER_KW);
         // Only this adapter writes its read-only outputs. Avoid database reads
         // for unchanged values; writable controls may have external writes.
         const previous = this.published.get(id);
@@ -81,7 +84,7 @@ class Bridge {
         for (const [key, [name, type, role, unit]] of Object.entries(CONTROLS)) {
             const common = { name, type, role, read: true, write: true, ...(unit ? { unit } : {}) };
             if (key === 'mode') common.states = { manual: 'Manuell', pv: 'PV-Überschuss', off: 'Aus' };
-            if (key === 'power_kw') Object.assign(common, { min: 0, max: 11, step: 0.5 });
+            if (key === 'power_kw') Object.assign(common, { min: 0, max: MAX_CONTROL_POWER_KW, step: 0.5 });
             await this.io.setObjectNotExistsAsync(`control.${key}`, { type: 'state', common, native: {} });
         }
     }

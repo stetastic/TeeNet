@@ -31,7 +31,36 @@ static void test_runtime(void){
  r=idle;r.test_active=true;assert(!telemetry_runtime_ready(&r));assert(!memcmp(&deletion,&before,sizeof(deletion)));
  r.test_active=false;assert(telemetry_runtime_ready(&r)&&telemetry_due(&deletion,false,true,false,100,0));
 }
+static void test_standby(void){
+ telemetry_idle_window_t window={0};
+ int64_t first=1000,last=0;
+ for(int64_t now=first;now<=first+TELEMETRY_STANDBY_MS;now+=1000){
+  telemetry_idle_sample(&window,last,now,5000,true,true);
+  assert(telemetry_long_idle(window,now,true)==(now-first>=TELEMETRY_STANDBY_MS));
+  last=now;
+ }
+ assert(!telemetry_long_idle(window,last,false));
+ telemetry_idle_sample(&window,last,last+5000,5000,true,true);
+ assert(!telemetry_long_idle(window,last+5000,true));
+ telemetry_idle_sample(&window,last+5000,last+6000,5000,true,false);assert(window.since==0);
+ assert(telemetry_http_idle('A',"Available",false,false,0));
+ assert(telemetry_http_idle('B',"SuspendedEVSE",true,true,.1f));
+ assert(!telemetry_http_idle('B',"SuspendedEV",true,false,0));
+ assert(!telemetry_http_idle('C',"Charging",true,true,0));
+ assert(!telemetry_http_idle('B',"idle",true,true,1));
+ assert(!telemetry_http_idle('A',"",false,false,0));
+ telemetry_runtime_t r={.charging_requested=true,.current_fresh=true,.long_meter_idle=true,
+   .shell_configured=true,.shell_known=true,.vehicle_state='B',.session_present=true,
+   .internal_free=TELEMETRY_MIN_INTERNAL_FREE,.internal_largest=TELEMETRY_MIN_INTERNAL_BLOCK};
+ assert(telemetry_runtime_ready(&r));
+ r.phase_busy=true;assert(!telemetry_runtime_ready(&r));r.phase_busy=false;
+ r.vehicle_state='C';assert(!telemetry_runtime_ready(&r));r.vehicle_state='B';
+ r.current_fresh=false;assert(!telemetry_runtime_ready(&r));
+ r.long_http_idle=true;assert(telemetry_runtime_ready(&r));
+ r.current_fresh=true;r.current_a[1]=2;assert(!telemetry_runtime_ready(&r));
+}
 int main(void){
+ test_standby();
  test_runtime();
  telemetry_config_t c={.schema=1};assert(telemetry_valid(&c));
  assert(!telemetry_due(&c,true,true,false,100,0));
@@ -44,5 +73,5 @@ int main(void){
  assert(telemetry_due(&c,false,true,false,100,0));assert(!telemetry_due(&c,false,false,false,100,0));
  c.enabled=1;assert(!telemetry_valid(&c));c.enabled=0;c.key[5]='X';assert(!telemetry_valid(&c));
  c=(telemetry_config_t){.schema=1};telemetry_revoke(&c);assert(!c.delete_pending&&!c.enabled);
- puts("PASS: consent/timing/deletion preserved; optional TLS deferred for charge requests, live/invalid/stale current, vehicle/session/unknown configured Shell, phase/tests and insufficient internal RAM/block");
+ puts("PASS: standby with active charge request requires five minutes of verified idle; consent, charging, freshness, phase and memory checks passed");
 }

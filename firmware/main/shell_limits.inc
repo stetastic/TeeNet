@@ -95,8 +95,13 @@ static void shell_limits_task(void *arg) {
             bool same_vehicle=same && ((evcc && evcc_control.configured && !strcmp(host,evcc_host)) ||
                 (!evcc && ((limits && settings.shell_limits_auto)||(profiles&&vehicles.enabled)||configured_host[0]) && !strcmp(settings.shell_setup_host,configured_host)));
             if(vehicle && same_vehicle) {
+                int64_t sample_at=code==200?now_ms():0;
+                bool idle=settings.shell_http_control_enabled&&telemetry_http_idle(sample.state,sample.raw,
+                    sample.session.present,sample.http_control.current_valid,sample.http_control.current_a);
+                telemetry_idle_sample(&telemetry_shell_idle,evcc_shell_at,sample_at,EVCC_SHELL_TTL_MS,
+                                      settings.enabled||evcc_control.enabled,idle);
                 evcc_shell=sample;evcc_shell_http_code=code;
-                evcc_shell_at=code==200?now_ms():0;
+                evcc_shell_at=sample_at;
 #if CONFIG_TEE_HTTP_CONTROL_TRIAL
                 if(code==200)trial_http_sequence++;
 #endif

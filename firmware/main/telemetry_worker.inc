@@ -7,8 +7,13 @@ static bool telemetry_ready(size_t stack_reserve){
     bool due=telemetry_due(&telemetry_config,terms_accepted,wifi_online,
         ota_in_progress||restarting||backup_in_progress||boot_validation_pending,now,telemetry_next_at);
     if(!due){UNLOCK();return false;}
+    bool requested=settings.enabled||evcc_control.enabled;
+    bool shell_known=shell_vehicle_fresh(&evcc_shell,evcc_shell_at,now);
     telemetry_runtime_t runtime={
-        .charging_requested=settings.enabled||evcc_control.enabled,
+        .charging_requested=requested,
+        .long_meter_idle=telemetry_long_idle(telemetry_meter_idle,actual_at,requested),
+        .long_http_idle=settings.shell_http_control_enabled&&shell_known&&
+            telemetry_long_idle(telemetry_shell_idle,evcc_shell_at,requested),
         .phase_busy=phase_config_saving||(settings.phase_switch_enabled&&
             (phase_startup||phase_state!=PHASE_READY||phase_shelly_pending||phase_shelly_inflight||
              phase_shelly_rechecking||phase_mqtt_pending||phase_mqtt_inflight)),
@@ -16,7 +21,7 @@ static bool telemetry_ready(size_t stack_reserve){
         .current_fresh=fresh(now,actual_at,wallbox_meter_ttl()),
         .shell_configured=evcc_control.configured||settings.shell_limits_auto||
             settings.shell_setup_host[0]||shell_active_host[0],
-        .shell_known=shell_vehicle_fresh(&evcc_shell,evcc_shell_at,now),
+        .shell_known=shell_known,
         .session_present=evcc_shell.session.present,.vehicle_state=evcc_shell.state,
         .shell_reports_idle=!strcmp(evcc_shell.raw,"idle"),
         .current_a={actual_a[0],actual_a[1],actual_a[2]}};

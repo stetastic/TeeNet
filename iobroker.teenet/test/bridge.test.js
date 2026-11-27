@@ -37,6 +37,26 @@ test('power control is only confirmed by fresh matching power, mode and enable f
     await f.bridge.stop();
 });
 
+test('above-limit feedback stays measurable without overflowing the control or confirming a different setpoint', async () => {
+    const f = await fixture({ readOnly: false }); await f.start(); await f.online();
+    await f.receive('sensor/manual_power_kw', 11.5);
+    await f.receive('sensor/estimate_w', 11500);
+    assert.equal(f.io.value('control.power_kw'), 11);
+    assert.equal(f.io.value('wallbox.power_w'), 11500);
+    assert.equal(f.client.sent.length, 0);
+    await f.write('power_kw', 11);
+    await f.receive('sensor/manual_power_kw', 11.5);
+    await f.receive('sensor/mode', 'manual');
+    await f.receive('sensor/enabled', true);
+    assert.ok(f.bridge.pending);
+    await f.receive('availability', 'offline');
+    assert.deepEqual(f.io.states.get('control.power_kw').val, 11);
+    assert.equal(f.io.states.get('control.power_kw').q, 0x02);
+    await f.receive('sensor/manual_power_kw', 'null');
+    assert.equal(f.io.value('control.power_kw'), null);
+    await f.bridge.stop();
+});
+
 test('read-only mode blocks commands; invalid power and mode are never sent', async () => {
     const f = await fixture(); await f.start(); await f.online();
     await f.write('enabled', true);

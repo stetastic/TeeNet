@@ -1,11 +1,11 @@
-# TeeNet für ioBroker · Version 0.2.0
+# TeeNet für ioBroker · Version 0.2.1
 
 Wallbox steuern, Messwerte anzeigen und vorhandene PV-/Akku-Datenpunkte verbinden.
 Kompatibel mit der MQTT-Schnittstelle von Version 1.13. Die ESP-Firmware muss für den Adapter nicht geändert werden.
 
 ## Einrichten
 
-1. Das Paket auf dem ioBroker-Rechner installieren: `iobroker url /pfad/iobroker.teenet-0.2.0.tgz`. Danach eine Instanz anlegen: `iobroker add teenet`.
+1. Das Paket auf dem ioBroker-Rechner installieren: `iobroker url /pfad/iobroker.teenet-0.2.1.tgz`. Danach eine Instanz anlegen: `iobroker add teenet`.
 2. In den Instanz-Einstellungen die Adresse und den Port des vorhandenen MQTT-Brokers eintragen. Benutzername und Passwort bei Bedarf ergänzen.
 3. Das Topic-Präfix aus TeeNet übernehmen, normalerweise `wallbox-ems`. Für jedes weitere Gerät eine eigene Instanz und ein eigenes Präfix verwenden.
 4. Speichern und die Instanz einschalten. `teenet.0.info.connection` wird erst bei aktuellen ESP-Rückmeldungen wahr.

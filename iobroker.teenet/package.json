@@ -1,6 +1,6 @@
 {
   "name": "iobroker.teenet",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "TeeNet wallbox control and energy data integration",
   "main": "main.js",
   "license": "MIT",

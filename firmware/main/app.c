@@ -1,4 +1,5 @@
 #include "ems_core.h"
+#include "telemetry_core.h"
 #include "charge_voltage.h"
 #include "opendtu_mqtt.h"
 #include "github_release.h"
@@ -124,6 +125,7 @@ static float vehicle_phase_surplus_locked(float watts);
 
 static settings_t settings,saved_settings;
 static uint32_t wallbox_meter_revision,house_meter_revision;
+static telemetry_idle_window_t telemetry_meter_idle,telemetry_shell_idle;
 static evcc_control_t evcc_control;
 static evcc_shell_t evcc_shell={.state='?',.reason="pending"};
 static char evcc_host[64],evcc_key[33];
@@ -1077,6 +1079,11 @@ static void meter_task(void *arg) {
 
         LOCK();
         if(network && revision!=wallbox_meter_revision){UNLOCK();continue;}
+        int64_t now=now_ms();
+        bool idle_sample=ok&&telemetry_currents_idle(values);
+        telemetry_idle_sample(&telemetry_meter_idle,actual_at,now,wallbox_meter_ttl(),
+                              settings.enabled||evcc_control.enabled,idle_sample);
+        if(ok&&!idle_sample)telemetry_shell_idle.since=0;
         /* A missing reply leaves the previous proof on its original deadline.
            A received but invalid measurement clears it immediately. */
         if(phase_voltage_shared_locked()&&!response_missing)phase_voltage_sample(&phase_voltage,voltage,ok&&voltage_valid,now_ms());
@@ -1084,8 +1091,6 @@ static void meter_task(void *arg) {
             if(settings.phase_switch_enabled && phase_state==PHASE_READY &&
                wallbox_inactive_phase_current(&settings,values)) phase_state=PHASE_FAULT;
             if(sdm && settings.charge_phases==1 && sdm_profile(settings.wallbox_meter_type) && sdm_profile(settings.wallbox_meter_type)->phases==1) watts/=3;
-
-            int64_t now=now_ms();
 
             memcpy(xemex_a,values,sizeof(values));
             memcpy(meter_a,values,sizeof(values)); meter_at=now;
@@ -1886,6 +1891,37 @@ static void homeassistant_publish_entity(const char *component,const char *objec
     free(body); cJSON_Delete(entity);
 }
 
+static void homeassistant_power_setpoint(void) {
+    LOCK();
+    unsigned min_phases=settings.phase_switch_enabled?1:settings.fixed_charge_phases;
+    unsigned max_phases=settings.phase_switch_enabled?3:settings.fixed_charge_phases;
+    double minimum=round(manual_minimum_power_kw(&settings,min_phases)*10)/10;
+    double maximum=floorf(settings.max_charge_a*ems_phase_voltage_sum(&settings,max_phases)*settings.power_factor/100)/10.0;
+    UNLOCK();
+    maximum=fmin(maximum,max_phases==1?3.5:11.0);
+    if(!isfinite(minimum)||minimum>maximum){
+        homeassistant_publish_entity("number","charging_power_setpoint",NULL,false);
+        return;
+    }
+
+    cJSON *o=homeassistant_entity("Gewünschte Ladeleistung","charging_power_setpoint","sensor/manual_power_kw");
+    char topic[160],state_template[192];
+    snprintf(topic,sizeof(topic),"%s/command/power_kw",settings.mqtt_prefix);
+    cJSON_AddStringToObject(o,"command_topic",topic);
+    cJSON_AddNumberToObject(o,"min",minimum);
+    cJSON_AddNumberToObject(o,"max",maximum);
+    cJSON_AddNumberToObject(o,"step",0.1);
+    cJSON_AddStringToObject(o,"unit_of_measurement","kW");
+    cJSON_AddStringToObject(o,"mode","slider");
+    /* The raw topic follows live phase voltage. Render the HA slider using
+       the exact limits of this retained discovery message. */
+    snprintf(state_template,sizeof(state_template),
+        "{{ [[value|float|round(1), %.1f]|max, %.1f]|min if is_number(value) and value|float > 0 else 'None' }}",
+        minimum,maximum);
+    cJSON_AddStringToObject(o,"value_template",state_template);
+    homeassistant_publish_entity("number","charging_power_setpoint",o,true);
+}
+
 static void homeassistant_discovery(bool enabled) {
     static const struct { const char *component,*object; } entities[]={
         {"sensor","charging_power"},{"sensor","charging_energy"},{"sensor","house_power"},{"binary_sensor","wallbox"},
@@ -1916,12 +1952,7 @@ static void homeassistant_discovery(bool enabled) {
     char topic[160];snprintf(topic,sizeof(topic),"%s/command/mode",settings.mqtt_prefix);cJSON_AddStringToObject(o,"command_topic",topic);
     cJSON *options=cJSON_AddArrayToObject(o,"options");json_add_owned_to_array(options,cJSON_CreateString("off"));json_add_owned_to_array(options,cJSON_CreateString("manual"));json_add_owned_to_array(options,cJSON_CreateString("pv"));
     homeassistant_publish_entity("select","mode",o,true);
-    o=homeassistant_entity("Gewünschte Ladeleistung","charging_power_setpoint","sensor/manual_power_kw");
-    snprintf(topic,sizeof(topic),"%s/command/power_kw",settings.mqtt_prefix);cJSON_AddStringToObject(o,"command_topic",topic);
-    cJSON_AddNumberToObject(o,"min",manual_minimum_power_kw(&settings,(settings.phase_switch_enabled || settings.fixed_charge_phases==1)?1:3));
-    cJSON_AddNumberToObject(o,"max",floorf(settings.max_charge_a*ems_phase_voltage_sum(&settings,settings.phase_switch_enabled?3:settings.fixed_charge_phases)*settings.power_factor/100)/10);
-    cJSON_AddNumberToObject(o,"step",0.1);cJSON_AddStringToObject(o,"unit_of_measurement","kW");cJSON_AddStringToObject(o,"mode","slider");
-    homeassistant_publish_entity("number","charging_power_setpoint",o,true);
+    homeassistant_power_setpoint();
     o=homeassistant_entity("Akku-Wolkenpuffer","cloud_buffer","sensor/battery_use");
     snprintf(topic,sizeof(topic),"%s/command/battery_use",settings.mqtt_prefix);cJSON_AddStringToObject(o,"command_topic",topic);cJSON_AddStringToObject(o,"payload_on","true");cJSON_AddStringToObject(o,"payload_off","false");
     homeassistant_publish_entity("switch","cloud_buffer",o,true);

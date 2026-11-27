@@ -26,7 +26,8 @@ static bool phase_config_saving,phase_startup,phase_shelly_pending,phase_shelly_
 static bool phase_mqtt_pending,phase_mqtt_inflight,phase_test_active;
 static int phase_state,telemetry_lock=1;
 static char shell_active_host[1];
-static struct {bool enabled,phase_switch_enabled,shell_limits_auto;char shell_setup_host[1];} settings;
+static struct {bool enabled,phase_switch_enabled,shell_limits_auto,shell_http_control_enabled;char shell_setup_host[1];} settings;
+static telemetry_idle_window_t telemetry_meter_idle,telemetry_shell_idle;
 static struct {bool enabled,configured;} evcc_control;
 typedef struct {char state,raw[32];struct {bool present;} session;} fake_shell_t;
 static fake_shell_t evcc_shell={.state='A'};
@@ -94,6 +95,27 @@ int main(void){
         assert(telemetry_duration_ms==850&&telemetry_last_http==200&&!telemetry_wait_reason);
         telemetry_schedule();assert(!pending&&!telemetry_worker_running);
     }
+    advance();evcc_control.enabled=true;evcc_control.configured=true;
+    evcc_shell.state='B';strcpy(evcc_shell.raw,"SuspendedEV");
+    for(int seconds=0;seconds<=300;seconds++){
+        int64_t previous=actual_at;
+        clock_ms+=1000;actual_at=evcc_shell_at=clock_ms;
+        telemetry_idle_sample(&telemetry_meter_idle,previous,actual_at,wallbox_meter_ttl(),true,true);
+        telemetry_schedule();assert((pending!=NULL)==(seconds==300));
+    }
+    phase_test_active=true;pending(NULL);phase_test_active=false;assert(requests==1000);
+    telemetry_schedule();actual_a[1]=6;pending(NULL);assert(requests==1000);
+    actual_a[1]=0;telemetry_meter_idle.since=0;
+    evcc_control.enabled=false;settings.enabled=true;
+    settings.shell_http_control_enabled=true;actual_at=0;
+    for(int seconds=0;seconds<=300;seconds++){
+        int64_t previous=evcc_shell_at;
+        clock_ms+=1000;evcc_shell_at=clock_ms;
+        telemetry_idle_sample(&telemetry_shell_idle,previous,evcc_shell_at,30000,true,true);
+        telemetry_schedule();assert((pending!=NULL)==(seconds==300));
+    }
+    pending(NULL);assert(requests==1001&&method==HTTP_METHOD_POST);
+    settings.enabled=false;settings.shell_http_control_enabled=false;strcpy(evcc_shell.raw,"idle");
     advance();telemetry_revoke(&telemetry_config);terms_accepted=false;
     result=503;telemetry_schedule();pending(NULL);assert(!telemetry_last_ok&&telemetry_config.delete_pending&&!writes);
     result=200;advance();store_failed=true;telemetry_schedule();pending(NULL);

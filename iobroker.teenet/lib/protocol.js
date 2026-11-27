@@ -1,5 +1,7 @@
 'use strict';
 
+const MAX_CONTROL_POWER_KW = 11;
+
 // Wire contract from TeeNet 1.13 main/app.c. No HTTP polling is required.
 const METRICS = {
     estimate_w: ['wallbox.power_w', 'Ladeleistung', 'number', 'value.power', 'W', 0, 50000],
@@ -99,7 +101,7 @@ function command(key, value) {
         if (!['manual', 'pv', 'off'].includes(value)) throw new Error('Betriebsart: manual, pv oder off.');
     } else if (key === 'power_kw') {
         if (typeof value !== 'number' || !Number.isFinite(value) ||
-            !(value === 0 || ((value >= 2 && value <= 3.5) || (value >= 6 && value <= 11)) && Math.abs(value * 2 - Math.round(value * 2)) < 0.0001)) {
+            !(value === 0 || ((value >= 2 && value <= 3.5) || (value >= 6 && value <= MAX_CONTROL_POWER_KW)) && Math.abs(value * 2 - Math.round(value * 2)) < 0.0001)) {
             throw new Error('Leistung: Aus (0), 2–3,5 kW oder 6–11 kW in 0,5-kW-Schritten. Der Anschluss muss den Bereich unterstützen.');
         }
     } else if (typeof value !== 'boolean') throw new Error('Schalter benötigen true oder false.');
@@ -112,4 +114,4 @@ function validSource(state, maxAge, now) {
         state.ts <= now + 2000 && now - state.ts <= maxAge * 1000;
 }
 
-module.exports = { METRICS, CONTROLS, CONTROL_FEEDBACK, config, parseMetric, command, validSource };
+module.exports = { METRICS, CONTROLS, CONTROL_FEEDBACK, MAX_CONTROL_POWER_KW, config, parseMetric, command, validSource };
