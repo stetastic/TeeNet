@@ -34,7 +34,8 @@ static phase_voltage_proof_t phase_voltage;
 static unsigned phase_voltage_observed_locked(int64_t now){return wifi_online?phase_voltage_observed(&phase_voltage,now):0;}
 #include "phase_shelly_runtime.inc"
 static unsigned gpio_reads;
-static int64_t now_ms(void){return meter_at;}
+static int64_t simulated_clock;
+static int64_t now_ms(void){return simulated_clock?simulated_clock:meter_at;}
 #define PHASE_FEEDBACK_GPIO settings.phase_feedback_pin
 #define PHASE_FEEDBACK_SECOND_GPIO settings.phase_feedback_second_pin
 /* Deliberately contradict the Shelly's three-phase contacts. */
@@ -49,6 +50,7 @@ static shelly_phase_feedback_t feedback(unsigned phases,bool output,uint32_t upt
 }
 static void fixture(unsigned phases){
     settings_defaults(&settings);settings.phase_actuator_type=1;settings.phase_feedback_count=2;settings.phase_feedback_closed_is_single=false;settings.phase_shelly_pulse=false;strcpy(settings.phase_shelly_host,"192.168.1.88");
+    settings.basic_mode=false;settings.grid_backup_enabled=false;
     settings.phase_feedback_source=1;strcpy(settings.phase_voltage_host,"192.168.1.89");settings.xemex_coils=3;settings.phase_switch_enabled=settings.relay_board_enabled=settings.phase_feedback_enabled=true;
     settings.relay1_mode=3;settings.charge_phases=phases;settings.manual_phases=phases;
     settings.mode=MODE_MANUAL;settings.enabled=true;
@@ -230,11 +232,11 @@ static void test_transport_missing(void){
     worker_fixture(2000);valid_config_replies();add_reply((fake_reply_t){.error=ESP_ERR_HTTP_EAGAIN});worker_once();
     assert(phase_state==PHASE_READY&&phase_shelly_at==1000&&status_calls==1&&!coil_calls);
     worker_fixture(2000);valid_config_replies();add_reply((fake_reply_t){.code=200,.complete=false,.body="{"});worker_once();assert(phase_state==PHASE_READY&&phase_shelly_at==1000);
-    worker_fixture(2000);valid_config_replies();fake_reply_t oversized=good(valid_status);oversized.overflow=true;add_reply(oversized);worker_once();assert(phase_state==PHASE_SETTLING&&!phase_shelly_at);
-    worker_fixture(2000);valid_config_replies();add_reply(good("{}"));worker_once();assert(phase_state==PHASE_SETTLING&&!phase_shelly_at);
-    worker_fixture(2000);valid_config_replies();add_reply((fake_reply_t){.code=403,.complete=true});worker_once();assert(phase_state==PHASE_SETTLING&&!phase_shelly_at);
+    worker_fixture(2000);valid_config_replies();fake_reply_t oversized=good(valid_status);oversized.overflow=true;add_reply(oversized);worker_once();assert(phase_state==PHASE_FAULT&&!phase_shelly_at);
+    worker_fixture(2000);valid_config_replies();add_reply(good("{}"));worker_once();assert(phase_state==PHASE_FAULT&&!phase_shelly_at);
+    worker_fixture(2000);valid_config_replies();add_reply((fake_reply_t){.code=403,.complete=true});worker_once();assert(phase_state==PHASE_FAULT&&!phase_shelly_at);
     worker_fixture(2000);valid_config_replies();add_reply((fake_reply_t){.code=401,.error=ESP_ERR_HTTP_EAGAIN});worker_once();
-    assert(phase_state==PHASE_SETTLING&&!phase_shelly_at&&phase_shelly_invalid_replies==1&&!phase_shelly_transport_misses);
+    assert(phase_state==PHASE_FAULT&&!phase_shelly_at&&phase_shelly_invalid_replies==1&&!phase_shelly_transport_misses);
     worker_fixture(2000);valid_config_replies();add_reply((fake_reply_t){.error=ESP_ERR_HTTP_EAGAIN,.socket_error=11});worker_once();
     assert(phase_shelly_failure_http_valid&&phase_shelly_failure_http_error==ESP_ERR_HTTP_EAGAIN&&phase_shelly_failure_http_status==0&&phase_shelly_failure_http_errno==11);
     /* A successful retry updates current evidence without erasing the last
@@ -255,19 +257,62 @@ static void test_transport_missing(void){
     worker_fixture(6001);add_reply((fake_reply_t){.error=ESP_ERR_HTTP_CONNECT,.code=0,.complete=true});worker_once();
     assert(phase_state==PHASE_SETTLING&&!phase_shelly_at&&!status_calls&&phase_shelly_transport_misses==1);
     worker_fixture(2000);valid_config_replies();add_reply((fake_reply_t){.error=ESP_ERR_HTTP_CONNECT,.code=401,.complete=true});worker_once();
-    assert(phase_state==PHASE_SETTLING&&!phase_shelly_at&&phase_shelly_invalid_replies==1&&!phase_shelly_transport_misses);
-    const int invalid_errors[]={ESP_ERR_HTTP_FETCH_HEADER,ESP_ERR_HTTP_INVALID_TRANSPORT,ESP_ERR_INVALID_ARG,-1};
+    assert(phase_state==PHASE_FAULT&&!phase_shelly_at&&phase_shelly_invalid_replies==1&&!phase_shelly_transport_misses);
+    const int invalid_errors[]={ESP_ERR_HTTP_INVALID_TRANSPORT,ESP_ERR_INVALID_ARG,-1};
+    worker_fixture(2000);valid_config_replies();add_reply((fake_reply_t){.error=ESP_ERR_HTTP_FETCH_HEADER,.socket_error=ECONNRESET});worker_once();
+    assert(phase_state==PHASE_READY&&phase_shelly_transport_misses==1&&!phase_shelly_invalid_replies);
+    worker_fixture(2000);valid_config_replies();add_reply((fake_reply_t){.code=503,.complete=true});worker_once();
+    assert(phase_state==PHASE_READY&&phase_shelly_transport_misses==1);
+    worker_fixture(2000);valid_config_replies();add_reply((fake_reply_t){.error=ESP_ERR_HTTP_FETCH_HEADER});worker_once();
+    assert(phase_state==PHASE_READY&&phase_shelly_transport_misses==1);
     for(unsigned i=0;i<sizeof(invalid_errors)/sizeof(*invalid_errors);i++){
         worker_fixture(2000);valid_config_replies();add_reply((fake_reply_t){.error=invalid_errors[i]});worker_once();
-        assert(phase_state==PHASE_SETTLING&&!phase_shelly_at&&phase_shelly_invalid_replies==1&&!phase_shelly_transport_misses);
+        assert(phase_state==PHASE_FAULT&&!phase_shelly_at&&phase_shelly_invalid_replies==1&&!phase_shelly_transport_misses);
     }
     worker_fixture(2000);valid_config_replies();add_reply((fake_reply_t){.code=200,.error=ESP_ERR_HTTP_EAGAIN,.complete=true,.body="{}"});worker_once();
-    assert(phase_state==PHASE_SETTLING&&!phase_shelly_at&&phase_shelly_invalid_replies==1);
+    assert(phase_state==PHASE_FAULT&&!phase_shelly_at&&phase_shelly_invalid_replies==1);
     worker_fixture(2000);valid_config_replies();add_reply(good(valid_status));worker_once();assert(phase_state==PHASE_READY&&phase_shelly_at==2000);
     worker_fixture(2000);settings.phase_actuator_type=3;valid_config_replies();worker_once();assert(coil_calls==1&&phase_state==PHASE_SETTLING&&!phase_shelly_at&&!phase_shelly_failure_http_valid);
     puts("PASS: actual phase HTTP worker distinguishes missing transport from invalid payload/config; original 5 s deadline unchanged, no stale configuration/status renewal, no command confirmation or Modbus relaxation");
 }
 
+/* Exercise the actual polling worker and controller across a 150-second
+   router outage. Shelly, meter and wired wallbox recover independently. */
+static void router_restart(bool user_stop,bool wrong_position){
+    worker_fixture(1000);step(2000,9,9,3,false);
+    phase_shelly_disconnect_locked(3000);wifi_online=false;actual_at=meter_at=0;
+    for(simulated_clock=3000;simulated_clock<153000;simulated_clock+=1000){
+        if(user_stop&&simulated_clock==60000)settings.enabled=false;
+        worker_once();phase_step_locked(simulated_clock);
+        assert(phase_state==PHASE_SETTLING&&phase_shelly_rechecking);
+        assert(!phase_shelly_backup_position_locked(simulated_clock)&&!phase_shelly_take_command_locked(simulated_clock));
+    }
+    wifi_online=true;settings.grid_backup_enabled=true;
+    for(;simulated_clock<158000;simulated_clock+=1000){
+        actual_at=meter_at=simulated_clock;actual_a[0]=actual_a[1]=actual_a[2]=0;
+        /* Meter returns first. Recovery never writes the missing actuator. */
+        phase_step_locked(simulated_clock);
+        assert(phase_state==PHASE_SETTLING);
+        assert(phase_shelly_backup_position_locked(simulated_clock)==!user_stop);
+        assert(!phase_shelly_take_command_locked(simulated_clock));
+    }
+    phase_shelly_config_ok=true;
+    for(;simulated_clock<210000;simulated_clock+=1000){
+        int64_t t=simulated_clock;float volts[3]={232,wrong_position?0:232,wrong_position?0:232};
+        phase_voltage_sample(&phase_voltage,volts,true,t-500);
+        phase_voltage_sample(&phase_voltage,volts,true,t);
+        shelly_phase_feedback_t report=feedback(3,false,300+(uint32_t)(t/1000));
+        assert(phase_shelly_receive_locked(&report,true,t));
+        actual_at=meter_at=t;
+        if(t>=200000)wallbox_at=t;
+        phase_step_locked(t);assert(!phase_shelly_take_command_locked(t));
+        if(wrong_position)assert(phase_state==PHASE_FAULT);
+        else if(t<200000)assert(phase_state==PHASE_SETTLING);
+    }
+    assert(phase_state==(wrong_position?PHASE_FAULT:PHASE_READY));
+    assert(settings.enabled==!user_stop&&!pulses&&!coil_calls);
+    simulated_clock=0;
+}
 int main(void){
     (void)gpio_get_level;
     shelly_phase_identity_t identity;
@@ -305,18 +350,26 @@ int main(void){
     /* A lost read pauses without a write; matching fresh samples recover a
        stopped controller. No automatic Start or speculative phase change. */
     fixture(3);settings.enabled=false;
-    assert(!phase_shelly_receive_locked(NULL,false,2000));assert(phase_shelly_rechecking&&phase_state==PHASE_SETTLING);
+    phase_shelly_transport_lost_locked(2000);assert(phase_shelly_rechecking&&phase_state==PHASE_SETTLING);
     for(int64_t t=2500;t<=10000;t+=500)step(t,0,0,3,false);
     assert(phase_state==PHASE_READY&&!phase_shelly_rechecking&&!settings.enabled&&!pulses);
-    fixture(3);assert(!phase_shelly_receive_locked(NULL,false,2000));
+    fixture(3);phase_shelly_transport_lost_locked(2000);
     for(int64_t t=3000;t<=33000;t+=1000){phase_shelly_transport_lost_locked(t);actual_at=meter_at=wallbox_at=last_sent_current_at=t;phase_step_locked(t);}
-    assert(phase_state==PHASE_FAULT&&!pulses);
-    fixture(3);assert(!phase_shelly_receive_locked(NULL,false,2000));step(3000,0,0,1,true);
+    assert(phase_state==PHASE_SETTLING&&phase_shelly_rechecking&&!pulses);
+    fixture(3);phase_shelly_transport_lost_locked(2000);step(3000,0,0,1,true);
     assert(phase_state==PHASE_FAULT&&!pulses); /* Fresh contradiction still latches. */
-    fixture(3);assert(!phase_shelly_receive_locked(NULL,false,2000));step(3000,0,0,3,true);
+    fixture(3);phase_shelly_transport_lost_locked(2000);step(3000,0,0,3,true);
     assert(phase_state==PHASE_FAULT&&!pulses); /* Voltage/output contradiction cannot recover. */
     fixture(3);phase_shelly_ack_locked(false);assert(phase_shelly_uncertain&&phase_state==PHASE_FAULT);
     test_transport_missing();
     test_socket_diagnostics();
+    router_restart(false,false);router_restart(true,false);router_restart(false,true);
+    fixture(3);phase_shelly_transport_lost_locked(2000);float partial[3]={230,230,0};
+    for(int64_t t=3000;t<=35000;t+=1000){
+        phase_voltage_sample(&phase_voltage,partial,true,t);phase_shelly_guard_locked(t);
+        assert(!phase_shelly_backup_position_locked(t));
+    }
+    assert(phase_state==PHASE_FAULT);step(36000,0,0,3,false);assert(phase_state==PHASE_FAULT&&!pulses);
+    puts("PASS: 150 s router outage; staggered meter/actuator/bus recovery, retained Stop, latched contradiction, zero actuator commands");
     puts("PASS: ESC226 absolute commands, no auxiliary inputs, current-zero hold, voltage freshness, output consistency, lost links and no automatic resend");
 }

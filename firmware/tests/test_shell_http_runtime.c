@@ -6,6 +6,16 @@ static void lifecycle(void){
     shell_http_runtime_t r={0};shell_http_sample_t sample={.pilot_valid=true};
     assert(shell_http_runtime_tick(&r,true,false,.8f,&sample,1000,1000,true));
     assert(!r.running&&!r.control.armed);
+    assert(shell_http_runtime_tick(&r,true,true,.8f,&sample,1000,1000,true));
+    shell_http_network_lost(&r,2000);
+    for(int64_t t=2000;t<=152000;t+=1000){
+        assert(shell_http_runtime_tick(&r,true,true,.8f,&sample,1000,t,false));
+        assert(!r.running&&!r.control.fault);
+    }
+    assert(shell_http_runtime_tick(&r,true,true,.8f,&sample,153000,153000,true)&&r.running);
+    shell_http_network_lost(&r,154000);
+    assert(shell_http_runtime_tick(&r,true,false,.8f,&sample,0,155000,false)&&!r.network_lost_at);
+    assert(shell_http_runtime_tick(&r,true,false,.8f,&sample,156000,156000,true)&&!r.running);
     /* No browser or heartbeat for more than a full day. Fresh device polling
        keeps the selected controller ready; the private test lease is unrelated. */
     for(int64_t now=1000;now<90000000;now+=1000){

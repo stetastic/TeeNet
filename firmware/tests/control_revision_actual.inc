@@ -58,6 +58,8 @@ static bool apply_control(cJSON *o) {
 
     if(manual_mode_requested && !manual_phases_explicit) next.manual_phases=next.phase_switch_enabled?settings.charge_phases:next.fixed_charge_phases;
     if(manual_mode_requested && previous_mode==MODE_PV && previous_target>0 && !cJSON_GetObjectItem(o,"current_a"))next.manual_current_a=previous_target;
+    if(next.mode==MODE_MANUAL && next.enabled && next.manual_current_a>=next.min_charge_a)
+        next.manual_current_a=fminf(next.max_charge_a,fmaxf(next.manual_current_a,manual_minimum_current_a(&next,next.manual_phases)));
     if(!next.phase_switch_enabled && next.manual_phases!=next.fixed_charge_phases)valid=false;
     if(settings.basic_mode && (next.mode==MODE_PV || next.mode==MODE_GRID_LIMIT || pv || next_battery_use || next_battery_start_use))valid=false;
     if((next_battery_use || next_battery_start_use) && (!settings.battery_protect || !settings.zero_feed_enabled)) valid=false;
@@ -108,6 +110,7 @@ static bool apply_control(cJSON *o) {
 
         if(next.enabled!=settings.enabled){memset(&http_regulator,0,sizeof(http_regulator));memset(&manual_filter,0,sizeof(manual_filter));}
         settings.mode=next.mode; settings.enabled=next.enabled;
+        if(!next.enabled)wired_backup_armed=false;
 
         settings.manual_current_a=next.manual_current_a; settings.manual_phases=next.manual_phases; settings.pv_surplus_a=next.pv_surplus_a;
         if(transition)mode_transition_locked(previous_mode,previous_target,change_at);

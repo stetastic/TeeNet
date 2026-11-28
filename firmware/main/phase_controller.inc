@@ -86,11 +86,13 @@ static void phase_step_locked(int64_t now) {
     if(phase_state==PHASE_SETTLING) {
         if(phase_shelly_remote()&&phase_shelly_rechecking){
             if(phase_shelly_uncertain||(observed&&observed!=phase_goal)||
-               (fresh(now,actual_at,wallbox_meter_ttl())&&phase_current_mismatch(&settings,actual_a))||
-               now-phase_shelly_recheck_at>ems_param_ms(EP_PHASE_DATA_MAX)){
+               (fresh(now,actual_at,wallbox_meter_ttl())&&phase_current_mismatch(&settings,actual_a))){
                 phase_shelly_rechecking=false;phase_state=PHASE_FAULT;return;
             }
             if(!observed||phase_shelly_at<=phase_shelly_recheck_at||
+               actual_at<=phase_shelly_recheck_at||!fresh(now,actual_at,wallbox_meter_ttl())||
+               meter_at<=phase_shelly_recheck_at||!fresh(now,meter_at,wallbox_meter_ttl())||
+               wallbox_at<=phase_shelly_recheck_at||!fresh(now,wallbox_at,ems_param_ms(EP_SHELL_TTL))||
                (phase_uses_voltage(&settings)&&phase_voltage.at<=phase_shelly_recheck_at)){
                 phase_move_at=now;return;
             }
@@ -106,7 +108,7 @@ static void phase_step_locked(int64_t now) {
             phase_startup=false;
             if(evcc_control.configured && phase_goal==1 && evcc_control.preparing)phase_attempt_at=now;
             phase_candidate_at=0; phase_candidate=phase_goal;
-        } else if(now-phase_move_at>ems_param_ms(EP_PHASE_DATA_MAX)) phase_state=PHASE_FAULT;
+        } else if(!phase_shelly_rechecking&&now-phase_move_at>ems_param_ms(EP_PHASE_DATA_MAX)) phase_state=PHASE_FAULT;
         return;
     }
     uint8_t desired=phase_shelly_remote()?settings.charge_phases:3;

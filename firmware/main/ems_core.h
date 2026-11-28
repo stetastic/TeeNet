@@ -19,7 +19,7 @@
 #define EMS_CHARGE_STOP_CONFIRM_MS (ems_param_ms(EP_STOP_CONFIRM))
 #define EMS_CHARGE_STOP_LIMIT 5
 #define EMS_CHARGE_STOP_WINDOW_MS (ems_param_ms(EP_STOP_WINDOW))
-#define EMS_SETTINGS_VERSION 38
+#define EMS_SETTINGS_VERSION 40
 #define EMS_STRING_VALUE_(x) #x
 #define EMS_STRING_VALUE(x) EMS_STRING_VALUE_(x)
 /* Keep the legacy blob available to a rollback firmware with an older layout. */
@@ -184,6 +184,8 @@ typedef struct {
     bool phase_contactor_reconfigure;
     /* Version 38: explicit autonomous HTTP pilot-feedback control. */
     bool shell_http_control_enabled;
+    bool grid_backup_enabled; /* Optional grid charging during a data outage. */
+    bool shell_native_fallback; /* Let the Shell apply its own communication-loss policy. */
 
 } settings_t;
 bool heatpump_settings_valid(const settings_t *settings);
@@ -381,3 +383,5 @@ bool energy_store_decode(const void *blob, size_t length, energy_store_t *out);
 typedef bool (*energy_day_visitor_t)(const energy_day_t *day,void *context);
 bool energy_store_visit(const void *blob,size_t length,energy_store_t *out,
                         energy_day_visitor_t visitor,void *context);
+/* A known hardware maximum is the only positive open-loop operating point. */
+void wired_backup_report(const settings_t *s,float target,float reported[3]);

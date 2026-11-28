@@ -102,6 +102,7 @@ static void shell_limits_task(void *arg) {
                                       settings.enabled||evcc_control.enabled,idle);
                 evcc_shell=sample;evcc_shell_http_code=code;
                 evcc_shell_at=sample_at;
+                if(http_regulator.network_lost_at&&code!=200&&!shell_http_missing_response(code))http_regulator.network_lost_at=0;
 #if CONFIG_TEE_HTTP_CONTROL_TRIAL
                 if(code==200)trial_http_sequence++;
 #endif
@@ -110,6 +111,7 @@ static void shell_limits_task(void *arg) {
             if(limits_due && same_limits)shell_limits_code=valid?200:code==200?422:code;
             if(limits_due && same_limits && valid) {
                 bool changed=settings.grid_limit_a!=grid || settings.max_charge_a!=capped;
+                shell_connector_max_a=maximum;
                 settings.grid_limit_a=grid;settings.max_charge_a=capped;
                 settings.manual_current_a=fminf(settings.manual_current_a,capped);
                 if(changed){memset(&manual_filter,0,sizeof(manual_filter));memset(&current_calibration,0,sizeof(current_calibration));}

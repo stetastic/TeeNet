@@ -1,8 +1,8 @@
-# TeeNet 1.28
+# TeeNet 1.29
 
 Lokale Ladesteuerung für die Shell Recharge Advanced 3.0: manuelles Laden, PV-Überschuss, Hausakku, Fahrzeugprofile und Ladepläne. Bedienung im Browser; ioBroker, Home Assistant und MQTT sind optional.
 
-[Demo](https://stetastic.github.io/TeeNet/) · [Anleitung](https://stetastic.github.io/TeeNet/help.html) · [Downloads & USB-Installation](https://stetastic.github.io/TeeNet/downloads.html) · [Version 1.28](https://github.com/stetastic/TeeNet/releases/tag/v1.28)
+[Demo](https://stetastic.github.io/TeeNet/) · [Anleitung](https://stetastic.github.io/TeeNet/help.html) · [Downloads & USB-Installation](https://stetastic.github.io/TeeNet/downloads.html) · [Version 1.29](https://github.com/stetastic/TeeNet/releases/tag/v1.29)
 
 ## Hardware
 
@@ -15,9 +15,11 @@ AtomS3 Lite und N16R8 sind reguläre Hardwareprofile. Bestehende Atom-Installati
 
 Optional: Shelly 3EM als Wallbox-Zähler, Hausanschlusszähler für PV-Laden und ein über Netzwerk angesteuertes Phasenschütz. Die Anleitung beschreibt Öffner-/Schließerkontakte und die optionale Stellungsprüfung über Phasenspannungen.
 
-## Neu in 1.28
+## Neu in 1.29
 
-Korrekturen für Home Assistant und ioBroker. Rückmeldungen oberhalb von 11 kW lösen am Einstellwert für die Ladeleistung keine Bereichswarnung mehr aus. Die gemessene Ladeleistung wird weiterhin vollständig angezeigt.
+Eine laufende Ladung kann bei einem Router-Neustart weiterlaufen. Sobald Netzwerk und Messwerte wieder verfügbar sind, übernimmt TeeNet automatisch wieder die Regelung.
+
+Unter **Einstellungen → Ladeverhalten bei Netzwerk / Datenausfall** lässt sich das Verhalten auswählen. Beim Routerausfalltest blieb die Ladung mit der 8-kW-Auswahl aktiv. Außerdem räumt TeeNet bei Platzmangel veraltete Einstellungskopien auf, damit Einstellungen wieder gespeichert werden können.
 
 ## Installieren
 

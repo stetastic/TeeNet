@@ -41,6 +41,8 @@ void settings_defaults(settings_t *s) {
     s->phase_feedback_closed_is_single=false;
     s->control_status_visible=true;
     s->basic_mode=true;
+    s->grid_backup_enabled=true;
+    s->shell_native_fallback=true;
     s->mqtt_enabled=true;
     s->relay1_pin=EMS_DEFAULT_RELAY_PIN; s->relay2_pin=14;
     s->phase_feedback_pin=-1;
@@ -434,6 +436,8 @@ bool settings_decode(const void *blob,size_t length,settings_t *out) {
         case 35: prefix=offsetof(settings_t,sungrow_enabled); break;
         case 36: prefix=offsetof(settings_t,phase_contactor_reconfigure); break;
         case 37: prefix=offsetof(settings_t,shell_http_control_enabled); break;
+        case 38: prefix=offsetof(settings_t,grid_backup_enabled); break;
+        case 39: prefix=offsetof(settings_t,shell_native_fallback); break;
         case EMS_SETTINGS_VERSION: prefix=sizeof(settings_t); break;
         default: return false;
     }
@@ -444,6 +448,8 @@ bool settings_decode(const void *blob,size_t length,settings_t *out) {
     if(version<25)next.basic_mode=false;
     if(version<10)next.vehicle_soc_enabled=true;
     if(version<11)next.pv_display_enabled=true;
+    if(version<39)next.grid_backup_enabled=false;
+    if(version<40)next.shell_native_fallback=false;
     /* Keep the selected mode and setpoints visible after a restart, but never
        resume charging automatically. The user must enable it explicitly. */
     next.version=EMS_SETTINGS_VERSION; next.enabled=false;
@@ -604,6 +610,8 @@ bool settings_apply_live(settings_t *runtime,const settings_t *before,const sett
     LIVE(grid_limit_a); LIVE(max_charge_a); LIVE(zero_feed_enabled); LIVE(zero_reserve_w);
     TEXT_LIVE(house_meter_host); TEXT_LIVE(house_power_path);
     LIVE(grid_guard_enabled); LIVE(evu_limit_a);
+    LIVE(grid_backup_enabled);
+    LIVE(shell_native_fallback);
     LIVE(shell_limits_auto); TEXT_LIVE(shell_setup_host);
     LIVE(huawei_enabled); LIVE(huawei_battery); LIVE(huawei_pv); LIVE(huawei_unit_id); TEXT_LIVE(huawei_host);
     LIVE(opendtu_current_positive_discharge);
@@ -1119,6 +1127,12 @@ bool phase_feedback_matches(bool required,unsigned observed,unsigned expected) {
 bool phase_motion_complete(bool required,unsigned observed,unsigned expected,int64_t elapsed_ms) {
     return phase_feedback_matches(required,observed,expected) && elapsed_ms>=0 && (required || elapsed_ms>=2000);
 }
+void wired_backup_report(const settings_t *s,float target,float reported[3]){
+    float load=s->grid_limit_a+s->max_charge_a+1;
+    if(target==s->max_charge_a&&target>0)load=fmaxf(0,s->grid_limit_a-target);
+    for(unsigned i=0;i<3;i++)reported[i]=load;
+}
+
 void grid_guard_report(const settings_t *s,bool house_ready,const float house[3],float reported[3]) {
     /* The single-phase Shell input only has L1. Inactive charging phases must
        stay zero even when a three-phase house meter is available. */

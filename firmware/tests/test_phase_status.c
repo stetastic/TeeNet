@@ -5,7 +5,7 @@
 enum {PHASE_READY,PHASE_STOPPING,PHASE_MOVING,PHASE_SETTLING,PHASE_FAULT};
 static settings_t settings;
 static bool phase_startup,phase_link;
-static bool phase_shelly_rechecking;static int64_t phase_shelly_recheck_at;
+static bool phase_shelly_rechecking;
 static bool phase_shelly_remote(void){return settings.phase_actuator_type==1||settings.phase_actuator_type==3;}
 static bool phase_mqtt_remote(void){return settings.phase_actuator_type==2;}
 static bool phase_output_link_locked(void){return phase_link;}
@@ -30,6 +30,8 @@ int main(void){
     phase_hold_until=10000;check(4000,"hold",10000);check(10000,"candidate",183000);
     settings.enabled=false;check(4000,"none",0);settings.enabled=true;phase_state=PHASE_FAULT;check(4000,"none",0);
     phase_startup=true;settings.phase_actuator_type=1;phase_state=PHASE_MOVING;check(4000,"connection",92000);
+    phase_shelly_rechecking=true;phase_state=PHASE_SETTLING;check(155000,"reconnect",0);
+    phase_shelly_rechecking=false;
     settings.phase_actuator_type=2;phase_state=PHASE_STOPPING;phase_link=false;check(4000,"connection",91000);
     phase_link=true;check(4000,"current_zero",91000);
     settings.phase_actuator_type=0;settings.phase_feedback_source=1;settings.phase_feedback_enabled=true;

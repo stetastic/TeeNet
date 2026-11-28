@@ -6,6 +6,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
 enum {PHASE_READY,PHASE_STOPPING,PHASE_MOVING,PHASE_SETTLING,PHASE_FAULT};
 static settings_t settings;
 static bool phase_gpio_ready=true,phase_idle_inhibit,phase_startup,restarting,ota_in_progress;
@@ -34,7 +35,7 @@ static void relay_set(unsigned index,bool on){
 static void phase_shelly_guard_locked(int64_t now){(void)now;}
 static bool phase_shelly_rechecking,phase_shelly_uncertain;
 static int64_t phase_shelly_recheck_at,phase_shelly_at;
-static bool phase_shelly_remote(void){return false;}
+static bool phase_shelly_remote(void){return settings.phase_actuator_type==1;}
 static bool phase_shelly_motion_complete_locked(unsigned goal,int64_t now){(void)goal;(void)now;return false;}
 static bool phase_actuator_begin_locked(uint8_t goal,int64_t now){(void)now;relay_set(0,goal==1);return true;}
 static bool phase_test_active;static bool phase_config_saving,reboot_required;static uint8_t phase_test_goal;
@@ -57,12 +58,21 @@ static bool feedback_ready(int64_t now){(void)now;return true;}
 static bool network_meter;
 static bool network_wallbox_meter(void){return network_meter;}
 static bool meter_ready=true;
-static struct {bool running;} http_regulator;
+static struct {bool running;struct {bool fault;} control;} http_regulator;
+static bool wired_backup_armed,wifi_online=true;
+static int64_t shell_limits_at;
+static unsigned shell_limits_code;
+static float shell_connector_max_a,shell_grid_a;
+static bool phase_shelly_wrong_position_locked(int64_t now,unsigned expected){(void)now;(void)expected;return false;}
 static bool http_regulation_ready_locked(int64_t now){(void)now;return false;}
 static float vehicle_limit_current_locked(float current){return current;}
 #include "meter_hold_runtime.inc"
-static bool pv_fresh_locked(int64_t now){(void)now;return true;}
-static bool house_currents_ready_locked(int64_t now){(void)now;return true;}
+static bool pv_available=true,house_available=true,backup_position;
+static int64_t house_power_at;
+static int64_t house_meter_ttl(void){return 5000;}
+static bool phase_shelly_backup_position_locked(int64_t now){(void)now;return backup_position;}
+static bool pv_fresh_locked(int64_t now){(void)now;return pv_available;}
+static bool house_currents_ready_locked(int64_t now){(void)now;return house_available;}
 typedef int esp_err_t;
 typedef struct {const char *body;int status;} httpd_req_t;
 #define ESP_OK 0
@@ -79,6 +89,8 @@ static void event_locked(const char *event){(void)event;}
 #include "phase_control_actual.inc"
 static void fixture(unsigned phases){
     settings_defaults(&settings);settings.phase_switch_enabled=settings.relay_board_enabled=settings.phase_feedback_enabled=true;
+    settings.basic_mode=false;
+    settings.grid_backup_enabled=settings.shell_native_fallback=false;
     settings.charge_phases=phases;settings.enabled=settings.zero_feed_enabled=true;settings.mode=MODE_PV;
     phase_state=PHASE_READY;phase_candidate=phase_goal=observed=phases;relay_on[0]=phases==1;
     phase_candidate_at=phase_stop_at=phase_zero_at=phase_move_at=phase_hold_until=phase_attempt_at=phase_no_load_since=relay_changed_at=0;
@@ -124,7 +136,113 @@ static void manual_phase_admission(void){
     assert(evcc_set_phases(&evcc_control,1,true,true,1000));
     assert(unlatched_target_locked(1000)==0); /* Existing evcc mismatch gate remains. */
 }
-int main(void){
+static void wired_router_outage(bool stopped,bool switch_fault,bool wifi_connected,bool realtime){
+    fixture(3);settings.mode=MODE_MANUAL;settings.manual_phases=3;settings.manual_current_a=10;
+    settings.phase_actuator_type=1;settings.grid_backup_enabled=true;settings.shell_limits_auto=true;
+    shell_limits_at=wallbox_at=actual_at=meter_at=1000;shell_limits_code=200;shell_connector_max_a=settings.max_charge_a;
+    shell_grid_a=settings.grid_limit_a;wired_backup_armed=false;arm_wired_backup_locked(2000);
+    assert(wired_backup_armed);wifi_online=wifi_connected;phase_shelly_rechecking=true;phase_state=PHASE_SETTLING;
+    if(!wifi_connected)actual_at=meter_at=0;
+    house_power_at=evcc_shell_at=0;
+    uint8_t req[8]={1,3,0x50,0x0c,0,6},reply[17];uint16_t crc=modbus_crc(req,6);req[6]=(uint8_t)crc;req[7]=crc>>8;
+    for(int64_t t=2000;t<152000;t+=1000){
+        wallbox_at=t; /* the local RS485 bus is the only live connection */
+        if(t==62000&&stopped)settings.enabled=false;
+        if(t==62000&&switch_fault)phase_state=PHASE_FAULT;
+        float target=target_locked(t),reported[3],decoded[3];
+        bool blocked=t>=62000&&(stopped||switch_fault);
+        assert(target==(blocked?0:settings.max_charge_a));
+        control_report(&settings,actual_a,target,0,false,reported);
+        if(wired_backup_locked(t))wired_backup_report(&settings,target,reported);
+        assert(decode_meter(reply,modbus_reply(req,8,reply,&settings,reported),1,decoded));
+        for(unsigned p=0;p<3;p++)assert(decoded[p]==(blocked?settings.grid_limit_a+settings.max_charge_a+1:settings.grid_limit_a-settings.max_charge_a));
+        if(realtime)sleep(1);
+    }
+    if(!stopped&&!switch_fault){
+        assert(!wired_backup_locked(180000)); /* wired bus also absent */
+        wallbox_at=180000;settings.grid_guard_enabled=true;assert(target_locked(180000)==0);
+        settings.grid_guard_enabled=false;settings.evu_input_enabled=true;evu_contact.stable=true;
+        assert(target_locked(180000)==0);evu_contact.stable=false;
+        shell_connector_max_a=32;assert(target_locked(180000)==0);
+        shell_connector_max_a=16;charge_plan.active=true;assert(target_locked(180000)==0);charge_plan.active=false;
+        wifi_online=true;phase_shelly_rechecking=false;phase_state=PHASE_READY;
+        actual_at=meter_at=wallbox_at=house_power_at=181000;
+        assert(!wired_backup_locked(181000)&&target_locked(181000)==10);
+    }
+    wifi_online=true;phase_shelly_rechecking=false;wired_backup_armed=false;
+}
+static void meter_stream_stalls(void){
+    fixture(3);network_meter=true;settings.mode=MODE_MANUAL;settings.manual_phases=3;
+    settings.phase_actuator_type=1;settings.zero_feed_enabled=false;settings.grid_backup_enabled=true;
+    settings.shell_limits_auto=true;settings.manual_current_a=10;shell_limits_code=200;
+    shell_grid_a=settings.grid_limit_a;shell_connector_max_a=settings.max_charge_a;
+    shell_limits_at=actual_at=meter_at=wallbox_at=1000;
+    float flow[3]={10,10,10};meter_hold_sample(&wallbox_meter_hold,&settings,true,true,1000,1000,flow,10);
+    arm_wired_backup_locked(1000);assert(wired_backup_armed);
+    for(int64_t t=1000;t<=151000;t+=1000){
+        wallbox_at=t; /* healthy bus and actuator, meter timestamp frozen */
+        float target=target_locked(t);
+        if(t<6000)assert(target==10);
+        else{
+            assert(wired_backup_locked(t)&&target==settings.max_charge_a);
+            float report[3];wired_backup_report(&settings,target,report);
+            for(unsigned p=0;p<3;p++)assert(report[p]==shell_grid_a-shell_connector_max_a);
+        }
+    }
+    actual_at=meter_at=wallbox_at=152000;assert(!wired_backup_locked(152000)&&target_locked(152000)==10);
+    memset(&wallbox_meter_hold,0,sizeof(wallbox_meter_hold));network_meter=false;wired_backup_armed=false;
+}
+static void native_shell_outage(void){
+    fixture(3);settings.mode=MODE_MANUAL;settings.manual_phases=3;settings.manual_current_a=10;
+    settings.phase_actuator_type=1;settings.grid_backup_enabled=settings.shell_native_fallback=true;
+    settings.shell_limits_auto=true;settings.zero_feed_enabled=false;
+    shell_connector_max_a=settings.max_charge_a;shell_grid_a=settings.grid_limit_a;shell_limits_code=200;
+    wallbox_at=actual_at=meter_at=shell_limits_at=1000;wired_backup_armed=false;
+    actual_a[0]=0;arm_wired_backup_locked(1000);assert(!wired_backup_armed);
+    actual_a[0]=actual_a[1]=actual_a[2]=10;
+    settings.basic_mode=true;arm_wired_backup_locked(1000);assert(!wired_backup_armed);
+    settings.basic_mode=false;arm_wired_backup_locked(1000);assert(wired_backup_armed);
+    wifi_online=false;meter_at=actual_at=0;
+    uint8_t req[8]={1,3,0x50,0x0c,0,6},reply[17];
+    uint16_t crc=modbus_crc(req,6);req[6]=(uint8_t)crc;req[7]=crc>>8;
+    float currents[3]={32,32,32};
+    for(int64_t t=2000;t<152000;t+=1000){
+        assert(target_locked(t)==settings.max_charge_a);
+        assert(shell_meter_reply_locked(req,reply,currents,t,target_locked(t))==0);
+        assert(wallbox_at==1000);
+    }
+    settings.enabled=false;
+    assert(target_locked(152000)==0&&shell_meter_reply_locked(req,reply,currents,152000,0)==17);
+    settings.enabled=true;phase_state=PHASE_FAULT;
+    assert(target_locked(152000)==0&&shell_meter_reply_locked(req,reply,currents,152000,0)==17);
+    phase_state=PHASE_READY;wifi_online=true;meter_at=actual_at=152000;
+    assert(target_locked(152000)==10&&shell_meter_reply_locked(req,reply,currents,152000,10)==17);
+    wired_backup_armed=false;
+    memset(actual_a,0,sizeof(actual_a));
+}
+int main(int argc,char **argv){
+    native_shell_outage();
+    puts("PASS: 150 unanswered polls, no fake transmit timestamps, resume on recovery, stop and fault");
+    wired_router_outage(false,false,false,argc==2&&!strcmp(argv[1],"--realtime"));
+    wired_router_outage(false,false,true,false);
+    wired_router_outage(true,false,false,false);wired_router_outage(false,true,false,false);
+    meter_stream_stalls();
+    puts("PASS: 150 RS485 requests during 150 s without Wi-Fi, HTTP or meter; configured cap, manual stop, switch fault and limits verified");
+    fixture(3);settings.manual_phases=3;settings.grid_backup_enabled=true;
+    house_power_at=1000;pv_available=false;step(2000,0);
+    assert(target_locked(2000)==settings.max_charge_a);
+    settings.grid_guard_enabled=true;house_available=false;
+    assert(target_locked(2000)<settings.max_charge_a&&target_locked(2000)>0);
+    settings.evu_input_enabled=true;evu_contact.stable=true;settings.evu_limit_a=0;
+    assert(target_locked(2000)==0);evu_contact.stable=false;
+    phase_state=PHASE_FAULT;assert(target_locked(2000)==0);
+    phase_state=PHASE_SETTLING;assert(target_locked(2000)==0);
+    backup_position=true;assert(target_locked(2000)>0);
+    actual_at=0;assert(target_locked(2000)==0);actual_at=2000;
+    settings.enabled=false;assert(target_locked(2000)==0);settings.enabled=true;
+    backup_position=false;phase_state=PHASE_READY;pv_available=house_available=true;
+    assert(target_locked(2000)==0); /* PV data back, no surplus */
+    settings.grid_backup_enabled=false;pv_available=false;assert(target_locked(2000)==0);pv_available=true;
     manual_phase_admission();
     fixture(1);settings.mode=MODE_MANUAL;settings.manual_phases=1;settings.enabled=false;
     phase_attempt_at=phase_no_load_since=1000;step(500000,0);

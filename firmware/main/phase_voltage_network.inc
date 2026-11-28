@@ -6,6 +6,7 @@ static void phase_voltage_task(void *arg){
     for(;;){
         char host[64];uint8_t protocol;
         LOCK();bool online=wifi_online,shared=phase_voltage_shared_locked();strcpy(host,settings.phase_voltage_host);protocol=settings.phase_voltage_protocol;
+        uint32_t generation=phase_shelly_link_generation;
         bool normal_order=!strcmp(settings.wallbox_meter_type,"shelly_gen2")&&!strcmp(host,settings.wallbox_meter_host)&&!settings.wallbox_shelly_reverse;UNLOCK();
         /* Modbus and shared voltage readings need no HTTP response buffer. */
         if(body&&(shared||protocol==0)){free(body);body=NULL;}
@@ -24,7 +25,7 @@ static void phase_voltage_task(void *arg){
             }
         }
         if(ok&&normal_order){float first=logical[0];logical[0]=logical[2];logical[2]=first;}
-        LOCK();phase_voltage_sample(&phase_voltage,logical,ok,now_ms());UNLOCK();
+        LOCK();if(generation==phase_shelly_link_generation)phase_voltage_sample(&phase_voltage,logical,ok,now_ms());UNLOCK();
         vTaskDelay(ticks(ok?500:1000));
     }
 }

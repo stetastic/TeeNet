@@ -28,7 +28,7 @@ static struct {bool started,active;int remaining_ms;} battery_buffer;
 static struct {int value;} wallbox_meter_hold;
 static struct {uint32_t sequence;} event_log;
 static unsigned lock_depth,restores,transitions,stop_events,change_events;
-static bool inject_operator_stop;
+static bool inject_operator_stop,wired_backup_armed;
 static void lock_state(void){
     assert(!lock_depth++);
     /* Model an operator command after observation but before mutation lock. */

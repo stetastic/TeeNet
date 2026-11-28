@@ -16,6 +16,7 @@ static const field_t fields[]={
     FIELD(zero_feed_enabled,'b'),FIELD(house_meter_type,'s'),FIELD(house_meter_host,'s'),FIELD(zero_reserve_w,'f'),FIELD(xemex_coils,'u'),FIELD(wallbox_meter_type,'s'),FIELD(meter_baud,'i'),FIELD(meter_format,'u'),FIELD(house_power_path,'s'),FIELD(mqtt_state_json,'b'),FIELD(battery_protect,'b'),FIELD(battery_reserve_soc,'f'),FIELD(battery_cloud_limit_w,'f'),FIELD(battery_assist_limit_w,'f'),FIELD(phase_switch_enabled,'b'),FIELD(phase_feedback_source,'u'),FIELD(phase_voltage_protocol,'u'),FIELD(phase_voltage_host,'s'),
     FIELD(expert_mode,'b'),FIELD(basic_mode,'b'),FIELD(pv_allocation_enabled,'b'),FIELD(pv_priority,'u'),FIELD(pv_house_priority_w,'f'),FIELD(pv_car_priority_w,'f'),FIELD(control_status_visible,'b'),FIELD(vehicle_soc_enabled,'b'),FIELD(external_mode_input_enabled,'b'),FIELD(evu_input_enabled,'b'),
     FIELD(evu_limit_a,'f'),FIELD(grid_guard_enabled,'b'),
+    FIELD(grid_backup_enabled,'b'),FIELD(shell_native_fallback,'b'),
     FIELD(xemex_tx_pin,'i'),FIELD(xemex_rx_pin,'i'),FIELD(house_tx_pin,'i'),FIELD(house_rx_pin,'i'),
     FIELD(external_mode_input_pin,'i'),FIELD(evu_input_pin,'i'),FIELD(relay1_pin,'i'),
     FIELD(status_led_pin,'i'),
@@ -71,6 +72,8 @@ static esp_err_t config_apply(httpd_req_t *req,cJSON *o,bool restore) {
 
     settings_t next; LOCK(); next=saved_settings; UNLOCK(); bool valid=true;
     bool restore_http_present=cJSON_HasObjectItem(o,"shell_http_control_enabled");
+    bool restore_backup_present=cJSON_HasObjectItem(o,"grid_backup_enabled");
+    bool restore_native_present=cJSON_HasObjectItem(o,"shell_native_fallback");
     char invalid_field[64]={0};
 
     for(cJSON *i=o->child;i && valid;i=i->next) {
@@ -192,6 +195,8 @@ static esp_err_t config_apply(httpd_req_t *req,cJSON *o,bool restore) {
     /* Clear the retired Solis experiment while retaining its settings-byte slot. */
     next.reserved_solis_discharge=false;
     if(restore&&!restore_http_present)next.shell_http_control_enabled=false;
+    if(restore&&!restore_backup_present)next.grid_backup_enabled=false;
+    if(restore&&!restore_native_present)next.shell_native_fallback=false;
     LOCK();bool http_conflict=next.shell_http_control_enabled&&evcc_control.configured;UNLOCK();
     if(http_conflict)return config_field_error(req,"shell_http_control_enabled","evcc zuerst deaktivieren.");
     if(next.shell_http_control_enabled&&!next.shell_setup_host[0])return config_field_error(req,"shell_setup_host","IP-Adresse der Shell-Wallbox eintragen.");
@@ -306,8 +311,11 @@ static esp_err_t config_apply(httpd_req_t *req,cJSON *o,bool restore) {
     LOCK();hardware_gate=phase_config_gate_locked(now_ms());
     if(phase_configuration_changed&&hardware_gate!=CONFIG_GATE_OK){UNLOCK();return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,phase_config_gate_message(hardware_gate));}
     phase_config_saving=phase_configuration_changed;UNLOCK();
-    if(save_config(&next)!=ESP_OK){
+    esp_err_t save_result=save_config(&next);
+    if(save_result!=ESP_OK){
         LOCK();phase_config_saving=false;UNLOCK();
+        if(save_result==ESP_ERR_NVS_NOT_ENOUGH_SPACE)
+            return httpd_resp_send_err(req,HTTPD_500_INTERNAL_SERVER_ERROR,"Kein Platz im Einstellungsspeicher. Bisherige Einstellungen bleiben aktiv.");
         return httpd_resp_send_err(req,HTTPD_500_INTERNAL_SERVER_ERROR,"Speichern fehlgeschlagen.");
     }
     if(restore&&!vehicle_restore_commit()){

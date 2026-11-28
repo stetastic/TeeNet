@@ -25,6 +25,8 @@
   };
 
   cfg.vehicle_fixed_profile=0;cfg.vehicle_manual_soc_prompt=true;cfg.wallbox_shelly_reverse=true;cfg.shell_http_control_enabled=false;
+  cfg.grid_backup_enabled=true;
+  cfg.shell_native_fallback=true;
   window.teenetDemoShowcase=true;
   const control = { mode: 'pv', enabled: true, current_a: 10, battery_use: true, battery_start_use: false };
   let huaweiProbe={host:'huawei.demo.local',unit_id:1};
@@ -111,7 +113,7 @@
     const soc = 73-((Date.now()-started)/3600000)*2;
     return {
       huawei_enabled:cfg.huawei_enabled,huawei_ok:cfg.huawei_enabled,huawei_model:cfg.huawei_enabled?'SUN2000-8KTL-M1':'',battery_source:cfg.huawei_battery?'Huawei':'MQTT',pv_source:cfg.huawei_pv?'Huawei':'MQTT',
-      version:'1.28',build_id:'demo-v1.28',charge_plan:{...plan},charge_plan_enabled:cfg.charge_plan_enabled, token:'demo-token', hostname:'TeeNet-Demo',
+      version:'1.29',build_id:'demo-v1.29',charge_plan:{...plan},charge_plan_enabled:cfg.charge_plan_enabled, token:'demo-token', hostname:'TeeNet-Demo',
       ...control, mqtt_enabled:cfg.mqtt_enabled, mqtt_ok:true, homeassistant_enabled:cfg.homeassistant_enabled,
       wifi_ok:true, ap_active:false, ap_forced:false, wifi_fallback:false, station_ip:'teennet.demo.local',
       basic_mode:cfg.basic_mode,expert_mode:cfg.expert_mode, pv_display_enabled:cfg.pv_display_enabled,
@@ -275,7 +277,7 @@
       delete settings.wifi_password_set;delete settings.mqtt_password_set;
       if(secrets){settings.wifi_password='demo-password';settings.mqtt_password='demo-password';}
       else {delete settings.wifi_password;delete settings.mqtt_password;}
-      return json({format:'TeeNet-settings',schema:1,build_id:'demo-v1.28',includes_passwords:secrets,settings});
+      return json({format:'TeeNet-settings',schema:1,build_id:'demo-v1.29',includes_passwords:secrets,settings});
     }
     if (url.pathname === '/api/history') return json(history());
     if (url.pathname === '/api/sessions') return json(groupedSessions(url));

@@ -6,10 +6,10 @@
 #include <string.h>
 typedef int nvs_handle_t;
 typedef int esp_err_t;
-enum{ESP_OK=0,ESP_FAIL=-1,ESP_ERR_NVS_NOT_FOUND=1,NVS_READONLY=0,NVS_READWRITE=1};
+enum{ESP_OK=0,ESP_FAIL=-1,ESP_ERR_NVS_NOT_FOUND=1,ESP_ERR_NVS_NOT_ENOUGH_SPACE=2,NVS_READONLY=0,NVS_READWRITE=1};
 #define TAG "test"
 #define ESP_LOGW(...) ((void)0)
-static bool config_storage_ok=true,boot_config_ok=true,fail_save;
+static bool config_storage_ok=true,boot_config_ok=true,fail_save,space_full;
 static uint32_t loaded_settings_version;
 static settings_t settings,saved_settings;
 static unsigned char legacy[sizeof(settings_t)],previous[sizeof(settings_t)],current[sizeof(settings_t)];
@@ -23,11 +23,19 @@ static int nvs_get_blob(nvs_handle_t h,const char *key,void *dest,size_t *size){
     if(!strcmp(key,"settings_v33")){data=previous;n=previous_size;}
     if(!strcmp(key,EMS_SETTINGS_STORAGE_KEY)){data=current;n=current_size;}
     if(!n)return ESP_ERR_NVS_NOT_FOUND;
+    if(!dest){*size=n;return ESP_OK;}
     assert(*size>=n);memcpy(dest,data,n);*size=n;return ESP_OK;
+}
+static int nvs_erase_key(nvs_handle_t h,const char *key){
+    assert(h==1&&strcmp(key,EMS_SETTINGS_STORAGE_KEY));
+    if(!strcmp(key,"settings_v21")&&legacy_size){legacy_size=0;space_full=false;return ESP_OK;}
+    assert(strcmp(key,"settings_v33"));
+    return ESP_ERR_NVS_NOT_FOUND;
 }
 static int nvs_set_blob(nvs_handle_t h,const char *key,const void *data,size_t size){
     assert(h==1&&!strcmp(key,EMS_SETTINGS_STORAGE_KEY)&&strcmp(key,"settings_v21"));
     if(fail_save)return ESP_FAIL;
+    if(space_full)return ESP_ERR_NVS_NOT_ENOUGH_SPACE;
     assert(size<=sizeof(current));memcpy(current,data,size);current_size=size;return ESP_OK;
 }
 #include "config_storage_actual.inc"
@@ -53,5 +61,10 @@ int main(void){
     settings.version=33;settings.battery_reserve_soc=44;previous_size=(offsetof(settings_t,heatpump_enabled)+3)&~(size_t)3;
     memcpy(previous,&settings,previous_size);current_size=0;load_settings();
     assert(loaded_settings_version==33&&settings.battery_reserve_soc==44&&settings.relay_active_low);
+    fail_save=false;space_full=true;
+    assert(save_config(&settings)==ESP_OK&&!legacy_size&&previous_size&&current_size);
+    space_full=true;
+    assert(save_config(&settings)==ESP_ERR_NVS_NOT_ENOUGH_SPACE&&previous_size&&current_size);
+    load_settings();assert(boot_config_ok&&loaded_settings_version==EMS_SETTINGS_VERSION&&settings.battery_reserve_soc==44);
     puts("PASS: actual NVS loader/save migrates legacy configuration without overwriting rollback data; new key wins, credentials/polarity preserved, failure leaves legacy intact");
 }

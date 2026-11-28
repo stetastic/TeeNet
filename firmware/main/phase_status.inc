@@ -3,7 +3,7 @@ static void phase_wait_status_locked(int64_t now,const char **kind,int64_t *dead
     *kind="none";*deadline=0;
     if(!settings.phase_switch_enabled)return;
     if(phase_shelly_remote()&&phase_shelly_rechecking&&phase_state==PHASE_SETTLING){
-        *kind="connection";*deadline=phase_shelly_recheck_at+ems_param_ms(EP_PHASE_DATA_MAX);return;
+        *kind="reconnect";return;
     }
     if(phase_startup&&(((phase_shelly_remote()||phase_uses_voltage(&settings))&&phase_state==PHASE_MOVING)||
        (phase_mqtt_remote()&&phase_state==PHASE_STOPPING&&!phase_output_link_locked()))){

@@ -130,6 +130,11 @@
 </div>
 </details></details></details>
 
+<details class="panel settings-group" id="outage-settings" hidden><summary>Ladeverhalten bei Netzwerk / Datenausfall</summary>
+<label>Was soll die Wallbox bei einem Ausfall tun?<select name="grid_backup_enabled" data-boolean><option value="true">Weiterladen (Standard)</option><option value="false">Ladung pausieren</option></select></label>
+<label id="outage-power" hidden>Ladeleistung bei Ausfall<select name="shell_native_fallback" data-boolean><option value="true">8 kW</option><option value="false">11 kW</option></select></label>
+</details>
+
 <details class="panel settings-group" id="house-settings"><summary>Hausanschluss &amp; PV-Regelung</summary>
 
 <p class="muted">Misst Netzbezug und Einspeisung.</p>

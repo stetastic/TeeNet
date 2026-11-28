@@ -88,6 +88,7 @@ static cJSON *status_json_profile(bool include_token,bool include_diagnostics) {
         target_locked(now),settings.charge_phases,settings.grid_limit_a,settings.min_charge_a,settings.max_charge_a,false,reported);
     meter_hold_report(&settings,wallbox_meter_hold_locked(now),target_locked(now),reported);
     grid_guard_report_locked(now,reported);
+    if(wired_backup_locked(now))wired_backup_report(&settings,target_locked(now),reported);
 
     cJSON_AddBoolToObject(o,"terms_accepted",terms_accepted);
     cJSON_AddStringToObject(o,"terms_revision",TERMS_REVISION);
@@ -389,7 +390,8 @@ static cJSON *status_json_profile(bool include_token,bool include_diagnostics) {
 
     cJSON_AddNumberToObject(o,"grid_limit_a",settings.grid_limit_a); cJSON_AddNumberToObject(o,"max_charge_a",settings.max_charge_a);
 
-    cJSON_AddNumberToObject(o,"current_a",settings.manual_current_a); cJSON_AddNumberToObject(o,"target_current_a",target_locked(now));
+    float permitted=target_locked(now);bool shell_decides=shell_decides_locked(now,permitted);
+    cJSON_AddNumberToObject(o,"current_a",settings.manual_current_a); nullable(o,"target_current_a",permitted,!shell_decides);
     cJSON_AddNumberToObject(o,"manual_power_kw",settings.manual_current_a*ems_phase_voltage_sum(&settings,settings.manual_phases)*settings.power_factor/1000);
 
     cJSON_AddBoolToObject(o,"stop_requested",target_locked(now)<=0);
@@ -456,7 +458,7 @@ static cJSON *status_json_profile(bool include_token,bool include_diagnostics) {
 
     json_add_owned_to_object(o,"meter_a",number_array(meter_a,3,meter_ok)); json_add_owned_to_object(o,"actual_a",number_array(actual_a,3,actual_ok));
 
-    json_add_owned_to_object(o,"reported_a",number_array(reported,3,true));
+    json_add_owned_to_object(o,"reported_a",number_array(reported,3,!shell_decides));
 
     nullable(o,"estimate_w",estimated_charge_power(&settings,meter_a),meter_ok);
 
@@ -498,4 +500,3 @@ static cJSON *status_json(bool include_token) {
 }
 
 #include "mqtt_status_snapshot.inc"
-

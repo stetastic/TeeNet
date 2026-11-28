@@ -3,7 +3,7 @@ from pathlib import Path
 
 root = Path(__file__).resolve().parents[1]
 source = (root / 'main/app.c').read_text(encoding='utf-8')
-pv_start = source.index('static bool pv_permitted_locked(int64_t now) {')
+pv_start = source.index('static void arm_wired_backup_locked(int64_t now){')
 pv_end = source.index('static bool house_currents_ready_locked', pv_start)
 target_start = source.index('static float unlatched_target_locked(int64_t now) {')
 target_end = source.index('static void mode_transition_locked', target_start)

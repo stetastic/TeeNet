@@ -3,7 +3,17 @@
 
 /* Persistent opt-in, independent of browsers and private test leases. The
    pilot is permission feedback, never a physical current/zero measurement. */
-typedef struct { shell_http_control_t control; bool running; } shell_http_runtime_t;
+typedef struct { shell_http_control_t control; bool running; int64_t network_lost_at; } shell_http_runtime_t;
+
+static inline bool shell_http_missing_response(int code){
+    return code==0||code==408||code==502||code==503||code==504;
+}
+
+static inline void shell_http_network_lost(shell_http_runtime_t *r,int64_t now){
+    if((r->running||r->network_lost_at)&&!r->control.fault){
+        r->running=false;r->control.armed=false;r->network_lost_at=now;
+    }
+}
 
 static inline bool shell_http_runtime_ready(const shell_http_runtime_t *r,
     const shell_http_sample_t *sample,int64_t at,int64_t now,bool vehicle_known){
@@ -14,7 +24,11 @@ static inline bool shell_http_runtime_ready(const shell_http_runtime_t *r,
 static inline bool shell_http_runtime_tick(shell_http_runtime_t *r,bool selected,bool enabled,
     float offset,const shell_http_sample_t *sample,int64_t at,int64_t now,bool vehicle_known){
     if(!selected){*r=(shell_http_runtime_t){0};return true;}
-    if(!enabled){r->running=false;r->control.armed=false;return true;}
+    if(!enabled){r->running=false;r->control.armed=false;r->network_lost_at=0;return true;}
+    if(r->network_lost_at){
+        if(at<=r->network_lost_at)return true;
+        r->network_lost_at=0;
+    }
     if(!r->running){
         shell_http_trial_arm(&r->control,now);
         r->control.lease_until=INT64_MAX;r->control.normal_offset_a=offset;r->running=true;

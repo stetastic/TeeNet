@@ -5,6 +5,8 @@ static bool phase_shelly_config_ok,phase_shelly_pending,phase_shelly_uncertain,p
 static bool phase_shelly_restart_prepared;
 static bool phase_shelly_rechecking;
 static int64_t phase_shelly_recheck_at;
+static uint32_t phase_shelly_link_generation;
+static int64_t phase_invalid_voltage_since;
 static uint32_t phase_shelly_uptime;
 static bool phase_shelly_have_uptime;
 static uint8_t phase_shelly_goal;
@@ -34,12 +36,32 @@ static void phase_shelly_read_failure_locked(bool missing,int64_t now){
 }
 static bool phase_shelly_remote(void){return settings.phase_actuator_type==1||settings.phase_actuator_type==3;}
 static unsigned phase_shelly_observed_locked(int64_t now){
-    if(!phase_shelly_config_ok||!fresh(now,phase_shelly_at,SHELLY_PHASE_TTL_MS))return 0;
+    if(!wifi_online||!phase_shelly_config_ok||!fresh(now,phase_shelly_at,SHELLY_PHASE_TTL_MS))return 0;
     unsigned observed=phase_uses_voltage(&settings)?phase_voltage_observed_locked(now):
         (phase_shelly_feedback_value.output==settings.phase_shelly_true_three_phase?3:1);
     if(phase_shelly_feedback_value.output!=
        (settings.phase_shelly_true_three_phase?observed==3:observed==1))return 0;
     return observed;
+}
+/* Either independent fresh observation can disprove the last settled position,
+   even when the other device is still offline. */
+static bool phase_shelly_wrong_position_locked(int64_t now,unsigned expected){
+    unsigned volts=phase_uses_voltage(&settings)?phase_voltage_observed_locked(now):0;
+    if(volts&&volts!=expected)return true;
+    bool output_known=wifi_online&&phase_shelly_config_ok&&fresh(now,phase_shelly_at,SHELLY_PHASE_TTL_MS);
+    return output_known&&phase_shelly_feedback_value.output!=
+        (settings.phase_shelly_true_three_phase?(expected==3):(expected==1));
+}
+static inline bool phase_shelly_backup_position_locked(int64_t now){
+    if(settings.basic_mode||!settings.grid_backup_enabled||!settings.enabled||!phase_shelly_rechecking||
+       phase_state!=PHASE_SETTLING||phase_startup||phase_shelly_pending||phase_shelly_inflight||
+       phase_shelly_uncertain||phase_goal!=settings.charge_phases||phase_measured_currents(&settings)!=3||
+       actual_at<=phase_shelly_recheck_at||!fresh(now,actual_at,wallbox_meter_ttl())||
+       phase_shelly_wrong_position_locked(now,phase_goal)||phase_current_mismatch(&settings,actual_a))return false;
+    if(phase_uses_voltage(&settings)&&fresh(now,phase_voltage.sample_at,PHASE_VOLTAGE_TTL_MS)&&
+       phase_voltage_observed_locked(now)!=phase_goal)return false;
+    for(unsigned i=0;i<3;i++)if(!isfinite(actual_a[i])||actual_a[i]<0||actual_a[i]>999)return false;
+    return true;
 }
 static bool phase_shelly_begin_locked(uint8_t goal,int64_t now){
     unsigned observed=phase_shelly_observed_locked(now);
@@ -70,6 +92,13 @@ static void phase_shelly_transport_lost_locked(int64_t now){
         phase_shelly_rechecking=true;phase_move_at=now;phase_state=PHASE_SETTLING;
     }else phase_shelly_lost_locked();
 }
+static inline void phase_shelly_disconnect_locked(int64_t now){
+    phase_shelly_link_generation++;
+    phase_shelly_config_ok=false;
+    phase_shelly_transport_lost_locked(now);
+    if(phase_shelly_rechecking)phase_shelly_recheck_at=now;
+    if(phase_uses_voltage(&settings))phase_voltage_sample(&phase_voltage,NULL,false,now);
+}
 /* A missing transport response is not new evidence. Keep the last verified
    status only for its original TTL; never update a timestamp or acknowledge a
    command. Invalid payloads/configuration still take the immediate-loss path. */
@@ -81,14 +110,22 @@ static inline void phase_shelly_transport_missing_locked(int64_t now){
 }
 static void phase_shelly_guard_locked(int64_t now){
     if(!phase_shelly_remote()||!settings.phase_switch_enabled)return;
+    /* Distinguish a meter that is offline from fresh readings that show a
+       persistent partial phase supply. Allow the normal settling interval. */
+    bool invalid_voltage=wifi_online&&phase_shelly_rechecking&&phase_uses_voltage(&settings)&&
+        fresh(now,phase_voltage.sample_at,PHASE_VOLTAGE_TTL_MS)&&!phase_voltage_position(phase_voltage.voltage);
+    if(!invalid_voltage)phase_invalid_voltage_since=0;
+    else if(!phase_invalid_voltage_since)phase_invalid_voltage_since=now;
+    else if(now-phase_invalid_voltage_since>=ems_param_ms(EP_PHASE_DATA_MAX)){
+        phase_shelly_rechecking=false;phase_state=PHASE_FAULT;return;
+    }
     if((restarting||ota_in_progress)&&phase_shelly_pending){
         phase_shelly_pending=false;phase_goal=settings.charge_phases;
     }
     if(!restarting&&!ota_in_progress)phase_shelly_restart_prepared=false;
-    unsigned volts=phase_uses_voltage(&settings)?phase_voltage_observed_locked(now):0;
-    bool contradiction=volts&&phase_shelly_config_ok&&fresh(now,phase_shelly_at,SHELLY_PHASE_TTL_MS)&&
-        phase_shelly_feedback_value.output!=(settings.phase_shelly_true_three_phase?volts==3:volts==1);
-    if((phase_state==PHASE_READY||phase_shelly_rechecking)&&contradiction){phase_shelly_rechecking=false;phase_state=PHASE_FAULT;return;}
+    if((phase_state==PHASE_READY||phase_shelly_rechecking)&&phase_shelly_wrong_position_locked(now,settings.charge_phases)){
+        phase_shelly_rechecking=false;phase_state=PHASE_FAULT;return;
+    }
     if(phase_state==PHASE_READY){
         unsigned observed=phase_shelly_observed_locked(now);
         if(phase_shelly_uncertain||(observed&&observed!=settings.charge_phases))phase_state=PHASE_FAULT;
@@ -111,8 +148,8 @@ static bool phase_shelly_receive_locked(const shelly_phase_feedback_t *feedback,
     bool rebooted=read&&feedback->has_uptime&&phase_shelly_have_uptime&&feedback->uptime<phase_shelly_uptime;
     if(!read||rebooted){
         phase_shelly_read_failure_locked(false,now);
-        if(rebooted){phase_shelly_config_ok=false;phase_shelly_uncertain=true;phase_shelly_lost_locked();}
-        else phase_shelly_transport_lost_locked(now);
+        if(rebooted){phase_shelly_config_ok=false;phase_shelly_uncertain=true;}
+        phase_shelly_lost_locked();
     }else{
         phase_shelly_feedback_value=*feedback;phase_shelly_at=now;
         unsigned observed=phase_shelly_observed_locked(now);

@@ -64,6 +64,28 @@ static esp_err_t save_config(const settings_t *config) {
     if(err!=ESP_OK) return err;
 
     err=nvs_set_blob(nvs,EMS_SETTINGS_STORAGE_KEY,config,sizeof(*config));
+    if(err==ESP_ERR_NVS_NOT_ENOUGH_SPACE){
+        /* Keep the newest predecessor for an OTA rollback. Older schema
+           copies can accumulate after several updates on the same device. */
+        unsigned rollback_version=0;
+        char key[16];
+        for(unsigned version=EMS_SETTINGS_VERSION-1;version>0;version--){
+            size_t bytes=0;
+            snprintf(key,sizeof(key),"settings_v%u",version);
+            esp_err_t found=nvs_get_blob(nvs,key,NULL,&bytes);
+            if(found==ESP_OK){rollback_version=version;break;}
+            if(found!=ESP_ERR_NVS_NOT_FOUND)break;
+        }
+        for(unsigned version=1;version<rollback_version&&err==ESP_ERR_NVS_NOT_ENOUGH_SPACE;version++){
+            snprintf(key,sizeof(key),"settings_v%u",version);
+            esp_err_t removed=nvs_erase_key(nvs,key);
+            if(removed==ESP_ERR_NVS_NOT_FOUND)continue;
+            if(removed!=ESP_OK){err=removed;break;}
+            err=nvs_commit(nvs);
+            if(err==ESP_OK)err=nvs_set_blob(nvs,EMS_SETTINGS_STORAGE_KEY,config,sizeof(*config));
+        }
+    }
+    if(err!=ESP_OK) ESP_LOGW(TAG,"Saving settings failed (%ld)",(long)err);
 
     if(err==ESP_OK) err=nvs_commit(nvs);
 

@@ -77,6 +77,10 @@ reasons.manual_stop='Sollwert unter Mindeststrom · Stop angefordert.';
 reasons.phase_fault='Phasenumschaltung nicht bereit · Ladung gesperrt. Schütz und Verbindung prüfen.';
 reasons.phase_test='Schütztest läuft · Ladung bleibt gestoppt.';
 reasons.phase_switching='Phasenwechsel läuft · Ladung wird vor dem Schalten gestoppt.';
+reasons.phase_reconnect='Warte auf Wallboxzähler, Wallbox und Schütz.';
+reasons.grid_backup='Netzladung angefordert · Daten fehlen';
+reasons.wired_backup='Höchststrom über RS485 angefordert · Wallboxmesswerte fehlen';
+reasons.shell_fallback='Die Wallbox regelt selbst · RS485-Antworten pausiert';
 reasons.phase_idle='Kein Ladestrom erkannt · Ladeversuch beendet. Bei Bedarf erneut starten.';
 reasons.evcc_fault='Shell meldet einen Fehler · evcc-Ladung pausiert.';
 reasons.evcc_timeout='evcc-Verbindung ausgefallen · Ladung gestoppt.';
@@ -105,6 +109,9 @@ function controlStatus(s,valid=true){
     if(!s.evcc_status_known)return result('evcc · Fahrzeugstatus unbekannt; Ladung pausiert','waiting');
   }
   if(s.phase_state==='fehler')return result('Phasenumschaltung gestört · Ladung gesperrt','fault');
+  if(s.block_reason==='grid_backup')return result(reasons.grid_backup);
+  if(s.block_reason==='wired_backup')return result(reasons.wired_backup);
+  if(s.block_reason==='phase_reconnect')return result(s.enabled?'Ladung pausiert · warte auf Wallboxzähler, Wallbox und Schütz':'Ladung aus · warte auf Verbindung','waiting');
   const phaseWait={connection:'Phasenumschaltung · Verbindung wird aufgebaut',current_zero:'Phasenwechsel · warte auf Ladestillstand',zero_hold:'Phasenwechsel · stromlose Wartezeit',voltage:'Phasenwechsel · Spannungen werden geprüft',motion:'Phasenwechsel · Schütz schaltet',settle:'Phasenwechsel · Stabilisierung',fresh_data:'Phasenwechsel · warte auf frische Messwerte'};
   if(s.phase_switch_enabled&&s.phase_state!=='bereit')return result(wait(phaseWait[s.phase_wait_kind]||'Phasenwechsel läuft',s.phase_wait_s,['connection','current_zero','contact','voltage','fresh_data'].includes(s.phase_wait_kind)),'waiting');
   if(s.charge_stop_latched)return result('Mehrere Ladeabbrüche · Start gesperrt','fault');
@@ -547,6 +554,8 @@ function updateFunctionMode(){
  const basic=$('config-form').elements.basic_mode.value==='true';
  document.documentElement.dataset.basic=String(basic);
  $('additional-functions').hidden=basic;
+ $('outage-settings').hidden=basic;
+ $('outage-power').hidden=$('config-form').elements.grid_backup_enabled.value!=='true';
  document.querySelectorAll('[data-function-mode]').forEach(button=>button.setAttribute('aria-pressed',String((button.dataset.functionMode==='basic')===basic)));
  $('function-mode-note').textContent=basic?'':'Nur benötigte Funktionen auswählen.';
  $('function-mode-note').hidden=basic;
@@ -693,6 +702,7 @@ $('config-form').addEventListener('change',event=>{configSaveError='';clearConfi
 $('config-form').addEventListener('input',updateUnsavedFunctions);
 $('config-form').addEventListener('change',e=>{
  const f=$('config-form').elements,name=e.target.name;
+ if(name==='grid_backup_enabled')$('outage-power').hidden=f.grid_backup_enabled.value!=='true';
  if(e.target.id==='opendtu-enabled'){f.mqtt_input_source.value=e.target.checked?'2':'0';if(e.target.checked)f.mqtt_enabled.checked=true;}
  if(name==='phase_switch_enabled'&&f.phase_switch_enabled.checked){f.relay_board_enabled.checked=true;f.relay1_mode.value='3';}
  if(name==='relay_board_enabled'){f.phase_switch_enabled.checked=f.relay_board_enabled.checked;f.relay1_mode.value=f.relay_board_enabled.checked?'3':'0';}

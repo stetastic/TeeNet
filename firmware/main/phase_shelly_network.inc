@@ -35,11 +35,13 @@ static int phase_shelly_http(const char *host,const char *password,const char *p
        Only missing/truncated transport retains the old TTL; never overflow,
        complete invalid data or a configuration/protocol error. */
     if(!body.overflow){
-        if(status>=100&&status!=200)code=status;
+        if(status==408||status==502||status==503||status==504)code=0;
+        else if(status>=100&&status!=200)code=status;
         else if(err==ESP_OK&&status==200)code=complete?200:0;
         /* IDF reports complete before headers when both byte counters are
            zero. Without an HTTP status this does not prove a response. */
         else if((status<100||!complete)&&phase_shelly_missing_error(err))code=0;
+        else if(status<100&&err==ESP_ERR_HTTP_FETCH_HEADER&&!data[0])code=0;
     }
     unsigned sockets=0;size_t free_internal=0,largest_internal=0;
     if(code!=200){
@@ -77,7 +79,8 @@ static void phase_shelly_task(void *arg){
     int64_t next_config=0;
     for(;;){
         boot_task_seen[4]=(uint32_t)now_ms();
-        LOCK();bool online=wifi_online;bool configured=phase_shelly_config_ok;UNLOCK();
+        LOCK();bool online=wifi_online;bool configured=phase_shelly_config_ok;
+        uint32_t generation=phase_shelly_link_generation;UNLOCK();
         int64_t now=now_ms();
         if(!online){LOCK();phase_shelly_config_ok=false;phase_shelly_transport_lost_locked(now);UNLOCK();vTaskDelay(ticks(1000));continue;}
         /* Modbus only provides bits, not input mode/inversion/timers. Validate
@@ -85,6 +88,7 @@ static void phase_shelly_task(void *arg){
         if(!configured||now>=next_config){
             int validation=phase_shelly_validate(host,password,body,4096);bool valid=validation>0;now=now_ms();
             LOCK();
+            if(generation!=phase_shelly_link_generation){UNLOCK();continue;}
             if(valid){phase_shelly_config_ok=true;phase_shelly_config_at=now;}
             else if(validation<0){phase_shelly_read_failure_locked(false,now);phase_shelly_config_ok=false;phase_shelly_config_at=0;phase_shelly_lost_locked();}
             else phase_shelly_transport_missing_locked(now);
@@ -107,9 +111,13 @@ static void phase_shelly_task(void *arg){
         }
         now=now_ms();
         LOCK();
+        if(generation!=phase_shelly_link_generation){UNLOCK();continue;}
         bool received=false;
         if(transport_missing)phase_shelly_transport_missing_locked(now);
-        else received=phase_shelly_receive_locked(&feedback,read,now);
+        else if(settings.phase_actuator_type==3&&!read){
+            /* A failed coil read provides no output value. Pause immediately. */
+            phase_shelly_read_failure_locked(false,now);phase_shelly_transport_lost_locked(now);
+        }else received=phase_shelly_receive_locked(&feedback,read,now);
         bool issue=received&&phase_shelly_take_command_locked(now);
         UNLOCK();
         if(issue){

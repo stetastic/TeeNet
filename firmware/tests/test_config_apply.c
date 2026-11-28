@@ -19,6 +19,7 @@ static int64_t phase_shelly_command_at,phase_mqtt_sent_at;
 
 typedef int esp_err_t;
 #define ESP_OK 0
+#define ESP_ERR_NVS_NOT_ENOUGH_SPACE 2
 #define HTTPD_400_BAD_REQUEST 400
 #define HTTPD_403_FORBIDDEN 403
 #define HTTPD_500_INTERNAL_SERVER_ERROR 500
@@ -63,6 +64,10 @@ static httpd_req_t post(const char *body){
     return req;
 }
 int main(void){
+    fixture();httpd_req_t backup_option=post("{\"basic_mode\":false,\"grid_backup_enabled\":true}");
+    assert(backup_option.status==200&&prepared_settings.grid_backup_enabled&&!prepared_settings.enabled);
+    fixture();backup_option=post("{\"basic_mode\":false,\"grid_backup_enabled\":true,\"shell_native_fallback\":true}");
+    assert(backup_option.status==200&&prepared_settings.shell_native_fallback&&prepared_settings.grid_backup_enabled);
     char body[640];
     fixture();httpd_req_t http=post("{\"shell_http_control_enabled\":true}");
     assert(http.status==400&&strstr(http.message,"shell_setup_host"));

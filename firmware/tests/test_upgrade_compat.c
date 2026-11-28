@@ -21,7 +21,9 @@ static size_t schema_size(unsigned v){
         case 35:n=offsetof(settings_t,sungrow_enabled);break;
         case 36:n=offsetof(settings_t,phase_contactor_reconfigure);break;
         case 37:n=offsetof(settings_t,shell_http_control_enabled);break;
-        case 38:n=sizeof(settings_t);break;
+        case 38:n=offsetof(settings_t,grid_backup_enabled);break;
+        case 39:n=offsetof(settings_t,shell_native_fallback);break;
+        case 40:n=sizeof(settings_t);break;
         default:assert(0);
     }
     return (n+3)&~(size_t)3;
@@ -31,12 +33,15 @@ int main(void){
     for(unsigned version=23;version<=EMS_SETTINGS_VERSION;version++)
     for(unsigned low=0;low<2;low++)for(unsigned closed_single=0;closed_single<2;closed_single++){
         settings_t stored,decoded;settings_defaults(&stored);
-        stored.version=version;stored.basic_mode=false;
+        stored.version=version;stored.basic_mode=false;stored.grid_backup_enabled=true;
+        stored.shell_native_fallback=true;
         stored.relay_board_enabled=true;stored.phase_switch_enabled=true;stored.relay1_mode=3;
         stored.relay_active_low=low;stored.phase_feedback_closed_is_single=closed_single;
         strcpy(stored.wifi_ssid,"Existing network");strcpy(stored.wifi_password,"Existing secret");
         strcpy(stored.mqtt_uri,"mqtt://192.0.2.10:1883");
         assert(settings_decode(&stored,schema_size(version),&decoded));
+        assert(decoded.grid_backup_enabled==(version>=39));
+        assert(decoded.shell_native_fallback==(version>=40));
         if(decoded.relay_active_low!=(bool)low){fprintf(stderr,"schema %u changed relay polarity\n",version);assert(0);}
         assert(!decoded.phase_feedback_closed_is_single);
         assert(!strcmp(decoded.wifi_ssid,stored.wifi_ssid)&&!strcmp(decoded.wifi_password,stored.wifi_password));

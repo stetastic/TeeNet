@@ -63,7 +63,9 @@ static int64_t telemetry_last_at;
 static bool terms_accepted,evcc_configuring,phase_test_active,boot_validation_pending,ota_in_progress,restarting,backup_in_progress;
 static bool fault_storage_ok,phase_mqtt_allowed,phase_mqtt_known,phase_idle_inhibit,phase_gpio_ready;
 static bool relay_on[1],phase_shelly_config_ok,phase_startup,phase_link;
-static bool phase_shelly_rechecking;static int64_t phase_shelly_recheck_at;
+static bool phase_shelly_rechecking;
+static bool wired_backup_locked(int64_t now){(void)now;return false;}
+static bool shell_decides_locked(int64_t now,float permitted){(void)now;(void)permitted;return false;}
 static unsigned phase_state,phase_test_goal,phase_mqtt_assumed,phase_candidate;
 static int64_t phase_shelly_at,phase_zero_at,phase_stop_at,phase_move_at,phase_hold_until,phase_candidate_at;
 static shelly_phase_feedback_t phase_shelly_feedback_value;
