@@ -19,7 +19,7 @@ Optional: Shelly 3EM als Wallbox-Zähler, Hausanschlusszähler für PV-Laden und
 
 Eine laufende Ladung kann bei einem Router-Neustart weiterlaufen. Sobald Netzwerk und Messwerte wieder verfügbar sind, übernimmt TeeNet automatisch wieder die Regelung.
 
-Unter **Einstellungen → Ladeverhalten bei Netzwerk / Datenausfall** lässt sich das Verhalten auswählen. Beim Routerausfalltest blieb die Ladung mit der 8-kW-Auswahl aktiv. Außerdem räumt TeeNet bei Platzmangel veraltete Einstellungskopien auf, damit Einstellungen wieder gespeichert werden können.
+Unter **Einstellungen → Ladeverhalten bei Netzwerk / Datenausfall** lässt sich das Verhalten auswählen. Beim Routerausfalltest blieb die Ladung mit der 8-kW-Auswahl aktiv.
 
 ## Installieren
 
